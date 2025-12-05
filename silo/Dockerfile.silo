@@ -21,6 +21,15 @@ RUN echo 'root:root' | chpasswd
 # root 로그인 허용 설정
 RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 
+# 2-1. 'admin' 유저 생성 (비밀번호: admin)
+# -m: 홈 디렉토리 생성, -s: 쉘 설정(/bin/bash)
+RUN useradd -m -s /bin/bash admin && \
+    echo 'admin:admin' | chpasswd
+
+# 2-2. 'admin'를 docker 그룹에 추가 (핵심!)
+# 이걸 해야 admin 계정으로 로그인해서 'docker ps' 명령어를 쓸 수 있습니다.
+RUN usermod -aG docker admin
+
 # 3. Docker 디렉토리 볼륨 지점 생성
 VOLUME /var/lib/docker
 
