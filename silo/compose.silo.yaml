@@ -9,7 +9,7 @@ services:
     container_name: silo-1
     privileged: true  # ★ 필수: Docker-in-Docker 실행 권한
     ports:
-      - "2221:22"     # 호스트 2221 -> 컨테이너 SSH
+      - "2223:22"     # 호스트 2221 -> 컨테이너 SSH
       - "2371:2375"   # 호스트 2371 -> 컨테이너 Docker API
     volumes:
       - ./data/silo1:/var/lib/docker # ★ 데이터 격리: Silo 1 전용 저장소
@@ -26,7 +26,7 @@ services:
     container_name: silo-2
     privileged: true
     ports:
-      - "2222:22"
+      - "2224:22"
       - "2372:2375"
     volumes:
       - ./data/silo2:/var/lib/docker # ★ 데이터 격리: Silo 2 전용 저장소
@@ -43,7 +43,7 @@ services:
     container_name: silo-3
     privileged: true
     ports:
-      - "2223:22"
+      - "2225:22"
       - "2373:2375"
     volumes:
       - ./data/silo3:/var/lib/docker
@@ -57,7 +57,7 @@ services:
     container_name: silo-4
     privileged: true
     ports:
-      - "2224:22"
+      - "2226:22"
       - "2374:2375"
     volumes:
       - ./data/silo4:/var/lib/docker
@@ -71,7 +71,7 @@ services:
     container_name: silo-5
     privileged: true
     ports:
-      - "2225:22"
+      - "2227:22"
       - "2375:2375"
     volumes:
       - ./data/silo5:/var/lib/docker
@@ -85,7 +85,7 @@ services:
     container_name: silo-6
     privileged: true
     ports:
-      - "2226:22"
+      - "2228:22"
       - "2376:2375"
     volumes:
       - ./data/silo6:/var/lib/docker
