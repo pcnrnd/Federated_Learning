@@ -1,0 +1,35 @@
+# Base Image
+FROM ubuntu:22.04
+
+# 환경변수 설정 (무인 설치 모드)
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 1. 필수 패키지 설치 (Docker, SSH, 기타 도구)
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    docker.io \
+    iproute2 \
+    curl \
+    vim \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. SSH 설정
+# root 비밀번호를 'root'로 설정 (보안상 취약하지만 R&D 내부망 테스트용)
+# 실제 운영 시에는 SSH Key 방식을 권장합니다.
+RUN echo 'root:root' | chpasswd
+# root 로그인 허용 설정
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+# 3. Docker 디렉토리 볼륨 지점 생성
+VOLUME /var/lib/docker
+
+# 4. 엔트리포인트 스크립트 복사 및 실행 권한 부여
+COPY entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 5. 포트 노출 (SSH: 22, Docker API: 2375)
+EXPOSE 22 2375
+
+# 6. 실행 명령
+ENTRYPOINT ["entrypoint.sh"]
