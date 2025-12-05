@@ -3,7 +3,9 @@ services:
   # Silo 1
   # ============================================
   silo-1:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
     container_name: silo-1
     privileged: true  # ★ 필수: Docker-in-Docker 실행 권한
     ports:
@@ -18,7 +20,9 @@ services:
   # Silo 2
   # ============================================
   silo-2:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
     container_name: silo-2
     privileged: true
     ports:
@@ -33,7 +37,9 @@ services:
   # Silo 3 ~ 6 (패턴 반복)
   # ============================================
   silo-3:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
     container_name: silo-3
     privileged: true
     ports:
@@ -45,7 +51,9 @@ services:
       - fed-net
 
   silo-4:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
     container_name: silo-4
     privileged: true
     ports:
@@ -57,7 +65,9 @@ services:
       - fed-net
 
   silo-5:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
     container_name: silo-5
     privileged: true
     ports:
@@ -69,7 +79,9 @@ services:
       - fed-net
 
   silo-6:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
     container_name: silo-6
     privileged: true
     ports:
