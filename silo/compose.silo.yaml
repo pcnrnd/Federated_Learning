@@ -5,9 +5,7 @@ services:
   silo-1:
     build:
       context: .
-      dockerfile: Dockerfile.silo
-      args:
-        SILO_NUM: 1
+      dockerfile: Dockerfile.silo1
     container_name: silo-1
     privileged: true  # ★ 필수: Docker-in-Docker 실행 권한
     ports:
@@ -26,9 +24,7 @@ services:
   silo-2:
     build:
       context: .
-      dockerfile: Dockerfile.silo
-      args:
-        SILO_NUM: 2
+      dockerfile: Dockerfile.silo2
     container_name: silo-2
     privileged: true
     ports:
@@ -47,9 +43,7 @@ services:
   silo-3:
     build:
       context: .
-      dockerfile: Dockerfile.silo
-      args:
-        SILO_NUM: 3
+      dockerfile: Dockerfile.silo3
     container_name: silo-3
     privileged: true
     ports:
