@@ -5,7 +5,11 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. 필수 패키지 설치 (Docker, SSH, 기타 도구)
-RUN apt-get update && apt-get install -y \
+# Hash Sum mismatch 에러 방지: 재시도 + 캐시 무시 조합
+RUN (apt-get update -o Acquire::Check-Valid-Until=false || \
+     apt-get update -o Acquire::Check-Valid-Until=false || \
+     apt-get update -o Acquire::Check-Valid-Until=false) && \
+    apt-get install -y \
     openssh-server \
     docker.io \
     iproute2 \
