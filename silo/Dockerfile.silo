@@ -37,10 +37,9 @@ VOLUME /var/lib/docker
 COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# 5. MinIO compose 파일 복사
-COPY compose.minio.silo1.yaml /usr/local/bin/
-COPY compose.minio.silo2.yaml /usr/local/bin/
-COPY compose.minio.silo3.yaml /usr/local/bin/
+# 5. MinIO compose 파일 복사 (빌드 시 silo 번호를 ARG로 받아 해당 파일만 복사)
+ARG SILO_NUM
+COPY compose.minio.silo${SILO_NUM}.yaml /usr/local/bin/compose.minio.yaml
 
 # 6. 포트 노출 (SSH: 22, Docker API: 2375, MinIO: 9000, 9001)
 EXPOSE 22 2375 9000 9001

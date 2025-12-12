@@ -17,13 +17,18 @@ echo "Docker daemon started!"
 
 # 4. MinIO 설치 및 실행
 # 컨테이너 이름에서 silo 번호 추출 (예: silo-1 -> 1)
-# HOSTNAME 또는 컨테이너 이름 확인
+# 환경 변수 우선, 없으면 컨테이너 이름에서 추출
 CONTAINER_NAME="${HOSTNAME:-$(hostname)}"
-SILO_NUM=$(echo "$CONTAINER_NAME" | grep -oE '[0-9]+' || echo "")
+
+# BASH_REMATCH를 사용한 정확한 silo 번호 추출
+if [[ -z "$SILO_NUM" ]] && [[ "$CONTAINER_NAME" =~ silo-([0-9]+) ]]; then
+    SILO_NUM="${BASH_REMATCH[1]}"
+fi
 
 if [ -n "$SILO_NUM" ] && [ "$SILO_NUM" -le 3 ]; then
     echo "Starting MinIO for silo-${SILO_NUM}..."
-    MINIO_COMPOSE="/usr/local/bin/compose.minio.silo${SILO_NUM}.yaml"
+    # 단일 compose 파일 사용 (빌드 시 해당 silo 파일만 복사됨)
+    MINIO_COMPOSE="/usr/local/bin/compose.minio.yaml"
     
     # MinIO compose 파일이 존재하는지 확인
     if [ -f "$MINIO_COMPOSE" ]; then
