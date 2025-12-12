@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     openssh-server \
     docker.io \
+    docker-compose-plugin \
     iproute2 \
     curl \
     vim \
