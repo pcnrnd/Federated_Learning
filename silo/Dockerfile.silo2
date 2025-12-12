@@ -8,12 +8,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     openssh-server \
     docker.io \
-    docker-compose-plugin \
     iproute2 \
     curl \
     vim \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Docker Compose v2 설치
+RUN curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose && \
+    chmod +x /usr/local/bin/docker-compose
 
 # 2. SSH 설정
 # root 비밀번호를 'root'로 설정 (보안상 취약하지만 R&D 내부망 테스트용)
