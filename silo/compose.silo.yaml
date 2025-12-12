@@ -9,8 +9,10 @@ services:
     container_name: silo-1
     privileged: true  # ★ 필수: Docker-in-Docker 실행 권한
     ports:
-      - "2223:22"     # 호스트 2221 -> 컨테이너 SSH
+      - "2223:22"     # 호스트 2223 -> 컨테이너 SSH
       - "2371:2375"   # 호스트 2371 -> 컨테이너 Docker API
+      - "7001:9000"   # 호스트 9001 -> 컨테이너 MinIO API
+      - "7002:9001"   # 호스트 9002 -> 컨테이너 MinIO Console
     volumes:
       - ./data/silo1:/var/lib/docker # ★ 데이터 격리: Silo 1 전용 저장소
     networks:
@@ -28,6 +30,8 @@ services:
     ports:
       - "2224:22"
       - "2372:2375"
+      - "7003:9000"   # 호스트 9003 -> 컨테이너 MinIO API
+      - "7004:9001"   # 호스트 9004 -> 컨테이너 MinIO Console
     volumes:
       - ./data/silo2:/var/lib/docker # ★ 데이터 격리: Silo 2 전용 저장소
     networks:
@@ -45,6 +49,8 @@ services:
     ports:
       - "2225:22"
       - "2373:2375"
+      - "7005:9000"   # 호스트 9005 -> 컨테이너 MinIO API
+      - "7006:9001"   # 호스트 9006 -> 컨테이너 MinIO Console
     volumes:
       - ./data/silo3:/var/lib/docker
     networks:
