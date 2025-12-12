@@ -1,0 +1,27 @@
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: fl-dashboard
+    ports:
+      - "8000:8000"  # 웹 대시보드 포트
+    volumes:
+      # 호스트 Docker socket 마운트 (중앙 서버 접근용)
+      # Linux/WSL2:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Windows Docker Desktop (주석 해제하여 사용):
+      # - //./pipe/docker_engine:////./pipe/docker_engine
+      
+      # 설정 파일 영구 저장 (servers.yaml)
+      - ./config:/app/config
+    networks:
+      - fed-net  # silo와 동일한 네트워크
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1`
+
+networks:
+  fed-net:
+    external: true  # silo compose에서 생성한 네트워크 사용
+    # 또는 external: false로 설정하고 silo compose도 동일하게 수정

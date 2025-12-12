@@ -1,16 +1,41 @@
-# 서버 설정 파일
-# 각 서버의 Docker 연결 정보를 정의합니다
-
 main:
-  base_url: "unix://var/run/docker.sock"
-  label: "중앙 서버"
-  type: "local"
-  role: "central"
-
-# 원격 서버 예시
-# node1:
-#   base_url: "tcp://10.0.0.5:2376"
-#   label: "병원 A 서버"
-#   type: "remote"
-#   tls: false
-
+  base_url: unix://var/run/docker.sock
+  label: 중앙 서버
+  type: local
+  role: central
+silo-1:
+  base_url: tcp://localhost:2371
+  label: silo-1
+  type: remote
+  role: client
+  tls: false
+silo-2:
+  base_url: tcp://localhost:2372
+  label: silo-2
+  type: remote
+  role: client
+  tls: false
+silo-3:
+  base_url: tcp://localhost:2373
+  label: silo-3
+  type: remote
+  role: client
+  tls: false
+silo-4:
+  base_url: tcp://localhost:2374
+  label: silo-4
+  type: remote
+  role: client
+  tls: false
+silo-5:
+  base_url: tcp://localhost:2375
+  label: silo-5
+  type: remote
+  role: client
+  tls: false
+silo-6:
+  base_url: tcp://localhost:2376
+  label: silo-6
+  type: remote
+  role: client
+  tls: false
