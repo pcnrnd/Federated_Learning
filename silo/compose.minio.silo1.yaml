@@ -2,6 +2,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: minio-silo1
+    user: "0:0"  # root 사용자로 실행 (권한 문제 해결)
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"  # MinIO API
