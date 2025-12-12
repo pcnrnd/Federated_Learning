@@ -50,47 +50,47 @@ services:
     networks:
       - fed-net
 
-  silo-4:
-    build:
-      context: .
-      dockerfile: Dockerfile.silo
-    container_name: silo-4
-    privileged: true
-    ports:
-      - "2226:22"
-      - "2374:2375"
-    volumes:
-      - ./data/silo4:/var/lib/docker
-    networks:
-      - fed-net
+  # silo-4:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.silo
+  #   container_name: silo-4
+  #   privileged: true
+  #   ports:
+  #     - "2226:22"
+  #     - "2374:2375"
+  #   volumes:
+  #     - ./data/silo4:/var/lib/docker
+  #   networks:
+  #     - fed-net
 
-  silo-5:
-    build:
-      context: .
-      dockerfile: Dockerfile.silo
-    container_name: silo-5
-    privileged: true
-    ports:
-      - "2227:22"
-      - "2375:2375"
-    volumes:
-      - ./data/silo5:/var/lib/docker
-    networks:
-      - fed-net
+  # silo-5:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.silo
+  #   container_name: silo-5
+  #   privileged: true
+  #   ports:
+  #     - "2227:22"
+  #     - "2375:2375"
+  #   volumes:
+  #     - ./data/silo5:/var/lib/docker
+  #   networks:
+  #     - fed-net
 
-  silo-6:
-    build:
-      context: .
-      dockerfile: Dockerfile.silo
-    container_name: silo-6
-    privileged: true
-    ports:
-      - "2228:22"
-      - "2376:2375"
-    volumes:
-      - ./data/silo6:/var/lib/docker
-    networks:
-      - fed-net
+  # silo-6:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.silo
+  #   container_name: silo-6
+  #   privileged: true
+  #   ports:
+  #     - "2228:22"
+  #     - "2376:2375"
+  #   volumes:
+  #     - ./data/silo6:/var/lib/docker
+  #   networks:
+  #     - fed-net
 
 networks:
   fed-net:
