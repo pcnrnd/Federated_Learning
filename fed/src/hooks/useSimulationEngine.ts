@@ -257,3 +257,34 @@ export function useSimulationEngine(): {
 
   return { start, pause, reset }
 }
+
+export type SimulationControls = ReturnType<typeof useSimulationEngine>
+
+const noopControls: SimulationControls = {
+  start: () => {},
+  pause: () => {},
+  reset: () => {},
+}
+
+let activeEngineControls: SimulationControls | null = null
+
+/**
+ * 앱 루트에 마운트해 탭 전환과 무관하게 시뮬레이션 루프를 유지한다.
+ */
+export function SimulationEngineHost(): null {
+  const controls = useSimulationEngine()
+
+  useEffect(() => {
+    activeEngineControls = controls
+    return () => {
+      activeEngineControls = null
+    }
+  }, [controls])
+
+  return null
+}
+
+/** ControlPanel 등 자식 컴포넌트에서 엔진 제어 함수를 참조한다. */
+export function getSimulationControls(): SimulationControls {
+  return activeEngineControls ?? noopControls
+}
