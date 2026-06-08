@@ -1,5 +1,5 @@
 import { ALGORITHM_LABEL, ALGORITHM_OPTIONS, CONFIG_BOUNDS } from '@/constants/simulation'
-import { useSimulationEngine } from '@/hooks/useSimulationEngine'
+import { getSimulationControls } from '@/hooks/useSimulationEngine'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { Algorithm } from '@/types/simulation'
 import { Slider } from './Slider'
@@ -14,7 +14,7 @@ export function ControlPanel() {
   const setLocalEpochs = useSimulationStore((s) => s.setLocalEpochs)
   const setLearningRate = useSimulationStore((s) => s.setLearningRate)
   const log = useSimulationStore((s) => s.log)
-  const { start, pause, reset } = useSimulationEngine()
+  const { start, pause, reset } = getSimulationControls()
 
   const inputsDisabled = isRunning && !isPaused
   const isFinished = !isRunning && currentRound > 0 && currentRound >= config.totalRounds
