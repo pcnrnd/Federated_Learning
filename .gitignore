@@ -2,5 +2,13 @@
 __pycache__
 .python-version
 .env
+config/
+config.demo/
+app/*.log
+app/dashboard-*.png
 pyproject.toml
 uv.lock
+.cursor
+.claude
+CLAUDE.md
+DESIGN.md
