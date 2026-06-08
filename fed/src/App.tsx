@@ -1,4 +1,6 @@
 import { AppLayout } from '@/components/layout/AppLayout'
+import { SimulationEngineHost } from '@/hooks/useSimulationEngine'
+import { useSystemHeartbeat } from '@/hooks/useSystemHeartbeat'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import { AnalyticsView } from '@/views/AnalyticsView'
 import { DashboardView } from '@/views/DashboardView'
@@ -16,5 +18,12 @@ const VIEW_REGISTRY: Record<TabId, ReactNode> = {
 
 export default function App() {
   const activeTab = useSimulationStore((s) => s.activeTab)
-  return <AppLayout>{VIEW_REGISTRY[activeTab]}</AppLayout>
+  useSystemHeartbeat()
+
+  return (
+    <>
+      <SimulationEngineHost />
+      <AppLayout>{VIEW_REGISTRY[activeTab]}</AppLayout>
+    </>
+  )
 }
