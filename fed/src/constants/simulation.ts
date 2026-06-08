@@ -41,7 +41,18 @@ export const TIMINGS = {
   uploadDelayMs: 800,
   aggregationMs: 1200,
   betweenRoundsMs: 2000,
+  /** Idle 상태 시스템 하트비트 로그 주기 */
+  heartbeatIntervalMs: 4500,
 } as const
+
+/** 차트 초기 상태(단일 포인트)에서 추이 미리보기용 시드 데이터 */
+export const CHART_PREVIEW_POINTS = [
+  { round: 0, accuracy: 28.5, loss: 2.15 },
+  { round: 3, accuracy: 44.2, loss: 1.72 },
+  { round: 6, accuracy: 61.8, loss: 1.18 },
+  { round: 9, accuracy: 77.5, loss: 0.62 },
+  { round: 12, accuracy: 88.3, loss: 0.24 },
+] as const
 
 export const ALGORITHM_LABEL: Record<Algorithm, string> = {
   fedavg: 'FedAvg (연합 가중 평균)',
