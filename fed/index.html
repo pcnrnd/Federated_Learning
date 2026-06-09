@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>연합컴퓨팅 오케스트레이터 및 대시보드</title>
 
+    <!-- 첫 페인트 전에 테마를 적용해 FOUC(테마 깜빡임)를 방지한다.
+         스토어의 readInitialTheme와 동일한 우선순위(localStorage → 시스템 선호도)를 따른다. -->
+    <script>
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('fed-theme')
+          var theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : window.matchMedia &&
+                  window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+          document.documentElement.setAttribute('data-theme', theme)
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
