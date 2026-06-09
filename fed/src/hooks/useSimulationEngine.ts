@@ -6,6 +6,8 @@ import {
 } from '@/constants/simulation'
 import { aggregate, computeNodeEpochMetrics } from '@/lib/aggregation'
 import { pickRandomIds } from '@/lib/format'
+import { useModelStore } from '@/store/useModelStore'
+import { useMonitoringStore } from '@/store/useMonitoringStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 
 class AbortedError extends Error {
@@ -57,7 +59,7 @@ export function useSimulationEngine(): {
 
       store.log(
         'server',
-        `[ROUND ${roundNo}] 글로벌 가중치 파라미터 ${useSimulationStore.getState().nodes.length}개 분산 노드로 브로드캐스트 전송...`,
+        `[ROUND ${roundNo}] 글로벌 가중치 파라미터 ${useSimulationStore.getState().nodes.length}개 사일로로 브로드캐스트 전송...`,
       )
 
       // Phase 1: Download (server -> nodes)
@@ -69,7 +71,7 @@ export function useSimulationEngine(): {
 
       await sleep(TIMINGS.syncDelayMs, gen)
       if (!isLive(gen)) throw new AbortedError()
-      store.log('server', '전 분산 데이터 노드 글로벌 매개변수 수신 및 복호화 완료.')
+      store.log('server', '전 사일로 글로벌 매개변수 수신 및 복호화 완료.')
 
       // Phase 2: Local training
       store.setPacketDirection('local')
@@ -79,7 +81,7 @@ export function useSimulationEngine(): {
       const totalEpochs = config.localEpochs
       store.log(
         'system',
-        `전 원격 노드 로컬 데이터 연합 학습 시작 (반복: ${totalEpochs} Epochs, 속도: ${config.learningRate})`,
+        `전 사일로 로컬 데이터 연합 학습 시작 (반복: ${totalEpochs} Epochs, 속도: ${config.learningRate})`,
       )
 
       const announceIds = pickRandomIds(
@@ -107,12 +109,15 @@ export function useSimulationEngine(): {
           epoch,
           totalEpochs,
         }
-        useSimulationStore.getState().nodes.forEach((node) => {
-          const next = computeNodeEpochMetrics(node, progress)
-          store.updateNodeMetrics(node.id, next)
-        })
+        useSimulationStore
+          .getState()
+          .nodes.filter((node) => node.enabled)
+          .forEach((node) => {
+            const next = computeNodeEpochMetrics(node, progress)
+            store.updateNodeMetrics(node.id, next)
+          })
       }
-      store.log('system', '전 노드 분산 로컬 학습 완료. 로컬 가중치 업데이트 전송 준비.')
+      store.log('system', '전 사일로 로컬 학습 완료. 로컬 가중치 업데이트 전송 준비.')
 
       // Phase 3: Upload (nodes -> server)
       store.setAllNodeStatus('uploading')
@@ -143,7 +148,7 @@ export function useSimulationEngine(): {
           id,
         )
       })
-      store.log('server', '전 노드 개별 연합 가중치 획득 성공. 통합 집계 단계 진입.')
+      store.log('server', '전 사일로 개별 연합 가중치 획득 성공. 통합 집계 단계 진입.')
 
       await sleep(TIMINGS.uploadDelayMs, gen)
       if (!isLive(gen)) throw new AbortedError()
@@ -155,7 +160,11 @@ export function useSimulationEngine(): {
       await sleep(TIMINGS.aggregationMs, gen)
       if (!isLive(gen)) throw new AbortedError()
 
-      const aggregated = aggregate(useSimulationStore.getState().nodes, config.algorithm)
+      const enabledNodes = useSimulationStore.getState().nodes.filter((n) => n.enabled)
+      const aggregated = aggregate(
+        enabledNodes.length > 0 ? enabledNodes : useSimulationStore.getState().nodes,
+        config.algorithm,
+      )
       store.setGlobal({ accuracy: aggregated.accuracy, loss: aggregated.loss })
 
       if (config.algorithm === 'secagg') {
@@ -174,6 +183,32 @@ export function useSimulationEngine(): {
         accuracy: aggregated.accuracy,
         loss: aggregated.loss,
       })
+
+      // 모델 모니터링 지표(처리량/처리시간/드리프트) 갱신.
+      // 정확도가 오를수록 처리량↑·처리시간↓, 드리프트는 라운드 누적으로 완만히 상승.
+      const throughput = Math.round(110 + aggregated.accuracy * 1.8 + Math.random() * 15)
+      const latency = Math.round(95 - aggregated.accuracy * 0.45 + Math.random() * 8)
+      const drift = Math.min(1, Number((0.05 + roundNo * 0.025 + Math.random() * 0.03).toFixed(3)))
+      store.addMonitorPoint({ round: roundNo, throughput, latency, drift })
+
+      const monitoring = useMonitoringStore.getState()
+      const alertThreshold = monitoring.alertThreshold / 100
+      if (drift >= alertThreshold) {
+        store.log(
+          'error',
+          `[모니터링] 데이터 드리프트 ${(drift * 100).toFixed(1)}% — 임계 초과! 재학습 검토 필요.`,
+        )
+        if (
+          monitoring.autoRetrain &&
+          monitoring.lastAutoRetrainRound !== roundNo &&
+          monitoring.warnThreshold < monitoring.alertThreshold
+        ) {
+          const targetId =
+            monitoring.retrainModelId === 'auto' ? undefined : monitoring.retrainModelId
+          useModelStore.getState().triggerRetrain(targetId)
+          useMonitoringStore.getState().setLastAutoRetrainRound(roundNo)
+        }
+      }
 
       await sleep(TIMINGS.betweenRoundsMs, gen)
       if (!isLive(gen)) throw new AbortedError()
