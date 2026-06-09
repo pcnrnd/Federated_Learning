@@ -5,7 +5,7 @@ const FILTERS: Array<{ value: LogFilter; label: string }> = [
   { value: 'all', label: '전체 로그' },
   { value: 'system', label: '시스템' },
   { value: 'server', label: '중앙 서버' },
-  { value: 'nodes', label: '분산 노드' },
+  { value: 'nodes', label: '사일로' },
 ]
 
 export function LogFilters() {
