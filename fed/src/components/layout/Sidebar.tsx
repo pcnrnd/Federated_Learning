@@ -2,7 +2,15 @@ import { TAB_META } from '@/constants/simulation'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { TabId } from '@/types/simulation'
 
-const TAB_ORDER: TabId[] = ['dashboard', 'nodes', 'analytics', 'logs']
+const TAB_ORDER: TabId[] = [
+  'dashboard',
+  'nodes',
+  'silos',
+  'data',
+  'models',
+  'analytics',
+  'logs',
+]
 
 export function Sidebar() {
   const activeTab = useSimulationStore((s) => s.activeTab)
