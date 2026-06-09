@@ -1,4 +1,5 @@
 import { formatNumber, formatPercent } from '@/lib/format'
+import { useSimulationStore } from '@/store/useSimulationStore'
 import type { NodeState } from '@/types/simulation'
 
 const STATUS_CLASS: Record<NodeState['status'], string> = {
@@ -20,16 +21,30 @@ interface NodeCardProps {
 }
 
 export function NodeCard({ node }: NodeCardProps) {
+  const toggleNode = useSimulationStore((s) => s.toggleNode)
+  const restartNode = useSimulationStore((s) => s.restartNode)
+  const log = useSimulationStore((s) => s.log)
+
   const delayClass = node.delay > 70 ? 'text-yellow' : 'text-green'
 
+  const handleToggle = () => {
+    toggleNode(node.id)
+    log('system', `[${node.name}] ${node.enabled ? '비활성화 — 라운드 참여 제외' : '활성화 — 라운드 참여 재개'}`, node.id)
+  }
+
+  const handleRestart = () => {
+    restartNode(node.id)
+    log('client', `[${node.name}] 재시작 완료. 로컬 상태를 초기화했습니다.`, node.id)
+  }
+
   return (
-    <div className="glass-panel node-card">
+    <div className={`glass-panel node-card${node.enabled ? '' : ' node-disabled'}`}>
       <div className="node-card-header">
-        <span className={`node-badge ${STATUS_CLASS[node.status]}`}>
-          {STATUS_LABEL[node.status]}
+        <span className={`node-badge ${node.enabled ? STATUS_CLASS[node.status] : 'status-disabled'}`}>
+          {node.enabled ? STATUS_LABEL[node.status] : 'DISABLED'}
         </span>
         <h3>
-          노드 {node.id} (분산 데이터 노드)
+          {node.name} <span className="node-card-sub">(학습 사일로)</span>
         </h3>
       </div>
       <div className="node-card-body">
@@ -75,6 +90,24 @@ export function NodeCard({ node }: NodeCardProps) {
               title={`비정상 비율: ${node.abnormalPct}%`}
             />
           </div>
+        </div>
+        <div className="node-controls">
+          <button
+            type="button"
+            className={`model-action${node.enabled ? '' : ' deploy'}`}
+            onClick={handleToggle}
+          >
+            <i className={`fa-solid ${node.enabled ? 'fa-power-off' : 'fa-play'}`} />{' '}
+            {node.enabled ? '비활성화' : '활성화'}
+          </button>
+          <button
+            type="button"
+            className="model-action"
+            disabled={!node.enabled}
+            onClick={handleRestart}
+          >
+            <i className="fa-solid fa-rotate-right" /> 재시작
+          </button>
         </div>
       </div>
     </div>
