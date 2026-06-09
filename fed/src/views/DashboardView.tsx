@@ -9,7 +9,7 @@ export function DashboardView() {
         <div className="glass-panel content-card">
           <div className="card-header">
             <h3>
-              <i className="fa-solid fa-circle-nodes" /> 실시간 연합 네트워크 토폴로지
+              <i className="fa-solid fa-circle-nodes" /> 실시간 연합 네트워크
             </h3>
             <span className="desc">Encrypted Data Channels & Flow Visualizer</span>
           </div>
