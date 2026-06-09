@@ -88,7 +88,7 @@ export function TopologySVG() {
                   </tspan>
                 </text>
                 <text className="node-name" y={26} textAnchor="middle">
-                  {node.name}
+                  {node.shortName}
                 </text>
               </g>
             )
