@@ -18,7 +18,7 @@ function tagFor(entry: LogEntry): string {
   if (entry.kind === 'success') return '[SUCCESS]'
   if (entry.kind === 'error') return '[ERROR]'
   if (entry.kind === 'client' && entry.nodeId !== undefined) {
-    return `[NODE ${entry.nodeId}]`
+    return `[SILO ${entry.nodeId}]`
   }
   return '[LOG]'
 }
