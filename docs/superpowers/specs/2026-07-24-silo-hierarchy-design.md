@@ -65,7 +65,10 @@ flower.ai docs (SuperLink/SuperNode), Google Cloud cross-silo/cross-device FL �
 - 상위 사일로가 비활성(`enabled=false`)이면 그 하위 노드도 라운드에서 제외된다
   (경로가 끊기므로). 하위 노드 자체 토글도 기존과 동일하게 동작.
 - `useSimulationStore.reset()`은 학습 상태만 초기화하고 **등록된 하위 노드는 유지**한다.
-  (`createInitialNodes()`가 siloStore의 하위 노드를 반영해 재구성.)
+  구현: reset이 **자신의 `state.nodes`에서 `parentId` 있는 노드를 걸러 보존**(메트릭·상태만
+  초기화)하고 1단만 `createInitialNodes()`로 재생성한다. nodeFactory가 siloStore를 읽는
+  방식은 금지 — `useSiloStore → useSimulationStore` 기존 import에 역방향이 더해져
+  순환 import(모듈 평가 시점 TDZ 크래시 위험)가 생긴다. (검증 에이전트 BLOCKER 반영)
 
 ### 4.2 스토어 연동
 
@@ -73,7 +76,14 @@ flower.ai docs (SuperLink/SuperNode), Google Cloud cross-silo/cross-device FL �
   학습 노드 전파 + 기존 `ensureSiloData()` 유지.
 - `useSiloStore.removeSilo(id)`: `parentId` 없는 사일로(1단)는 거부.
   하위 노드 삭제 시 `useSimulationStore.removeNode()`·`removeSiloData()` 전파.
-- `useSimulationStore`에 `addNode(node)` / `removeNode(id)` 액션 추가.
+- `useSimulationStore`에 `addNode(node)` / `removeNode(id)` /
+  `setNodeStatusByIds(ids, status)` 액션 추가 — 마지막 것은 3a 페이즈에서
+  "하위=uploading, 상위=aggregating" 부분 집합별 상태 설정에 필요.
+- 참여 판정 헬퍼 `effectiveEnabledNodes(nodes)`를 `src/lib/aggregation.ts`에 배치:
+  자신이 enabled이고 (하위 노드라면) 상위도 enabled인 노드만 반환.
+  현재 코드의 `n.enabled` 단독 판정 4곳(setAllNodeStatus/setAllNodeCpu/엔진 학습 필터/집계
+  필터)을 이 헬퍼 기준으로 통일한다.
+- `NewSiloInput`은 `useSiloStore.ts`에 정의되어 있음(types 파일 아님) — 그 자리에서 확장.
 - 신규 하위 노드의 학습 파라미터(size/delay/mult)는 `nodeFactory`의 기존 랜덤 규칙 재사용.
 
 ### 4.3 토폴로지 레이아웃
@@ -115,7 +125,14 @@ flower.ai docs (SuperLink/SuperNode), Google Cloud cross-silo/cross-device FL �
   ① `parentId`로 그룹핑해 하위→상위 가중평균(데이터 크기 `size` 가중) 반영,
   ② 1단 사일로에 대해 기존 `aggregate()` 재사용해 글로벌 집계.
 - WAN 트래픽 집계는 **1단 사일로 수 기준 유지** (하위→상위는 사내망 취급, 과금 제외).
+  주의: 현재 엔진은 `nodes.length`를 두 곳에서 사용 — 트래픽 계산(engine :130)과
+  브로드캐스트 로그 "N개 사일로"(engine :62). 둘 다 `parentId === undefined` 필터 필수.
+  학습 개시/업로드 안내 로그(`pickRandomIds`)도 하위 노드가 뽑히면 "사일로" 문구가
+  어긋나므로 1단만 대상으로 하거나 문구를 "노드"로 조정.
 - 엣지 페이즈 타이밍은 기존 `TIMINGS.downloadAnimationMs` 재사용 (신규 상수 최소화).
+- `pathClass`(TopologySVG)는 현재 전역 direction을 모든 경로에 일괄 적용하므로
+  경로별 분기 필요: 서버↔사일로 경로는 `download`/`upload`에만, 사일로↔하위 경로는
+  `edge-download`/`edge-upload`에만 활성. `PacketDot`의 direction 리터럴 타입도 확장.
 
 ### 4.5 UI 변경
 
@@ -172,3 +189,12 @@ flower.ai docs (SuperLink/SuperNode), Google Cloud cross-silo/cross-device FL �
 | `src/components/nodes/NodeCard.tsx` | aggregating 라벨, 상위 표시 |
 | `src/styles/global.css` | 상태·레이아웃 스타일 |
 | `package.json` 외 | vitest 추가, 테스트 2파일 |
+
+부수 정리(선택): 사용처 없는 `NODE_COUNT_REF` export 삭제,
+`useSystemHeartbeat`의 "N/N" 문구는 1단 수 고정이라 그대로 유효.
+
+## 8. 검증 이력
+
+- 2026-07-24 설계 검증 에이전트(별도 세션) 대조 완료 — BLOCKER 1(순환 import),
+  WARN 3(부모 비활성 메커니즘, nodes.length 오염, packetDirection 소비자), INFO 다수.
+  전 항목 본 문서 4장에 반영됨. id 충돌 없음(siloSeq=13 시작), rename 전제(미추적) 확인.
