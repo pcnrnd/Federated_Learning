@@ -47,6 +47,11 @@ export interface SimulationStore {
   // UI
   activeTab: TabId
   theme: ThemeMode
+  /**
+   * 목 데이터 시뮬레이션 on/off.
+   * false면 하트비트 로그·학습 시작이 멈춘다 — 실서버 연동 어댑터가 붙을 자리.
+   */
+  mockEnabled: boolean
 
   // Actions: config
   setAlgorithm: (algorithm: Algorithm) => void
@@ -61,6 +66,11 @@ export interface SimulationStore {
   // Actions: theme
   setTheme: (theme: ThemeMode) => void
   toggleTheme: () => void
+
+  // Actions: data source
+  setMockEnabled: (enabled: boolean) => void
+  /** 목 off — 시뮬레이션 데이터를 전부 비운다 (실서버 연동 대기 상태) */
+  clearMockData: () => void
 
   // Actions: engine lifecycle
   startRunning: () => void
@@ -122,6 +132,18 @@ function applyTheme(theme: ThemeMode): void {
   }
 }
 
+// --- 목 데이터 스위치 영속화 -------------------------------------------------
+const MOCK_STORAGE_KEY = 'fed-mock-enabled'
+
+/** 저장된 값이 없으면 켜짐 — 백엔드 없이도 데모가 돌아야 한다. */
+function readInitialMockEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(MOCK_STORAGE_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
 const SYSTEM_INIT_LOG: LogEntry = {
   id: nextLogId(),
   time: nowTimestamp(),
@@ -133,7 +155,7 @@ function initialChartPoint(): ChartPoint {
   return { round: 0, accuracy: INITIAL_GLOBAL.accuracy, loss: INITIAL_GLOBAL.loss }
 }
 
-export const useSimulationStore = create<SimulationStore>((set) => ({
+export const useSimulationStore = create<SimulationStore>((set, get) => ({
   config: { ...DEFAULT_CONFIG },
 
   isRunning: false,
@@ -153,6 +175,36 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
 
   activeTab: 'dashboard',
   theme: readInitialTheme(),
+  mockEnabled: readInitialMockEnabled(),
+
+  setMockEnabled: (enabled) => {
+    try {
+      window.localStorage.setItem(MOCK_STORAGE_KEY, String(enabled))
+    } catch {
+      // 저장 실패는 무시 — 세션 내 전환은 정상 동작
+    }
+    set({ mockEnabled: enabled })
+    get().log(
+      'system',
+      enabled
+        ? '목 데이터 시뮬레이션 활성화 — 데모 모드로 동작합니다.'
+        : '목 데이터 시뮬레이션 비활성화 — 실서버 연동 대기 모드입니다.',
+    )
+  },
+
+  clearMockData: () =>
+    set({
+      isRunning: false,
+      isPaused: false,
+      currentRound: 0,
+      nodes: [],
+      global: { accuracy: 0, loss: 0, accumulatedTraffic: 0 },
+      packetDirection: 'idle',
+      chartPoints: [],
+      monitorPoints: [],
+      // 하트비트·라운드 로그도 목 산출물이므로 함께 비운다
+      logs: [],
+    }),
 
   setAlgorithm: (algorithm) =>
     set((state) => ({ config: { ...state.config, algorithm } })),

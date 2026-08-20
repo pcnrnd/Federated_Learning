@@ -54,6 +54,9 @@ export function TopologySVG() {
   const isTrunkFlowing = direction === 'download' || direction === 'upload'
   const isEdgeFlowing = direction === 'edge-download' || direction === 'edge-upload'
 
+  // 노드가 없으면(목 off 등) 기형 비율의 빈 SVG 대신 안내 문구를 보여준다
+  const isEmpty = layout.roots.length === 0
+
   const [zoom, setZoom] = useState<number>(TOPOLOGY_ZOOM.default)
   /** 화면 이동량(px). transform으로 적용하므로 배율과 무관하게 항상 움직인다 */
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -106,6 +109,14 @@ export function TopologySVG() {
   }
 
   const isMoved = zoom !== TOPOLOGY_ZOOM.default || pan.x !== 0 || pan.y !== 0
+
+  if (isEmpty) {
+    return (
+      <div className="deploy-empty">
+        표시할 연합 네트워크가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+      </div>
+    )
+  }
 
   return (
     <div className="topology-viewport">

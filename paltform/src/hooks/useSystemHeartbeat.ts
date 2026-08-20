@@ -23,7 +23,9 @@ export function useSystemHeartbeat(): void {
     const intervalMs = TIMINGS.heartbeatIntervalMs
 
     const timer = window.setInterval(() => {
-      const { isRunning, isPaused } = useSimulationStore.getState()
+      const { isRunning, isPaused, mockEnabled } = useSimulationStore.getState()
+      // 목 데이터가 꺼져 있으면 가짜 상태 로그도 내보내지 않는다
+      if (!mockEnabled) return
       if (isRunning && !isPaused) return
 
       const message = IDLE_STATUS_MESSAGES[messageIndexRef.current % IDLE_STATUS_MESSAGES.length]

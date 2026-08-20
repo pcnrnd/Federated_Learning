@@ -26,6 +26,17 @@ export function DriftCard() {
   const warnThreshold = useMonitoringStore((s) => s.warnThreshold)
   const alertThreshold = useMonitoringStore((s) => s.alertThreshold)
 
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
+
+  // 목 off + 실데이터 없음 — 미리보기 드리프트 값(34%)을 진짜처럼 보여주지 않는다
+  if (!mockEnabled && monitorPoints.length === 0) {
+    return (
+      <div className="deploy-empty">
+        드리프트 데이터가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+      </div>
+    )
+  }
+
   const latest =
     monitorPoints.length > 0
       ? monitorPoints[monitorPoints.length - 1]

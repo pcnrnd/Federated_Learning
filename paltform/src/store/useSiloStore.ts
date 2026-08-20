@@ -42,10 +42,17 @@ export interface SiloStore {
   addSilo: (input: NewSiloInput) => void
   updateThreshold: (id: number, partial: Partial<SiloThresholds>) => void
   removeSilo: (id: number) => void
+  /** 목 off — 사일로 목록을 비운다 */
+  clearAll: () => void
+  /** 목 on — 초기 시드로 복원한다 */
+  reseed: () => void
 }
 
 export const useSiloStore = create<SiloStore>((set, get) => ({
   silos: seedSilos(),
+
+  clearAll: () => set({ silos: [] }),
+  reseed: () => set({ silos: seedSilos() }),
 
   addSilo: (input) => {
     const parent = get().silos.find((s) => s.id === input.parentId)

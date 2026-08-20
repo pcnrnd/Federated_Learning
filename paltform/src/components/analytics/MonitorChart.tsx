@@ -81,9 +81,11 @@ export function MonitorChart() {
   const monitorPoints = useSimulationStore((s) => s.monitorPoints)
   const isRunning = useSimulationStore((s) => s.isRunning)
   const theme = useSimulationStore((s) => s.theme)
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
   const chartRef = useRef<ChartJS<'line'>>(null)
 
-  const showPreview = monitorPoints.length === 0 && !isRunning
+  // 예상 KPI 미리보기는 목 모드 전용 — 목이 꺼지면 가짜 점선을 그리지 않는다
+  const showPreview = mockEnabled && monitorPoints.length === 0 && !isRunning
 
   // 테마 전환 시 토큰에서 색을 다시 읽어 차트를 재구성한다.
   const options = useMemo(() => buildChartOptions(getChartTheme()), [theme])
@@ -135,8 +137,14 @@ export function MonitorChart() {
   }, [monitorPoints, showPreview])
 
   return (
+    !mockEnabled && monitorPoints.length === 0 ? (
+      <div className="deploy-empty">
+        표시할 운영 지표가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+      </div>
+    ) : (
     <div className="analytics-chart-box">
       <Line ref={chartRef} data={data} options={options} />
     </div>
+    )
   )
 }

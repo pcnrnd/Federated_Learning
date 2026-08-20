@@ -430,6 +430,12 @@ button {
   white-space: nowrap;
 }
 
+/* 토글 아래 상태 안내 (목 데이터 꺼짐 등) */
+.settings-row-hint {
+  font-size: 11px;
+  color: var(--yellow);
+}
+
 .user-avatar {
   width: 36px;
   height: 36px;

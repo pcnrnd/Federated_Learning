@@ -14,6 +14,7 @@ export function ControlPanel() {
   const setLocalEpochs = useSimulationStore((s) => s.setLocalEpochs)
   const setLearningRate = useSimulationStore((s) => s.setLearningRate)
   const log = useSimulationStore((s) => s.log)
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
 
   // 엔진 컨트롤은 SimulationEngineHost의 effect에서 등록되므로 첫 커밋 시점엔 아직 비어 있다.
   // 렌더 시점에 구조분해하면 그 no-op을 붙잡은 채 굳어버리므로(탭 전환 전까지 버튼이 죽는다)
@@ -105,7 +106,8 @@ export function ControlPanel() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={isRunning && !isPaused}
+            disabled={(isRunning && !isPaused) || !mockEnabled}
+            title={mockEnabled ? undefined : '목 데이터가 꺼져 있습니다 — 설정에서 활성화하세요'}
             onClick={start}
           >
             <i className={`fa-solid ${isRunning && !isPaused ? 'fa-spinner fa-spin' : 'fa-play'}`} />{' '}

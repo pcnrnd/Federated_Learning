@@ -104,9 +104,11 @@ export function PerformanceChart() {
   const chartPoints = useSimulationStore((s) => s.chartPoints)
   const isRunning = useSimulationStore((s) => s.isRunning)
   const theme = useSimulationStore((s) => s.theme)
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
   const chartRef = useRef<ChartJS<'line'>>(null)
 
-  const showPreview = chartPoints.length <= 1 && !isRunning
+  // 예상 곡선 미리보기는 목 모드 전용 — 목이 꺼지면 가짜 곡선을 그리지 않는다
+  const showPreview = mockEnabled && chartPoints.length <= 1 && !isRunning
 
   // 테마 전환 시 토큰에서 색을 다시 읽어 차트를 재구성한다.
   const options = useMemo(() => buildChartOptions(getChartTheme()), [theme])
@@ -175,6 +177,15 @@ export function PerformanceChart() {
     })
     return () => window.cancelAnimationFrame(frame)
   }, [chartPoints, showPreview])
+
+  // 목 off + 실데이터 없음 — 빈 축을 그리는 대신 안내 문구
+  if (!mockEnabled && chartPoints.length === 0) {
+    return (
+      <div className="deploy-empty">
+        표시할 성능 데이터가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+      </div>
+    )
+  }
 
   return (
     <div className="analytics-chart-box">

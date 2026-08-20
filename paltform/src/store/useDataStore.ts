@@ -68,6 +68,11 @@ export interface DataStore {
   // 파이프라인(작업) 등록/해제
   addJob: (input: NewJobInput) => void
   removeJob: (id: string) => void
+
+  /** 목 off — 정제·파이프라인 데이터를 비운다 */
+  clearAll: () => void
+  /** 목 on — 초기 시드로 복원한다 */
+  reseed: () => void
 }
 
 let jobSeq = 1
@@ -80,6 +85,9 @@ function depsSatisfied(jobs: Job[], job: Job): boolean {
 export const useDataStore = create<DataStore>((set, get) => ({
   dataBySilo: seedDataBySilo(),
   jobs: seedJobs(),
+
+  clearAll: () => set({ dataBySilo: {}, jobs: [] }),
+  reseed: () => set({ dataBySilo: seedDataBySilo(), jobs: seedJobs() }),
 
   ensureSiloData: (siloId) => {
     if (get().dataBySilo[siloId]) return

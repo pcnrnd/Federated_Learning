@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { getSimulationControls } from '@/hooks/useSimulationEngine'
+import { clearAllMockData, reseedAllMockData } from '@/lib/mockData'
+import { useSimulationStore } from '@/store/useSimulationStore'
 import { ThemeToggle } from './ThemeToggle'
 
 /**
@@ -9,6 +12,21 @@ import { ThemeToggle } from './ThemeToggle'
 export function SettingsMenu() {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
+  const setMockEnabled = useSimulationStore((s) => s.setMockEnabled)
+
+  const handleMockToggle = (enabled: boolean) => {
+    // 라운드 진행 중에 끄면 진행 중 세대를 먼저 폐기해야 빈 스토어를 건드리지 않는다
+    if (!enabled && useSimulationStore.getState().isRunning) {
+      getSimulationControls().pause()
+    }
+    // off = 로그 포함 전부 비운 뒤 상태 변경을 기록 — 순서를 바꾸면 기록이 지워진다
+    if (!enabled) clearAllMockData()
+    setMockEnabled(enabled)
+    // on = 초기 데모 시드 복원 (reset은 로그를 지우지 않는다)
+    if (enabled) reseedAllMockData()
+  }
 
   useEffect(() => {
     if (!open) return
@@ -49,6 +67,25 @@ export function SettingsMenu() {
             <span className="settings-row-label">다크 모드</span>
             <ThemeToggle />
           </div>
+
+          <span className="settings-popover-title">데이터 소스</span>
+          <div className="settings-row">
+            <span className="settings-row-label">목 데이터 시뮬레이션</span>
+            <label className="drift-toggle" htmlFor="settings-mock-toggle">
+              <input
+                id="settings-mock-toggle"
+                type="checkbox"
+                checked={mockEnabled}
+                onChange={(e) => handleMockToggle(e.target.checked)}
+              />
+              <span className="drift-toggle-track" aria-hidden="true" />
+            </label>
+          </div>
+          {!mockEnabled && (
+            <span className="settings-row-hint">
+              시뮬레이션 중지됨 — 실서버 연동 대기
+            </span>
+          )}
         </div>
       )}
     </div>

@@ -113,6 +113,11 @@ export interface ModelStore {
 
   /** 드리프트 경보 → 운영 모델 재학습 트리거 (신규 실험 버전 생성) */
   triggerRetrain: (modelId?: string) => void
+
+  /** 목 off — 모델·패키징·배포 데이터를 비운다 */
+  clearAll: () => void
+  /** 목 on — 초기 시드로 복원한다 */
+  reseed: () => void
 }
 
 /** 단일 배포 상태를 불변 갱신 */
@@ -161,6 +166,19 @@ export const useModelStore = create<ModelStore>((set, get) => ({
 
   setProjectFilter: (projectFilter) => set({ projectFilter }),
   setDeployTarget: (deployTargetId) => set({ deployTargetId }),
+
+  clearAll: () =>
+    set({ models: [], packages: {}, deployments: [], deployTargetId: null }),
+  reseed: () => {
+    const models = seedModels()
+    set({
+      models,
+      packages: seedPackages(models),
+      deployments: [],
+      deployTargetId: null,
+      projectFilter: ALL_PROJECTS,
+    })
+  },
 
   addModel: (input) => {
     const model: ModelVersion = {
