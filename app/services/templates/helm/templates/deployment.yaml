@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fed-model.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.model.name }}
+    app.kubernetes.io/version: {{ .Values.model.version | quote }}
+    fed.framework: {{ .Values.model.framework }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy: {{- toYaml .Values.deployment.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.model.name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.model.name }}
+        app.kubernetes.io/version: {{ .Values.model.version | quote }}
+    spec:
+      containers:
+        - name: inference
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Values.model.version }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: MODEL_NAME
+              value: {{ .Values.model.name | quote }}
+            - name: MODEL_VERSION
+              value: {{ .Values.model.version | quote }}
+            - name: MODEL_FRAMEWORK
+              value: {{ .Values.model.framework | quote }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}

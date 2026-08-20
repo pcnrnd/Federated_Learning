@@ -1,0 +1,27 @@
+# Ruff 설정 — 저장소 루트로 복사하거나 pyproject.toml [tool.ruff] 섹션에 병합한다.
+
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",   # line too long (line-length 100 + black 호환)
+    "B008",   # 함수 기본값으로 Query() 호출 — FastAPI 패턴
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011", "RUF001"]      # assert False 허용, 한글 문자열 OK
+"silo_sdk/*" = ["I001"]              # SDK는 import 순서 제약 완화
+
+[format]
+quote-style = "double"
+indent-style = "space"

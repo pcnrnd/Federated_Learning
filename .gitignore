@@ -1,15 +1,43 @@
+# --- 파이썬 ---
 .venv
 __pycache__
 .python-version
+.pytest_cache/
+.ruff_cache/
+pyproject.toml
+uv.lock
+
+# --- 비밀값 · 로컬 설정 ---
 .env
 config/
 config.demo/
+
+# --- 빌드 산출물 · 로그 ---
 app/*.log
 app/dashboard-*.png
-pyproject.toml
-uv.lock
-.cursor
+app/static/dist/
+node_modules/
+
+# --- 바이브코딩 / AI 에이전트 도구 (로컬 전용, 커밋하지 않음) ---
+# 에이전트 설정 디렉터리
 .claude
+.claude.json
+.mcp.json
+.cursor
+.cursorrules
+.antigravity
+
+# 에이전트 지시 문서 (하위 디렉터리 포함 — 예: paltform/DESIGN.md)
 CLAUDE.md
-DESIGN.md
 AGENTS.md
+GEMINI.md
+DESIGN.md
+TASKS.md
+SCREENS.md
+
+# 에이전트가 생성한 작업 문서
+docs/superpowers/
+docs/paltform-feature-checklist.md
+
+# PoC 실행 로그
+poc/.run-logs/

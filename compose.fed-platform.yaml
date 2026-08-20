@@ -1,0 +1,27 @@
+services:
+  fed-platform:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    image: fed-platform:local
+    ports:
+      - "${FED_PLATFORM_PORT:-8000}:8000"
+    environment:
+      FED_CONFIG_DIR: /srv/config
+      FED_API_KEY: ${FED_API_KEY:-}
+    volumes:
+      - ./config:/srv/config
+      # Enable only when packaging/deployment routes must control the host Docker daemon.
+      # - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

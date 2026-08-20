@@ -23,9 +23,9 @@ def index(request: Request):
     """초기 페이지 렌더링"""
     hosts = get_docker_hosts()
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "nodes": [
                 {"id": node_id, "label": info["label"]}
                 for node_id, info in hosts.items()
