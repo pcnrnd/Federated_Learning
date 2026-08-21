@@ -46,6 +46,8 @@ export interface SiloStore {
   clearAll: () => void
   /** 목 on — 초기 시드로 복원한다 */
   reseed: () => void
+  /** 라이브 모드 — 서버 폴링 결과로 목록을 통째로 교체한다 */
+  setSilos: (silos: Silo[]) => void
 }
 
 export const useSiloStore = create<SiloStore>((set, get) => ({
@@ -53,6 +55,7 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
 
   clearAll: () => set({ silos: [] }),
   reseed: () => set({ silos: seedSilos() }),
+  setSilos: (silos) => set({ silos }),
 
   addSilo: (input) => {
     const parent = get().silos.find((s) => s.id === input.parentId)

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import { AppLayout } from '@/components/layout/AppLayout'
+import { useLivePolling } from '@/hooks/useLivePolling'
 import { SimulationEngineHost } from '@/hooks/useSimulationEngine'
 import { useSystemHeartbeat } from '@/hooks/useSystemHeartbeat'
 import { clearAllMockData } from '@/lib/mockData'
@@ -28,6 +29,7 @@ const VIEW_REGISTRY: Record<TabId, ReactNode> = {
 export default function App() {
   const activeTab = useSimulationStore((s) => s.activeTab)
   useSystemHeartbeat()
+  useLivePolling()
 
   // 스토어는 항상 시드로 초기화되므로, 목 off가 저장된 채 새로고침하면 여기서 비운다
   useEffect(() => {

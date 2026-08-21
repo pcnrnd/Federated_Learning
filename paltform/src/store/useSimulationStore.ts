@@ -71,6 +71,12 @@ export interface SimulationStore {
   setMockEnabled: (enabled: boolean) => void
   /** 목 off — 시뮬레이션 데이터를 전부 비운다 (실서버 연동 대기 상태) */
   clearMockData: () => void
+  /** 라이브 모드 — 서버 폴링 결과를 반영한다 (부분 갱신) */
+  applyLiveSnapshot: (
+    partial: Partial<
+      Pick<SimulationStore, 'chartPoints' | 'monitorPoints' | 'currentRound' | 'global'>
+    >,
+  ) => void
 
   // Actions: engine lifecycle
   startRunning: () => void
@@ -205,6 +211,8 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       // 하트비트·라운드 로그도 목 산출물이므로 함께 비운다
       logs: [],
     }),
+
+  applyLiveSnapshot: (partial) => set(partial),
 
   setAlgorithm: (algorithm) =>
     set((state) => ({ config: { ...state.config, algorithm } })),
