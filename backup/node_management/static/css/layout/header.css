@@ -1,0 +1,55 @@
+/* ============================================
+   헤더 스타일
+   ============================================ */
+.dashboard-header {
+  background: var(--bg-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  padding: var(--header-padding-vertical) 2.5rem;
+  box-shadow: var(--shadow-md);
+  margin-bottom: 0;
+}
+
+.header-content {
+  width: 100%;
+  margin: 0;
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.header-title i {
+  font-size: 2rem;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.header-title h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin: 0;
+}
+
+.header-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.header-subtitle i {
+  color: var(--primary);
+}
+
