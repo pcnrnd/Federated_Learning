@@ -40,4 +40,4 @@ docs/superpowers/
 docs/paltform-feature-checklist.md
 
 # PoC 실행 로그
-poc/.run-logs/
+backup/poc/.run-logs/
