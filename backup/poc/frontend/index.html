@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FCP PoC Federated Computing Console</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header>
+    <h1>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-cyan);">
+        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+        <line x1="6" y1="6" x2="6.01" y2="6"></line>
+        <line x1="6" y1="18" x2="6.01" y2="18"></line>
+      </svg>
+      Federated Computing Platform <span>(3차년도 PoC)</span>
+    </h1>
+    <div class="auth-badge" id="api-status-badge">API Key Secured</div>
+  </header>
+
+  <!-- Main Multi-Column Grid Layout -->
+  <main>
+    
+    <!-- LEFT PANEL: Node & Container Management -->
+    <section class="panel" id="node-panel">
+      <h2>연합 노드 관리 (Silo)</h2>
+      
+      <!-- Add Node Inline Form -->
+      <div style="display: flex; flex-direction: column; gap: 0.5rem; background: rgba(0,0,0,0.15); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">
+        <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 500;">신규 노드 수동 가입</span>
+        <input type="text" id="node-label-input" class="input-field" placeholder="노드 레이블 (예: 의료 사일로 C)">
+        <input type="text" id="node-url-input" class="input-field" placeholder="Docker API (예: tcp://localhost:2373)">
+        <button id="add-node-btn" class="btn" style="width: 100%; padding: 0.4rem;">가입 요청</button>
+      </div>
+
+      <!-- Live Node List Container -->
+      <div style="display: flex; flex-direction: column; gap: 0.75rem; overflow-y: auto; max-height: 300px;" id="node-list">
+        <!-- Dynamic Node Cards will render here -->
+        <div style="text-align: center; color: var(--text-secondary); font-size: 0.8rem; padding: 2rem 0;">
+          노드 정보를 로드 중입니다...
+        </div>
+      </div>
+
+      <hr style="border: 0; border-top: 1px solid var(--border-color);">
+
+      <!-- Selected Node Containers List -->
+      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="border-left: 3px solid var(--accent-purple); font-size: 1rem;">로컬 샌드박스 상태</h2>
+          <button id="scan-containers-btn" class="btn btn-secondary" style="font-size: 0.7rem; padding: 0.25rem 0.5rem;">새로고침</button>
+        </div>
+        <span id="selected-node-display" style="font-size: 0.75rem; color: var(--accent-cyan); font-weight: 500;">선택 노드: silo_1</span>
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 200px; overflow-y: auto;" id="container-list">
+          <div style="text-align: center; color: var(--text-secondary); font-size: 0.75rem; padding: 1rem 0;">
+            스캔 버튼을 눌러 상태를 스캔하세요.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER PANEL: Global Live Monitoring & KPI Charts -->
+    <section class="panel" style="gap: 1.5rem;" id="main-monitor">
+      <div>
+        <h2>글로벌 연합 모델 관제</h2>
+        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">
+          3개 분산 기관으로부터 실시간 취합된 가중치 파라미터를 통합 모니터링합니다.
+        </p>
+      </div>
+
+      <!-- KPI Radial/Bar Metrics Dashboard Grid (5대 KPI 시각화) -->
+      <div class="kpi-grid">
+        
+        <!-- KPI 1: Federated Training Time -->
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">연합 학습 누적 시간</span>
+            <span style="font-size: 0.65rem; color: var(--color-success); font-weight: 600;">정상</span>
+          </div>
+          <span class="kpi-value" id="kpi-time">14.8s</span>
+          <span class="kpi-sub">목표치 60s 대비 매우 빠름</span>
+        </div>
+
+        <!-- KPI 2: Data Cleaning Precision -->
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">데이터 정제 무결성</span>
+            <span style="font-size: 0.65rem; color: var(--color-success); font-weight: 600;">완료</span>
+          </div>
+          <span class="kpi-value" id="kpi-cleaning">100.0%</span>
+          <span class="kpi-sub">결측치 142건 전원 보간 완료</span>
+        </div>
+
+        <!-- KPI 3: Model/Data Drift trend -->
+        <div class="kpi-card" id="drift-card">
+          <div class="kpi-header">
+            <span class="kpi-title">모델 드리프트 계수 (JSD)</span>
+            <span style="font-size: 0.65rem; color: var(--color-warning); font-weight: 600;" id="kpi-drift-badge">안정</span>
+          </div>
+          <span class="kpi-value" id="kpi-drift">0.082</span>
+          <span class="kpi-sub">경고 임계치 0.150 미만</span>
+        </div>
+
+        <!-- KPI 4: Communication Overhead -->
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">통신 패킷 오버헤드</span>
+            <span style="font-size: 0.65rem; color: var(--color-success); font-weight: 600;">최적화</span>
+          </div>
+          <span class="kpi-value" id="kpi-overhead">12.5 KB</span>
+          <span class="kpi-sub">가중치 세그먼트 압축 전송</span>
+        </div>
+
+      </div>
+
+      <!-- Shadow & AB Test Verification Panel -->
+      <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); padding: 1.25rem; border-radius: 12px; display: flex; flex-direction: column; gap: 0.75rem;">
+        <h3 style="font-size: 0.95rem; font-weight: 600; color: var(--accent-cyan); display: flex; justify-content: space-between; align-items: center;">
+          실데이터 기반 섀도우 배포 검증 (Shadow Model Test)
+          <span style="font-size: 0.7rem; color: var(--text-secondary);">버전: v1.2.0 (Active)</span>
+        </h3>
+        
+        <!-- Live Traffic Compare Bar -->
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.75rem; margin-top: 0.5rem;">
+          <div style="display: flex; justify-content: space-between; color: var(--text-secondary);">
+            <span>운영 채널 (Active Model v1.1.0): 정확도 89.2%</span>
+            <span>예측 수합 성공률 100%</span>
+          </div>
+          <div style="background: rgba(255,255,255,0.05); height: 8px; border-radius: 4px; overflow: hidden; position: relative;">
+            <div style="background: var(--accent-cyan); width: 89.2%; height: 100%;"></div>
+          </div>
+          
+          <div style="display: flex; justify-content: space-between; color: var(--text-secondary); margin-top: 0.5rem;">
+            <span>섀도우 검증 채널 (Shadow Model v1.2.0): 정확도 94.6%</span>
+            <span style="color: var(--color-success); font-weight: 600;">성능 향상 (+5.4%)</span>
+          </div>
+          <div style="background: rgba(255,255,255,0.05); height: 8px; border-radius: 4px; overflow: hidden; position: relative;">
+            <div style="background: var(--accent-purple); width: 94.6%; height: 100%;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL: Federated Learning Control & Console -->
+    <section class="panel" id="control-panel">
+      <h2>연합컴퓨팅 파이프라인 제어</h2>
+      
+      <!-- Data Cleaning Action -->
+      <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); padding: 1rem; border-radius: 12px; display: flex; flex-direction: column; gap: 0.75rem;">
+        <span style="font-size: 0.8rem; font-weight: 600; color: var(--accent-cyan);">1. 원격 사일로 데이터 정제</span>
+        <select id="clean-recipe-select" class="input-field">
+          <option value="의료데이터_결측치_보간_레시피">의료데이터_결측치_보간_레시피</option>
+          <option value="바이오_이상치_필터_레시피">바이오_이상치_필터_레시피</option>
+        </select>
+        <button id="run-clean-btn" class="btn" style="background: linear-gradient(135deg, var(--accent-purple), hsl(280, 85%, 50%)); color: white;">정제 Job 실행 배포</button>
+      </div>
+
+      <!-- FL Training Action (FedAvg) -->
+      <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); padding: 1rem; border-radius: 12px; display: flex; flex-direction: column; gap: 0.75rem;">
+        <span style="font-size: 0.8rem; font-weight: 600; color: var(--accent-cyan);">2. FedAvg 연합 학습 라운드</span>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <label style="font-size: 0.75rem; color: var(--text-secondary); width: 80px;">타겟 라운드:</label>
+          <input type="number" id="round-num-input" class="input-field" value="5" min="1" max="20" style="padding: 0.4rem; text-align: center;">
+        </div>
+        <button id="run-fl-btn" class="btn">연합 가중치 취합 트리거</button>
+      </div>
+
+      <!-- Real-time Console Log terminal -->
+      <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+        <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">실시간 분산 이벤트 로그</span>
+        <div class="console-box" id="console-logs">
+          [SYSTEM] FCP PoC Dashboard Initialized.<br>
+          [SYSTEM] API Key 상태: 활성화 (보안 채널 가동).<br>
+          [DOCKER] 원격 노드 헬스체크 대기 중...
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
