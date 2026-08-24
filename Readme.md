@@ -9,7 +9,7 @@
 다운로드 → 로컬 학습 → 업로드 → 집계로 이어지는 라운드 사이클을
 토폴로지·노드·차트·로그 네 가지 관점에서 모니터링합니다.
 
-애플리케이션 소스는 [`fed/`](fed/) 디렉터리에 있습니다. (Vite + React 18 + TypeScript)
+애플리케이션 소스는 [`paltform/`](paltform/) 디렉터리에 있습니다. (Vite + React 18 + TypeScript)
 
 ---
 
@@ -48,7 +48,7 @@
 ## 빠른 시작
 
 ```bash
-cd fed
+cd paltform
 npm install
 npm run dev        # http://localhost:5173
 npm run typecheck  # tsc --noEmit
@@ -87,11 +87,17 @@ npm run preview    # build 결과 미리보기
 
 ```
 .
-├── fed/         # 연합컴퓨팅 오케스트레이터 (Vite + React + TS) ← 메인 앱
+├── paltform/    # 연합컴퓨팅 오케스트레이터 SPA (Vite + React + TS) ← 데모 앱
 │   ├── src/     # main / App / views / components / store / hooks / lib
 │   └── _legacy/ # vanilla v0.1 (HTML/CSS/JS) 원본 보관
+├── app/         # 연합 MLOps 플랫폼 백엔드 (FastAPI)
+├── silo/        # 사일로 컨테이너 (Docker-in-Docker + MinIO)
+├── docs/        # 설계 문서 · 스펙
 ├── img/         # 화면 캡처
+├── backup/      # 레거시 보관 (node_management · node_management_v0,2 · silo copy · poc · poc2 · test)
 └── README.md
 ```
 
-자세한 앱 아키텍처·데이터 흐름·설정값은 [`fed/README.md`](fed/README.md)를 참고하세요.
+> 더 이상 사용하지 않는 이전 세대 디렉터리는 이력 보존을 위해 삭제하지 않고 [`backup/`](backup/) 아래로 옮겨 두었습니다.
+
+자세한 앱 아키텍처·데이터 흐름·설정값은 [`paltform/README.md`](paltform/README.md)를 참고하세요.
