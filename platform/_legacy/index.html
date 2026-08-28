@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>연합컴퓨팅 오케스트레이터 및 대시보드</title>
+    
+    <!-- Google Fonts: Outfit & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome for Premium Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Chart.js for Gorgeous Real-time Charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Custom CSS Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Aesthetics & Ambient Backgrounds -->
+    <div class="glass-bg"></div>
+    <div class="glow-orb orb-1"></div>
+    <div class="glow-orb orb-2"></div>
+    
+    <div class="app-layout">
+        <!-- LEFT SIDEBAR -->
+        <aside class="sidebar glass-panel">
+            <div class="sidebar-header">
+                <div class="logo-wrapper">
+                    <i class="fa-solid fa-network-wired logo-icon"></i>
+                </div>
+                <div class="logo-title">
+                    <h2>FEDERATED</h2>
+                    <span>COORDINATOR</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-menu">
+                <button class="menu-btn active" data-tab="tab-dashboard">
+                    <i class="fa-solid fa-chart-pie"></i> 메인 대시보드
+                </button>
+                <button class="menu-btn" data-tab="tab-nodes">
+                    <i class="fa-solid fa-server"></i> 분산 노드 관리
+                </button>
+                <button class="menu-btn" data-tab="tab-analytics">
+                    <i class="fa-solid fa-chart-line"></i> 성능 분석 차트
+                </button>
+                <button class="menu-btn" data-tab="tab-logs">
+                    <i class="fa-solid fa-terminal"></i> 실시간 시스템 로그
+                </button>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="user-profile">
+                    <div class="user-avatar"><i class="fa-solid fa-user-shield"></i></div>
+                    <div class="user-info">
+                        <span class="user-name">관리자</span>
+                        <span class="user-role">System Administrator</span>
+                    </div>
+                </div>
+                <div class="sidebar-status">
+                    <span class="status-pulse"></span>
+                    <span class="status-lbl">ORCHESTRATOR ACTIVE</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- RIGHT MAIN WINDOW -->
+        <main class="main-viewport">
+            <!-- GLOBAL METRICS HEADER (Visible across all tabs for core state monitoring) -->
+            <header class="global-header glass-panel">
+                <div class="page-title-area">
+                    <h1 id="view-title">메인 대시보드</h1>
+                    <p id="view-desc">연합컴퓨팅 시스템의 토폴로지와 학습 사이클을 시뮬레이션하고 통제합니다.</p>
+                </div>
+                
+                <div class="header-metrics">
+                    <div class="header-metric-card">
+                        <span class="lbl">현재 라운드</span>
+                        <span class="val" id="stat-round">0 / 0</span>
+                    </div>
+                    <div class="header-metric-card">
+                        <span class="lbl">글로벌 정확도</span>
+                        <span class="val text-cyan" id="stat-accuracy">0.00%</span>
+                    </div>
+                    <div class="header-metric-card">
+                        <span class="lbl">누적 전송 트래픽</span>
+                        <span class="val text-purple" id="stat-traffic">0.00 MB</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- VIEWPORT CONTENT PANES -->
+            <div class="content-viewport-container">
+                
+                <!-- TAB 1: OVERVIEW DASHBOARD -->
+                <div class="tab-pane active" id="tab-dashboard">
+                    <div class="dashboard-split-grid">
+                        <!-- Controls Section -->
+                        <div class="glass-panel content-card">
+                            <div class="card-header">
+                                <h3><i class="fa-solid fa-sliders header-icon"></i> 시뮬레이션 구성 및 제어</h3>
+                                <span class="desc">Simulation Settings</span>
+                            </div>
+                            <div class="card-body">
+                                <div class="control-grid-vertical">
+                                    <div class="control-group">
+                                        <label for="config-algorithm">합산 알고리즘 (Aggregation Method)</label>
+                                        <div class="select-wrapper">
+                                            <select id="config-algorithm">
+                                                <option value="fedavg">FedAvg (연합 가중 평균)</option>
+                                                <option value="fedmedian">Federated Median (이상치 내성)</option>
+                                                <option value="secagg">Secure Aggregation (보안 합산)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="control-group">
+                                        <div class="slider-header">
+                                            <label for="config-rounds">총 연합 라운드 수 (Global Rounds)</label>
+                                            <span class="slider-indicator" id="val-rounds">15</span>
+                                        </div>
+                                        <input type="range" id="config-rounds" min="5" max="50" value="15">
+                                    </div>
+                                    
+                                    <div class="control-group">
+                                        <div class="slider-header">
+                                            <label for="config-epochs">로컬 학습 반복 횟수 (Local Epochs)</label>
+                                            <span class="slider-indicator" id="val-epochs">5</span>
+                                        </div>
+                                        <input type="range" id="config-epochs" min="1" max="10" value="5">
+                                    </div>
+                                    
+                                    <div class="control-group">
+                                        <div class="slider-header">
+                                            <label for="config-lr">로컬 학습률 (Learning Rate)</label>
+                                            <span class="slider-indicator" id="val-lr">0.01</span>
+                                        </div>
+                                        <input type="range" id="config-lr" min="0.001" max="0.1" step="0.001" value="0.01">
+                                    </div>
+                                </div>
+                                
+                                <div class="action-btn-row">
+                                    <button id="btn-start" class="btn btn-primary">
+                                        <i class="fa-solid fa-play"></i> 학습 시작
+                                    </button>
+                                    <button id="btn-pause" class="btn btn-secondary" disabled>
+                                        <i class="fa-solid fa-pause"></i> 일시 정지
+                                    </button>
+                                    <button id="btn-reset" class="btn btn-danger">
+                                        <i class="fa-solid fa-rotate-left"></i> 초기화
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Topology SVG Section -->
+                        <div class="glass-panel content-card">
+                            <div class="card-header">
+                                <h3><i class="fa-solid fa-circle-nodes header-icon"></i> 실시간 연합 네트워크 토폴로지</h3>
+                                <span class="desc">Encrypted Data Channels & Flow Visualizer</span>
+                            </div>
+                            <div class="card-body flex-center">
+                                <div class="topology-box">
+                                    <svg id="topology-svg" viewBox="0 0 500 360">
+                                        <defs>
+                                            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                                            </filter>
+                                            <filter id="small-glow" x="-20%" y="-20%" width="140%" height="140%">
+                                                <feGaussianBlur stdDeviation="3" result="blur" />
+                                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                                            </filter>
+                                        </defs>
+                                        
+                                        <!-- Dynamically generated paths will go here -->
+                                        <g id="paths-container"></g>
+
+                                        <g id="packet-container"></g>
+
+                                        <!-- Coordinator Core -->
+                                        <g class="server-node" transform="translate(250, 180)">
+                                            <circle class="node-outer" r="32" />
+                                            <circle class="node-inner" r="22" />
+                                            <text class="node-label" y="4" text-anchor="middle">
+                                                <tspan font-family="FontAwesome" font-size="14" fill="#ffffff">&#xf537;</tspan>
+                                            </text>
+                                            <text class="node-name" y="48" text-anchor="middle">중앙 서버</text>
+                                        </g>
+
+                                        <!-- Dynamically generated client nodes will go here -->
+                                        <g id="clients-container"></g>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: NODE MANAGEMENT -->
+                <div class="tab-pane" id="tab-nodes">
+                    <div class="nodes-full-grid" id="nodes-card-container">
+                        <!-- Dynamically generated Node Cards go here -->
+                    </div>
+                </div>
+
+                <!-- TAB 3: PERFORMANCE ANALYTICS -->
+                <div class="tab-pane" id="tab-analytics">
+                    <div class="glass-panel content-card full-card">
+                        <div class="card-header">
+                            <h3><i class="fa-solid fa-chart-line header-icon"></i> 정확도 향상 및 손실 수렴 추이 곡선 (Global Metrics)</h3>
+                            <span class="desc">Interactive charts monitoring loss reduction and model optimization across training rounds.</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="analytics-chart-box">
+                                <canvas id="performance-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 4: SYSTEM LOGS -->
+                <div class="tab-pane" id="tab-logs">
+                    <div class="glass-panel content-card full-card logs-full-panel">
+                        <div class="card-header-logs">
+                            <div class="logs-title-area">
+                                <h3><i class="fa-solid fa-terminal header-icon"></i> 시스템 연합 학습 오케스트레이터 실시간 로그</h3>
+                                <span class="desc">Filtering and monitoring global and private node communications.</span>
+                            </div>
+                            
+                            <!-- Logs Filtering Controls -->
+                            <div class="log-filter-controls">
+                                <div class="filter-group">
+                                    <button class="filter-btn active" data-filter="all">전체 로그</button>
+                                    <button class="filter-btn" data-filter="system">시스템</button>
+                                    <button class="filter-btn" data-filter="server">중앙 서버</button>
+                                    <button class="filter-btn" data-filter="nodes">분산 노드</button>
+                                </div>
+                                <button id="btn-clear-console" class="btn-clear-large" title="콘솔 전체 삭제">
+                                    <i class="fa-solid fa-trash-can"></i> 콘솔 초기화
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body no-padding overflow-hidden">
+                            <div class="console-box">
+                                <div class="console-log-expanded" id="console-output">
+                                    <div class="log-entry system">
+                                        <span class="time">[13:18:00]</span>
+                                        <span class="tag">[SYSTEM]</span>
+                                        <span class="msg">연합컴퓨팅 사이이드바 오케스트레이터 인터페이스 초기화 완료. 새로운 학습 구성 대기 중...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Script imports -->
+    <script src="app.js"></script>
+</body>
+</html>
