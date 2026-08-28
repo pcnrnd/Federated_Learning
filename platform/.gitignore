@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vite
+.DS_Store
+*.log
+
+# tsc -b 빌드 부산물 (vite.config.ts에서 생성됨)
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
