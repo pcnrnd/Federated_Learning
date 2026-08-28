@@ -1,0 +1,6 @@
+INFO:     Started server process [25544]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 13] error while attempting to bind on address ('127.0.0.1', 8000): [winerror 10013] 액세스 권한에 의해 숨겨진 소켓에 액세스를 시도했습니다
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
