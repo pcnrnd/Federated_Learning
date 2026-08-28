@@ -13,9 +13,9 @@ config/
 config.demo/
 
 # --- 빌드 산출물 · 로그 ---
-app/*.log
-app/dashboard-*.png
-app/static/dist/
+backup/poc2/*.log
+backup/poc2/dashboard-*.png
+backup/poc2/static/dist/
 node_modules/
 
 # --- 바이브코딩 / AI 에이전트 도구 (로컬 전용, 커밋하지 않음) ---
