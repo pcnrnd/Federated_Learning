@@ -1,0 +1,216 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>연합컴퓨팅 노드 관리</title>
+  <!-- CSS 모듈화된 파일들 -->
+  <link rel="stylesheet" href="/static/css/main.css" />
+  <link rel="stylesheet" href="/static/css/layout/header.css" />
+  <link rel="stylesheet" href="/static/css/layout/sidebar.css" />
+  <link rel="stylesheet" href="/static/css/layout/layout.css" />
+  <link rel="stylesheet" href="/static/css/components/toolbar.css" />
+  <link rel="stylesheet" href="/static/css/components/buttons.css" />
+  <link rel="stylesheet" href="/static/css/components/cards.css" />
+  <link rel="stylesheet" href="/static/css/components/badges.css" />
+  <link rel="stylesheet" href="/static/css/components/modals.css" />
+  <link rel="stylesheet" href="/static/css/components/forms.css" />
+  <link rel="stylesheet" href="/static/css/views/serverView.css" />
+  <link rel="stylesheet" href="/static/css/views/graphView.css" />
+  <link rel="stylesheet" href="/static/css/utilities/animations.css" />
+  <link rel="stylesheet" href="/static/css/utilities/loading.css" />
+  <link rel="stylesheet" href="/static/css/utilities/empty-state.css" />
+  <link rel="stylesheet" href="/static/css/utilities/responsive.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body>
+  <!-- 헤더 섹션 -->
+  <header class="dashboard-header">
+    <div class="header-content">
+      <div class="header-title">
+        <i class="fas fa-cube"></i>
+        <h1>연합컴퓨팅 노드 관리</h1>
+      </div>
+    </div>
+  </header>
+
+  <!-- 메인 레이아웃: 사이드바 + 컨텐츠 -->
+  <div class="dashboard-layout">
+    <!-- 왼쪽 사이드바 -->
+    <aside class="sidebar">
+      <nav class="sidebar-nav">
+        <button id="serverManagerBtn" class="sidebar-item" onclick="switchView('server')">
+          <i class="fas fa-server"></i>
+          <span>서버 관리</span>
+        </button>
+        <button id="serverGraphBtn" class="sidebar-item" onclick="switchView('serverGraph')">
+          <i class="fas fa-network-wired"></i>
+          <span>서버 그래프</span>
+        </button>
+      </nav>
+    </aside>
+
+    <!-- 메인 컨텐츠 영역 -->
+    <main class="main-content">
+      <!-- 툴바 섹션 (테이블/그래프 뷰에서만 표시) -->
+      <div id="toolbarSection" class="toolbar-modern">
+        <div class="toolbar-left">
+          <div class="select-wrapper">
+            <i class="fas fa-network-wired"></i>
+            <select id="nodeSelect" class="modern-select">
+              {% for node in nodes %}
+              <option value="{{ node.id }}">{{ node.label }} ({{ node.id }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn-modern btn-primary" onclick="reloadContainers()">
+            <i class="fas fa-sync-alt"></i>
+            <span>새로고침</span>
+          </button>
+        </div>
+        <div class="toolbar-right">
+          <div class="status-badge" id="statusText"></div>
+        </div>
+      </div>
+
+      <!-- 그래프 뷰 -->
+      <div id="graphView" class="view-container" style="display: none;">
+        <div class="graph-wrapper">
+          <div id="cy" class="graph-canvas"></div>
+          <div class="graph-controls-modern">
+            <button class="btn-icon" onclick="resetGraphLayout()" title="레이아웃 초기화">
+              <i class="fas fa-redo"></i>
+            </button>
+            <button class="btn-icon" onclick="fitGraph()" title="전체 보기">
+              <i class="fas fa-expand"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+        
+      <!-- 서버 관리 뷰 -->
+      <div id="serverView" class="view-container" style="display: none;">
+        <div class="server-manager-view">
+          <div id="serverListSection" class="server-list-section">
+            <div class="section-header">
+              <h2><i class="fas fa-server"></i> 서버 관리</h2>
+              <button class="btn-modern btn-primary" onclick="showAddServerForm()">
+                <i class="fas fa-plus"></i>
+                <span>서버 추가</span>
+              </button>
+            </div>
+            <div id="serverList" class="server-list">
+              <!-- 서버 목록이 여기에 동적으로 추가됨 -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 서버 그래프 뷰 -->
+      <div id="serverGraphView" class="view-container" style="display: none;">
+        <div class="server-graph-layout">
+          <!-- 왼쪽: 그래프 영역 -->
+          <div class="graph-area">
+            <div class="graph-wrapper">
+              <div id="serverCy" class="graph-canvas"></div>
+              <div class="graph-controls-modern">
+                <button class="btn-icon" onclick="resetServerGraphLayout()" title="레이아웃 초기화">
+                  <i class="fas fa-redo"></i>
+                </button>
+                <button class="btn-icon" onclick="fitServerGraph()" title="전체 보기">
+                  <i class="fas fa-expand"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- 오른쪽: 상세 정보 패널 -->
+          <div id="serverDetailsPanel" class="server-details-panel" style="display: none;">
+            <div class="panel-header">
+              <h3><i class="fas fa-info-circle"></i> 서버 상세 정보</h3>
+              <button class="panel-close" onclick="closeServerDetailsPanel()">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+            <div class="panel-body">
+              <div id="serverDetailsContent">
+                <!-- 노드 선택 시 여기에 정보 표시 -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 로딩 오버레이 -->
+  <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+    <div class="loading-spinner">
+      <i class="fas fa-spinner fa-spin"></i>
+      <p>로딩 중...</p>
+    </div>
+  </div>
+
+  <!-- 서버 추가/수정 모달 -->
+  <div id="serverFormModal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="serverFormTitle"><i class="fas fa-server"></i> 서버 추가</h2>
+        <button class="modal-close" onclick="closeServerFormModal()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="serverForm" class="server-form" onsubmit="saveServer(event)">
+          <div class="form-group">
+            <label for="serverId">서버 ID *</label>
+            <input type="text" id="serverId" name="id" required 
+                   placeholder="예: node1" pattern="[a-zA-Z0-9_-]+"
+                   title="영문, 숫자, 언더스코어, 하이픈만 사용 가능">
+            <small>고유 식별자 (영문, 숫자, _, - 만 사용)</small>
+          </div>
+          <div class="form-group">
+            <label for="serverLabel">서버 이름 *</label>
+            <input type="text" id="serverLabel" name="label" required 
+                   placeholder="예: 병원 A 서버">
+          </div>
+          <div class="form-group">
+            <label for="serverUrl">URL *</label>
+            <input type="text" id="serverUrl" name="base_url" required 
+                   placeholder="예: tcp://10.0.0.5:2376 또는 unix://var/run/docker.sock">
+            <small>원격: tcp://IP:PORT, 로컬: unix://var/run/docker.sock</small>
+          </div>
+          <!-- TLS 옵션은 아직 미구현 상태이므로 UI에서 숨깁니다.
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="serverTls" name="tls">
+              TLS 인증서 사용
+            </label>
+          </div>
+          -->
+          <div class="form-actions">
+            <button type="button" class="btn-modern" onclick="testServerConnection()">
+              <i class="fas fa-plug"></i>
+              <span>연결</span>
+            </button>
+            <button type="submit" class="btn-modern btn-primary">
+              <i class="fas fa-save"></i>
+              <span>저장</span>
+            </button>
+            <button type="button" class="btn-modern" onclick="closeServerFormModal()">
+              <span>취소</span>
+            </button>
+          </div>
+          <div id="serverTestResult" class="test-result" style="display: none;"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cytoscape.js 라이브러리 추가 (body 끝에 배치) -->
+  <script src="https://unpkg.com/cytoscape@3.27.0/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
