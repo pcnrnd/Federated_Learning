@@ -1,9 +1,9 @@
-# P0 API 계약 — paltform SPA ↔ app/ FastAPI 폴링 매핑
+# P0 API 계약 — platform SPA ↔ app/ FastAPI 폴링 매핑
 
 - 날짜: 2026-08-21
 - 범위: **읽기 전용 폴링 3종** (P0). 변이(라운드 open, 배포 실행)는 P1~P2에서 별도 계약.
 - 활성 조건: 설정에서 **목 데이터 OFF** + 빌드 환경변수 **`VITE_API_BASE`** 설정
-  (예: `paltform/.env.local`에 `VITE_API_BASE=http://localhost:8000`).
+  (예: `platform/.env.local`에 `VITE_API_BASE=http://localhost:8000`).
   `FED_API_KEY`를 쓰는 서버면 `VITE_FED_API_KEY`도 설정 — 모든 요청에 `X-FED-API-Key` 헤더.
 - 폴링 주기: 5초 (`LIVE_POLL_INTERVAL_MS`). 실패는 로그 탭에 1회 기록(연속 실패 스팸 금지),
   복구 시 재기록.
@@ -56,4 +56,4 @@
 
 - 이 계약의 모든 필드는 스칼라·카운트뿐이다. **원시 데이터 필드를 추가하지 않는다.**
 - 목 모드(`mockEnabled=true`)에서는 어떤 폴링도 돌지 않는다 — 시뮬레이션과 실데이터 혼합 금지.
-- 매핑 함수는 `paltform/src/api/mappers.ts`의 순수 함수로 두고 vitest로 고정한다.
+- 매핑 함수는 `platform/src/api/mappers.ts`의 순수 함수로 두고 vitest로 고정한다.
