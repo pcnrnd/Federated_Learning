@@ -1,8 +1,14 @@
 # 계층형 사일로 토폴로지 + HFL 증설 설계
 
 - 날짜: 2026-07-24
-- 대상: `platform/` 시뮬레이션 SPA (구 `fed/`, 현재 디렉터리명 `paltform` — 본 작업에서 `platform`으로 정정)
-- 상태: 사용자 승인 완료 (vitest 포함)
+- 대상: `platform/` 시뮬레이션 SPA (구 `fed/` → `paltform/` → 현 `platform/`, rename 완료)
+- 상태: 사용자 승인 완료 · **구현 완료** (vitest 포함)
+- 위치: **`platform/`의 기준 설계 문서.** 계층 토폴로지·2단 집계·라운드 페이즈에 대한
+  판단은 본 문서를 근거로 한다. `platform/`은 자체 백엔드 없이 동작하는 시뮬레이션이며
+  실서버 연동은 읽기 전용 폴링([2026-08-21-p0-api-contract.md](./2026-08-21-p0-api-contract.md))에
+  한정된다. 백엔드 대상 문서인
+  [2026-08-21-hfl-server-design.md](./2026-08-21-hfl-server-design.md)는 `backup/poc2/`
+  백엔드 PoC 기록물이므로 `platform/`의 기준이 아니다.
 
 ## 1. 배경과 목표
 
@@ -43,9 +49,9 @@ flower.ai docs (SuperLink/SuperNode), Google Cloud cross-silo/cross-device FL �
 
 ## 4. 상세 설계
 
-### 4.0 디렉터리 오타 정정
+### 4.0 디렉터리 오타 정정 (완료)
 
-- `paltform/` → `platform/` 파일시스템 rename. 현재 git 미추적이므로 rename 후 그대로 추가.
+- `paltform/` → `platform/` 파일시스템 rename. 당시 git 미추적이었으므로 rename 후 그대로 추가.
 - 소스는 `@/` 별칭만 사용하므로 코드 수정 없음. `package.json`의 `name` 필드만 확인·정정.
 - 로컬 CLAUDE.md의 `fed/` 참조를 `platform/`으로 갱신 (gitignore 대상, 커밋 안 됨).
 
@@ -122,8 +128,15 @@ flower.ai docs (SuperLink/SuperNode), Google Cloud cross-silo/cross-device FL �
 | 4 | 글로벌 집계 (기존) | — |
 
 - 집계(`src/lib/aggregation.ts`): `aggregateHierarchy(nodes, algorithm)` 신설 —
-  ① `parentId`로 그룹핑해 하위→상위 가중평균(데이터 크기 `size` 가중) 반영,
+  ① `parentId`로 그룹핑해 엣지 가중평균(데이터 크기 `size` 가중) 반영,
   ② 1단 사일로에 대해 기존 `aggregate()` 재사용해 글로벌 집계.
+- **엣지 집계의 참여 범위 = `[상위 자신, ...하위들]`.** 상위 사일로는 순수 집계자가
+  아니라 **자신도 로컬 데이터로 학습하는 사일로**이므로(Phase 2가 1단까지 학습시키고,
+  `nodeFactory`가 1단에도 `size`를 부여하며, 노드 카드가 1단의 로컬 데이터·정확도를
+  표시한다) 자신의 기여를 엣지 평균에 포함하고, 상위의 글로벌 가중치는 `자신 + 하위`
+  표본수 합이 된다. 이 정의에서 클러스터가 전 노드의 진짜 분할이 되어
+  **계층 집계 결과 ≡ 평면 집계 결과**(가중평균 결합법칙)가 정확히 성립한다.
+  상위를 제외하면 상위의 로컬 데이터가 글로벌 집계에서 조용히 사라진다.
 - WAN 트래픽 집계는 **1단 사일로 수 기준 유지** (하위→상위는 사내망 취급, 과금 제외).
   주의: 현재 엔진은 `nodes.length`를 두 곳에서 사용 — 트래픽 계산(engine :130)과
   브로드캐스트 로그 "N개 사일로"(engine :62). 둘 다 `parentId === undefined` 필터 필수.

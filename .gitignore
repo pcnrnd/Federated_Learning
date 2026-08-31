@@ -35,5 +35,8 @@ node_modules/
 
 /docs/paltform-feature-checklist.md
 
+# 연구노트 — 로컬 보관 (커밋 대상 아님)
+/docs/research-notes/
+
 # PoC 실행 로그
 backup/poc/.run-logs/
