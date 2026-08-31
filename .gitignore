@@ -12,6 +12,13 @@ uv.lock
 config/
 config.demo/
 
+# `config/` 는 런타임 YAML 영속화 디렉터리를 겨냥한 규칙이지만 하위 경로 전체에 걸린다.
+# platform/backend/config/ 는 이름만 같은 파이썬 패키지(settings·yaml_store 등)이므로 추적한다.
+!platform/backend/config/
+
+# 사일로 DinD 런타임 데이터 (/var/lib/docker 바인드 마운트)
+/platform/data/
+
 # --- 빌드 산출물 · 로그 ---
 app/*.log
 app/dashboard-*.png
@@ -22,7 +29,6 @@ node_modules/
 /.claude/
 /.cursor/
 
-\
 /AGENTS.md
 /CLAUDE.md
 /backup/poc/AGENTS.md

@@ -1,0 +1,109 @@
+# 연합컴퓨팅 플랫폼 — 통합 기동 (Phase 0)
+#
+# 구 구성은 파일이 둘로 갈라져 있었고 두 지점이 깨져 있었다:
+#   1) 저장소 루트 compose.fed-platform.yaml → 존재하지 않는 `app/Dockerfile` 참조
+#   2) silo/compose.silo.yaml 의 `fed-net` 에 name/external 미지정 → 실제 이름이
+#      `<프로젝트>_fed-net` 이 되어 백엔드·대시보드가 같은 망에 붙지 못했다
+# 본 파일이 둘을 대체한다. 원본 두 파일은 무수정 보존(참조용).
+#
+# 기동:   docker compose up -d --build          (platform/ 에서 실행)
+# 종료:   docker compose down
+# 포트:   FED_PLATFORM_PORT(기본 8000), 사일로 SSH 2223~2225 / Docker API 2371~2373
+#         MinIO 7001~7006 (각 사일로 내부 MinIO의 9000/9001 매핑)
+#
+# MinIO 는 사일로마다 DinD 안에서 기동된다 — entrypoint.siloN.sh 가 컨테이너 내부에서
+# compose.minio.siloN.yaml 을 up 한다. 사일로별 데이터 격리(./data/siloN)를 유지하기 위한
+# 기존 설계이므로 최상위 서비스로 끌어내지 않았다.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: fed-platform-backend:local
+    container_name: fed-backend
+    ports:
+      - "${FED_PLATFORM_PORT:-8000}:8000"
+    environment:
+      FED_CONFIG_DIR: /srv/config
+      FED_API_KEY: ${FED_API_KEY:-}
+      FED_STORAGE: ${FED_STORAGE:-yaml}
+    volumes:
+      - ./config:/srv/config
+      # 패키징/배포 라우터가 호스트 Docker 데몬을 제어해야 할 때만 주석 해제
+      # - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - fed-net
+    depends_on:
+      - silo-1
+      - silo-2
+      - silo-3
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  silo-1:
+    build:
+      context: ./silo
+      dockerfile: Dockerfile.silo1
+    container_name: silo-1
+    privileged: true # Docker-in-Docker 실행 권한 (내부 MinIO 기동에 필요)
+    ports:
+      - "2223:22" # SSH
+      - "2371:2375" # Docker API
+      - "7001:9000" # MinIO API
+      - "7002:9001" # MinIO Console
+    volumes:
+      - ./data/silo1:/var/lib/docker # 사일로 전용 저장소 (데이터 격리)
+      - ./backend/silo_sdk:/opt/silo_sdk:ro # PYTHONPATH=/opt → `import silo_sdk`
+    networks:
+      - fed-net
+
+  silo-2:
+    build:
+      context: ./silo
+      dockerfile: Dockerfile.silo2
+    container_name: silo-2
+    privileged: true
+    ports:
+      - "2224:22"
+      - "2372:2375"
+      - "7003:9000"
+      - "7004:9001"
+    volumes:
+      - ./data/silo2:/var/lib/docker
+      - ./backend/silo_sdk:/opt/silo_sdk:ro
+    networks:
+      - fed-net
+
+  silo-3:
+    build:
+      context: ./silo
+      dockerfile: Dockerfile.silo3
+    container_name: silo-3
+    privileged: true
+    ports:
+      - "2225:22"
+      - "2373:2375"
+      - "7005:9000"
+      - "7006:9001"
+    volumes:
+      - ./data/silo3:/var/lib/docker
+      - ./backend/silo_sdk:/opt/silo_sdk:ro
+    networks:
+      - fed-net
+
+networks:
+  fed-net:
+    name: fed-net # 프로젝트명 접두어 없이 고정 — 외부 compose가 external로 붙을 수 있다
+    driver: bridge

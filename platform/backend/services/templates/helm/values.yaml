@@ -1,0 +1,32 @@
+model:
+  name: fed-model
+  version: "0.1.0"
+  framework: pytorch
+
+image:
+  repository: fed-model
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8501
+
+resources: {}
+
+deployment:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+env: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

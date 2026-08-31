@@ -1,0 +1,60 @@
+# Base Image
+FROM ubuntu:22.04
+
+# 환경변수 설정 (무인 설치 모드)
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 1. 필수 패키지 설치 (Docker, SSH, 기타 도구)
+# Hash Sum mismatch 에러 방지: 에러 무시하고 계속 진행
+RUN apt-get update -o Acquire::Check-Valid-Until=false || true && \
+    apt-get install -y \
+    openssh-server \
+    docker.io \
+    iproute2 \
+    curl \
+    vim \
+    ca-certificates \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# silo_sdk 를 /opt/silo_sdk 로 마운트해 쓰기 위한 임포트 경로.
+# SDK는 stdlib 전용이라 별도 pip 설치가 필요 없다 (compose.yaml의 read-only 마운트 참조).
+ENV PYTHONPATH=/opt
+
+# Docker Compose v2 설치
+RUN curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose && \
+    chmod +x /usr/local/bin/docker-compose
+
+# 2. SSH 설정
+# root 비밀번호를 'root'로 설정 (보안상 취약하지만 R&D 내부망 테스트용)
+# 실제 운영 시에는 SSH Key 방식을 권장합니다.
+RUN echo 'root:root' | chpasswd
+# root 로그인 허용 설정
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+# 2-1. 'admin' 유저 생성 (비밀번호: admin)
+# -m: 홈 디렉토리 생성, -s: 쉘 설정(/bin/bash)
+RUN useradd -m -s /bin/bash admin && \
+    echo 'admin:admin' | chpasswd
+
+# 2-2. 'admin'를 docker 그룹에 추가 (핵심!)
+# 이걸 해야 admin 계정으로 로그인해서 'docker ps' 명령어를 쓸 수 있습니다.
+RUN usermod -aG docker admin
+
+# 3. Docker 디렉토리 볼륨 지점 생성
+VOLUME /var/lib/docker
+
+# 4. 엔트리포인트 스크립트 복사 및 실행 권한 부여 (Silo 1 전용)
+COPY entrypoint.silo1.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 5. MinIO compose 파일 복사 (Silo 1 전용)
+COPY compose.minio.silo1.yaml /usr/local/bin/compose.minio.yaml
+
+# 6. 포트 노출 (SSH: 22, Docker API: 2375, MinIO: 9000, 9001)
+EXPOSE 22 2375 9000 9001
+
+# 7. 실행 명령
+ENTRYPOINT ["entrypoint.sh"]
+
