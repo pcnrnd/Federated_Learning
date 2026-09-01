@@ -542,6 +542,12 @@ button {
   color: var(--text-strong);
 }
 
+/* 목 데이터 모드 배지 — 제목 옆 칩 (model-badge 재사용) */
+.page-title-area h1 .model-badge {
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
 .page-title-area p {
   font-size: 11.5px;
   color: var(--text-secondary);

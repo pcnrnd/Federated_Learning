@@ -8,12 +8,20 @@ export function GlobalHeader() {
   const totalRounds = useSimulationStore((s) => s.config.totalRounds)
   const accuracy = useSimulationStore((s) => s.global.accuracy)
   const traffic = useSimulationStore((s) => s.global.accumulatedTraffic)
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
   const meta = TAB_META[activeTab]
 
   return (
     <header className="global-header glass-panel">
       <div className="page-title-area">
-        <h1>{meta.title}</h1>
+        <h1>
+          {meta.title}
+          {mockEnabled && (
+            <span className="model-badge model-badge-experimental" title="설정에서 목 데이터 시뮬레이션이 켜져 있습니다">
+              목 데이터 모드
+            </span>
+          )}
+        </h1>
         <p>{meta.desc}</p>
       </div>
       <div className="header-right">

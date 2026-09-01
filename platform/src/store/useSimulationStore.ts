@@ -141,12 +141,12 @@ function applyTheme(theme: ThemeMode): void {
 // --- 목 데이터 스위치 영속화 -------------------------------------------------
 const MOCK_STORAGE_KEY = 'fed-mock-enabled'
 
-/** 저장된 값이 없으면 켜짐 — 백엔드 없이도 데모가 돌아야 한다. */
+/** 저장된 값이 없으면 꺼짐 — 기본은 실데이터(라이브) 모드, 데모는 설정에서 켠다. */
 function readInitialMockEnabled(): boolean {
   try {
-    return window.localStorage.getItem(MOCK_STORAGE_KEY) !== 'false'
+    return window.localStorage.getItem(MOCK_STORAGE_KEY) === 'true'
   } catch {
-    return true
+    return false
   }
 }
 
