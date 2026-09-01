@@ -14,13 +14,16 @@ from .cleaning import apply_recipe
 from .client import SiloClient, SiloClientError
 from .edge import combine
 from .histograms import build_histogram
+from .trainer import RidgeResult, train_ridge
 
 __all__ = [
     "AsyncSiloClient",
+    "RidgeResult",
     "SiloClient",
     "SiloClientError",
     "apply_recipe",
     "build_histogram",
     "combine",
     "edge",
+    "train_ridge",
 ]
