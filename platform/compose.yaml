@@ -12,8 +12,8 @@
 #         MinIO 7001~7006 (각 사일로 내부 MinIO의 9000/9001 매핑)
 #
 # MinIO 는 사일로마다 DinD 안에서 기동된다 — entrypoint.siloN.sh 가 컨테이너 내부에서
-# compose.minio.siloN.yaml 을 up 한다. 사일로별 데이터 격리(./data/siloN)를 유지하기 위한
-# 기존 설계이므로 최상위 서비스로 끌어내지 않았다.
+# compose.minio.siloN.yaml 을 up 한다. 사일로별 데이터 격리(named volume siloN-data)를
+# 유지하기 위한 기존 설계이므로 최상위 서비스로 끌어내지 않았다.
 
 services:
   backend:
@@ -64,7 +64,10 @@ services:
       - "7001:9000" # MinIO API
       - "7002:9001" # MinIO Console
     volumes:
-      - ./data/silo1:/var/lib/docker # 사일로 전용 저장소 (데이터 격리)
+      # 사일로 전용 저장소 (데이터 격리). 호스트 바인드(./data/siloN)가 아닌 named volume을
+      # 쓰는 이유: 내부 dockerd의 데이터 루트가 drvfs/9p(Windows 마운트) 위에 놓이면
+      # containerd 스냅샷 마운트 콜백(/dev/shm 등 생성)이 실패해 MinIO가 뜨지 못한다.
+      - silo1-data:/var/lib/docker
       - ./backend/silo_sdk:/opt/silo_sdk:ro # PYTHONPATH=/opt → `import silo_sdk`
     networks:
       - fed-net
@@ -81,7 +84,7 @@ services:
       - "7003:9000"
       - "7004:9001"
     volumes:
-      - ./data/silo2:/var/lib/docker
+      - silo2-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - ./backend/silo_sdk:/opt/silo_sdk:ro
     networks:
       - fed-net
@@ -98,7 +101,7 @@ services:
       - "7005:9000"
       - "7006:9001"
     volumes:
-      - ./data/silo3:/var/lib/docker
+      - silo3-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - ./backend/silo_sdk:/opt/silo_sdk:ro
     networks:
       - fed-net
@@ -107,3 +110,8 @@ networks:
   fed-net:
     name: fed-net # 프로젝트명 접두어 없이 고정 — 외부 compose가 external로 붙을 수 있다
     driver: bridge
+
+volumes:
+  silo1-data:
+  silo2-data:
+  silo3-data:
