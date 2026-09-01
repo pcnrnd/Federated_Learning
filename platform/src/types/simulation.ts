@@ -166,6 +166,27 @@ export interface SiloData {
   shardCount: number
   /** 원본 레코드 수 */
   records: number
+  /** 실서버 정제 샤드 상태. undefined면 목 시드 데이터 */
+  cleanseStatus?: 'pending' | 'running' | 'completed' | 'failed'
+  /** 실서버 step별 정제 카운터 (해당 사일로 샤드분) */
+  stepCounters?: Record<string, number>
+}
+
+// --- 정제 잡 현황 (실서버 연동 — /api/cleaning-jobs) ---
+
+export type CleaningJobStatus = 'pending' | 'running' | 'completed' | 'partial' | 'failed'
+
+export interface CleaningJobSummary {
+  jobId: string
+  /** 'name@version' 표시용 레시피 라벨 */
+  recipe: string
+  status: CleaningJobStatus
+  datasetLabel: string
+  totalRowsIn: number
+  totalRowsOut: number
+  /** step별 합산 카운터 (예: {drop_nulls: 20}) */
+  counters: Record<string, number>
+  updatedAt: string
 }
 
 // --- 6.5 배치 스케줄러 · 데이터 파이프라인 ---

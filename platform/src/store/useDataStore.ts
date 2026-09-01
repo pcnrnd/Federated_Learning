@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { JOB_STEP_MS, SILO_SEEDS } from '@/constants/simulation'
 import { useSimulationStore } from '@/store/useSimulationStore'
-import type { Job, LogKind } from '@/types/simulation'
+import type { CleaningShardStatus } from '@/api/client'
+import type { CleaningJobSummary, Job, LogKind } from '@/types/simulation'
 
 function logToConsole(kind: LogKind, message: string): void {
   useSimulationStore.getState().log(kind, message)
@@ -12,10 +13,11 @@ export interface SiloDataFields {
   cleansePct: number
   shardCount: number
   records: number
+  /** 실서버 정제 샤드 상태. undefined면 목 시드 데이터 */
+  cleanseStatus?: CleaningShardStatus
+  /** 실서버 step별 정제 카운터 (해당 사일로 샤드분) */
+  stepCounters?: Record<string, number>
 }
-
-const CLEANSE_STEP_MS = 450
-const CLEANSE_STEP_PCT = 22
 
 // 12개 사일로별 정제율/샤드/레코드 시드 (id 순서 대응, 결정적 값)
 const CLEANSE_SEED = [100, 72, 38, 88, 64, 95, 41, 79, 56, 100, 33, 68]
@@ -52,13 +54,18 @@ export interface NewJobInput {
 export interface DataStore {
   dataBySilo: Record<number, SiloDataFields>
   jobs: Job[]
+  /** 실서버 정제 잡 현황 (라이브 폴링이 채운다 — 목 모드에서는 항상 빈 배열) */
+  liveCleaningJobs: CleaningJobSummary[]
 
   // 사일로 등록/해제 전파 (useSiloStore가 호출)
   ensureSiloData: (siloId: number) => void
   removeSiloData: (siloId: number) => void
 
-  // 6.4 정제 제어
-  cleanseSilo: (siloId: number) => void
+  /** 라이브 모드 — /api/cleaning-jobs 폴링 결과를 반영한다 */
+  applyLiveCleaning: (
+    dataBySilo: Record<number, SiloDataFields>,
+    jobs: CleaningJobSummary[],
+  ) => void
 
   // 6.5 스케줄러 제어
   canRun: (id: string) => boolean
@@ -85,9 +92,14 @@ function depsSatisfied(jobs: Job[], job: Job): boolean {
 export const useDataStore = create<DataStore>((set, get) => ({
   dataBySilo: seedDataBySilo(),
   jobs: seedJobs(),
+  liveCleaningJobs: [],
 
-  clearAll: () => set({ dataBySilo: {}, jobs: [] }),
-  reseed: () => set({ dataBySilo: seedDataBySilo(), jobs: seedJobs() }),
+  clearAll: () => set({ dataBySilo: {}, jobs: [], liveCleaningJobs: [] }),
+  reseed: () =>
+    set({ dataBySilo: seedDataBySilo(), jobs: seedJobs(), liveCleaningJobs: [] }),
+
+  applyLiveCleaning: (dataBySilo, liveCleaningJobs) =>
+    set({ dataBySilo, liveCleaningJobs }),
 
   ensureSiloData: (siloId) => {
     if (get().dataBySilo[siloId]) return
@@ -101,27 +113,6 @@ export const useDataStore = create<DataStore>((set, get) => ({
       const { [siloId]: _removed, ...rest } = state.dataBySilo
       return { dataBySilo: rest }
     }),
-
-  cleanseSilo: (siloId) => {
-    const current = get().dataBySilo[siloId]
-    if (!current || current.cleansePct >= 100) return
-    logToConsole('server', `[사일로 #${siloId}] 데이터 정제 작업을 시작합니다. (현재 ${current.cleansePct}%)`)
-
-    const step = (): void => {
-      const data = get().dataBySilo[siloId]
-      if (!data) return
-      const next = Math.min(100, data.cleansePct + CLEANSE_STEP_PCT)
-      set((state) => ({
-        dataBySilo: { ...state.dataBySilo, [siloId]: { ...data, cleansePct: next } },
-      }))
-      if (next >= 100) {
-        logToConsole('success', `[사일로 #${siloId}] 데이터 정제 완료 (100%).`)
-      } else {
-        window.setTimeout(step, CLEANSE_STEP_MS)
-      }
-    }
-    window.setTimeout(step, CLEANSE_STEP_MS)
-  },
 
   canRun: (id) => {
     const jobs = get().jobs

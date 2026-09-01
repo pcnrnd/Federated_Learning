@@ -67,3 +67,29 @@ export interface TrainingRoundSummary {
   contributors: string[]
   total_samples: number
 }
+
+// --- 정제 잡 (P3 — data 탭 배선) -------------------------------------------
+
+export type CleaningShardStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface CleaningShardApi {
+  shard_index: number
+  silo_id: string
+  status: CleaningShardStatus
+  rows_in: number
+  rows_out: number
+  step_counters: Record<string, number>
+}
+
+export interface CleaningJobApi {
+  job_id: string
+  recipe_name: string
+  recipe_version: string
+  status: 'pending' | 'running' | 'completed' | 'partial' | 'failed'
+  shards: CleaningShardApi[]
+  total_rows_in: number
+  total_rows_out: number
+  aggregated_counters: Record<string, number>
+  dataset_label: string
+  updated_at: string
+}

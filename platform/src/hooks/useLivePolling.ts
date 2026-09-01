@@ -3,6 +3,7 @@ import {
   apiGet,
   isLiveConfigured,
   API_BASE,
+  type CleaningJobApi,
   type MetricSample,
   type Paginated,
   type ResourceLimit,
@@ -10,10 +11,12 @@ import {
   type TrainingRoundSummary,
 } from '@/api/client'
 import {
+  mapCleaningJobs,
   mapMetricsToChartPoints,
   mapMetricsToMonitorPoints,
   mapUsageToSilos,
 } from '@/api/mappers'
+import { useDataStore } from '@/store/useDataStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 
@@ -38,7 +41,7 @@ export function useLivePolling(): void {
     const poll = async () => {
       const store = useSimulationStore.getState()
       try {
-        const [usage, limits, accuracy, throughput, latency, rounds] = await Promise.all([
+        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs] = await Promise.all([
           apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
           apiGet<ResourceLimit[]>('/api/resources/limits'),
           apiGet<Paginated<MetricSample>>(
@@ -51,9 +54,13 @@ export function useLivePolling(): void {
             `/api/monitoring/metrics?metric=latency_ms&limit=${METRIC_QUERY_LIMIT}`,
           ),
           apiGet<TrainingRoundSummary[]>('/api/training-rounds'),
+          apiGet<CleaningJobApi[]>('/api/cleaning-jobs'),
         ])
 
         useSiloStore.getState().setSilos(mapUsageToSilos(usage, limits))
+
+        const cleaning = mapCleaningJobs(cleaningJobs)
+        useDataStore.getState().applyLiveCleaning(cleaning.dataBySilo, cleaning.jobs)
 
         const chartPoints = mapMetricsToChartPoints(accuracy.items)
         const monitorPoints = mapMetricsToMonitorPoints(throughput.items, latency.items)

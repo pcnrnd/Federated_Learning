@@ -1,5 +1,11 @@
-import type { ResourceLimit, ResourceUsageSummary, MetricSample } from '@/api/client'
-import type { ChartPoint, MonitorPoint, Silo } from '@/types/simulation'
+import type {
+  CleaningJobApi,
+  MetricSample,
+  ResourceLimit,
+  ResourceUsageSummary,
+} from '@/api/client'
+import type { SiloDataFields } from '@/store/useDataStore'
+import type { ChartPoint, CleaningJobSummary, MonitorPoint, Silo } from '@/types/simulation'
 
 /**
  * 서버 응답 → UI 스토어 형태 변환 (순수 함수).
@@ -36,6 +42,46 @@ export function mapUsageToSilos(
       },
     }
   })
+}
+
+export interface LiveCleaningMapped {
+  dataBySilo: Record<number, SiloDataFields>
+  jobs: CleaningJobSummary[]
+}
+
+/**
+ * 정제 잡 목록 → data 탭 상태.
+ * 잡은 최신순으로 온다(서버가 created_at desc 정렬) — 사일로별로 가장 최근 샤드가 이긴다.
+ */
+export function mapCleaningJobs(jobs: readonly CleaningJobApi[]): LiveCleaningMapped {
+  const dataBySilo: Record<number, SiloDataFields> = {}
+  let fallbackIndex = 0
+  for (const job of jobs) {
+    for (const shard of job.shards) {
+      const id = siloIdToNumber(shard.silo_id, fallbackIndex++)
+      if (dataBySilo[id]) continue // 더 최신 잡의 샤드가 이미 반영됨
+      dataBySilo[id] = {
+        cleansePct: shard.status === 'completed' ? 100 : 0,
+        shardCount: 1, // 현 백엔드는 잡당 사일로 1샤드
+        records: shard.rows_in,
+        cleanseStatus: shard.status,
+        stepCounters: shard.step_counters,
+      }
+    }
+  }
+  return {
+    dataBySilo,
+    jobs: jobs.map((j) => ({
+      jobId: j.job_id,
+      recipe: `${j.recipe_name}@${j.recipe_version}`,
+      status: j.status,
+      datasetLabel: j.dataset_label,
+      totalRowsIn: j.total_rows_in,
+      totalRowsOut: j.total_rows_out,
+      counters: j.aggregated_counters,
+      updatedAt: j.updated_at,
+    })),
+  }
 }
 
 /** 같은 timestamp의 사일로 값들을 한 라운드로 묶어 평균한다 */

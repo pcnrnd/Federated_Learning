@@ -1,5 +1,4 @@
 import { formatNumber } from '@/lib/format'
-import { useDataStore } from '@/store/useDataStore'
 import type { SiloData } from '@/types/simulation'
 
 interface CleansingGridProps {
@@ -12,13 +11,29 @@ function cleanseClass(pct: number): string {
   return 'text-yellow'
 }
 
-export function CleansingGrid({ siloData }: CleansingGridProps) {
-  const cleanseSilo = useDataStore((s) => s.cleanseSilo)
+/** 실서버 샤드 상태 → 배포 타임라인 상태 칩 클래스/라벨 재사용 */
+const SHARD_STATE_META: Record<
+  NonNullable<SiloData['cleanseStatus']>,
+  { label: string; cls: string }
+> = {
+  pending: { label: '대기', cls: 'dep-state-pending' },
+  running: { label: '정제중', cls: 'dep-state-deploying' },
+  completed: { label: '정제 완료', cls: 'dep-state-done' },
+  failed: { label: '실패', cls: 'dep-state-failed' },
+}
 
+function counterText(counters: Record<string, number>): string {
+  return Object.entries(counters)
+    .map(([step, n]) => `${step} ${formatNumber(n)}`)
+    .join(' · ')
+}
+
+export function CleansingGrid({ siloData }: CleansingGridProps) {
   return (
     <div className="cleanse-grid">
       {siloData.map((d) => {
         const complete = d.cleansePct >= 100
+        const liveState = d.cleanseStatus ? SHARD_STATE_META[d.cleanseStatus] : null
         return (
           <div key={d.siloId} className="glass-panel cleanse-card">
             <div className="cleanse-card-head">
@@ -40,15 +55,16 @@ export function CleansingGrid({ siloData }: CleansingGridProps) {
                 style={{ width: `${d.cleansePct}%` }}
               />
             </div>
-            <button
-              type="button"
-              className="model-action deploy cleanse-run-btn"
-              disabled={complete}
-              onClick={() => cleanseSilo(d.siloId)}
-            >
-              <i className={`fa-solid ${complete ? 'fa-check' : 'fa-broom'}`} />{' '}
-              {complete ? '정제 완료' : '정제 실행'}
-            </button>
+            {liveState && (
+              <div className="cleanse-progress-row">
+                <span className={`dep-state-badge ${liveState.cls}`}>{liveState.label}</span>
+                {d.stepCounters && Object.keys(d.stepCounters).length > 0 && (
+                  <span className="cleanse-label" title="정제 step별 적용 건수">
+                    {counterText(d.stepCounters)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )
       })}

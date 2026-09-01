@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import {
+  mapCleaningJobs,
   mapMetricsToChartPoints,
   mapMetricsToMonitorPoints,
   mapUsageToSilos,
   siloIdToNumber,
 } from '@/api/mappers'
-import type { MetricSample, ResourceUsageSummary } from '@/api/client'
+import type { CleaningJobApi, MetricSample, ResourceUsageSummary } from '@/api/client'
 
 const usage = (siloId: string, cpu: number): ResourceUsageSummary => ({
   silo_id: siloId,
@@ -53,6 +54,90 @@ describe('mapUsageToSilos', () => {
     expect(silos[0]).toMatchObject({ id: 1, name: 'silo-1', cpu: 62, disk: 0 })
     expect(silos[0].thresholds).toEqual({ cpu: 70, mem: 80, disk: 90 })
     expect(silos[1].thresholds).toEqual({ cpu: 85, mem: 80, disk: 90 })
+  })
+})
+
+const cleaningJob = (overrides: Partial<CleaningJobApi> = {}): CleaningJobApi => ({
+  job_id: 'job-1',
+  recipe_name: 'basic',
+  recipe_version: '1.0.0',
+  status: 'completed',
+  shards: [
+    {
+      shard_index: 0,
+      silo_id: 'silo-1',
+      status: 'completed',
+      rows_in: 210,
+      rows_out: 182,
+      step_counters: { drop_nulls: 20, dedupe: 8 },
+    },
+    {
+      shard_index: 1,
+      silo_id: 'silo-2',
+      status: 'running',
+      rows_in: 0,
+      rows_out: 0,
+      step_counters: {},
+    },
+  ],
+  total_rows_in: 210,
+  total_rows_out: 182,
+  aggregated_counters: { drop_nulls: 20, dedupe: 8 },
+  dataset_label: 'patients_2026Q3',
+  updated_at: '2026-09-01T00:00:00Z',
+  ...overrides,
+})
+
+describe('mapCleaningJobs', () => {
+  test('maps shard status/counters into per-silo data and job summaries', () => {
+    const { dataBySilo, jobs } = mapCleaningJobs([cleaningJob()])
+
+    expect(dataBySilo[1]).toEqual({
+      cleansePct: 100,
+      shardCount: 1,
+      records: 210,
+      cleanseStatus: 'completed',
+      stepCounters: { drop_nulls: 20, dedupe: 8 },
+    })
+    expect(dataBySilo[2]).toMatchObject({ cleansePct: 0, cleanseStatus: 'running' })
+
+    expect(jobs).toEqual([
+      {
+        jobId: 'job-1',
+        recipe: 'basic@1.0.0',
+        status: 'completed',
+        datasetLabel: 'patients_2026Q3',
+        totalRowsIn: 210,
+        totalRowsOut: 182,
+        counters: { drop_nulls: 20, dedupe: 8 },
+        updatedAt: '2026-09-01T00:00:00Z',
+      },
+    ])
+  })
+
+  test('the newest job (first in list) wins per silo', () => {
+    const newest = cleaningJob({ job_id: 'job-new' })
+    const older = cleaningJob({
+      job_id: 'job-old',
+      shards: [
+        {
+          shard_index: 0,
+          silo_id: 'silo-1',
+          status: 'failed',
+          rows_in: 999,
+          rows_out: 0,
+          step_counters: {},
+        },
+      ],
+    })
+
+    const { dataBySilo } = mapCleaningJobs([newest, older])
+    expect(dataBySilo[1].cleanseStatus).toBe('completed')
+    expect(dataBySilo[1].records).toBe(210)
+  })
+
+  test('empty job list maps to empty state', () => {
+    expect(mapCleaningJobs([])).toEqual({ dataBySilo: {}, jobs: [] })
   })
 })
 
