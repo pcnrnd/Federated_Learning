@@ -34,6 +34,18 @@ def test_평탄화_규약은_가중치_다음_편향_순서다():
     assert len(result.parameters) == 3
 
 
+def test_l2_양수에서_닫힌형_해와_수치_일치한다():
+    # y = x + 10 3점: Σx=0이라 정규방정식이 분리된다 —
+    # w = Σxy/(Σx²+λ) = 2/(2+λ), b = ȳ = 10 (편향 무벌점 → 수축 없음)
+    rows = [{"x": -1.0, "y": 9.0}, {"x": 0.0, "y": 10.0}, {"x": 1.0, "y": 11.0}]
+
+    result = train_ridge(rows, ["x"], "y", l2=2.0)
+
+    w, b = result.parameters
+    assert w == pytest.approx(2.0 / (2.0 + 2.0), abs=1e-12)
+    assert b == pytest.approx(10.0, abs=1e-12)
+
+
 def test_l2가_커지면_가중치가_0으로_수축한다():
     rows = _linear_rows()
     loose = train_ridge(rows, ["x1", "x2"], "y", l2=0.0)

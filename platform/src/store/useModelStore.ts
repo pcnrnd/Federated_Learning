@@ -291,6 +291,11 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   rollbackModel: (id) => {
     const target = get().models.find((m) => m.id === id)
     if (!target) return
+    if (isLive()) {
+      // 로컬 승격은 다음 폴링이 서버 상태로 덮어써 무의미 — 배포 기록 롤백만 지원
+      logToConsole('system', '실서버 모드에서는 버전 롤백을 지원하지 않습니다 — 배포 기록의 롤백을 사용하세요.')
+      return
+    }
     set((state) => ({ models: promoteToDeployed(state.models, target) }))
     logToConsole('success', `[${target.project}] ${target.version} (으)로 롤백하여 재배포했습니다.`)
   },

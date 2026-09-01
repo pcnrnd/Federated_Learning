@@ -42,8 +42,13 @@ export function useLivePolling(): void {
 
     // 연속 실패 시 로그 스팸을 막고, 복구 시에만 다시 알린다
     let wasHealthy: boolean | null = null
+    // 목 전환/언마운트 후 도착한 응답이 스토어를 덮어쓰지 않도록 in-flight를 무효화한다
+    let cancelled = false
+    let inFlight = false
 
     const poll = async () => {
+      if (inFlight) return // 이전 주기 요청이 아직 진행 중 — 겹침 방지
+      inFlight = true
       const store = useSimulationStore.getState()
       try {
         const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs, models, deployments] = await Promise.all([
@@ -63,6 +68,7 @@ export function useLivePolling(): void {
           apiGet<ModelEntryApi[]>('/api/models'),
           apiGet<DeploymentEntryApi[]>('/api/deployments'),
         ])
+        if (cancelled) return
 
         useSiloStore.getState().setSilos(mapUsageToSilos(usage, limits))
 
@@ -88,16 +94,22 @@ export function useLivePolling(): void {
           wasHealthy = true
         }
       } catch (error: unknown) {
+        if (cancelled) return
         if (wasHealthy !== false) {
           const detail = error instanceof Error ? error.message : String(error)
           store.log('error', `실서버 폴링 실패 — ${detail}. ${LIVE_POLL_INTERVAL_MS / 1000}초 후 재시도.`)
           wasHealthy = false
         }
+      } finally {
+        inFlight = false
       }
     }
 
     void poll()
     const timer = window.setInterval(() => void poll(), LIVE_POLL_INTERVAL_MS)
-    return () => window.clearInterval(timer)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [isLive])
 }

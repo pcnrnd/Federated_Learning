@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { isLiveConfigured } from '@/api/client'
 import { useDataStore } from '@/store/useDataStore'
 import { useSiloStore } from '@/store/useSiloStore'
+import { useSimulationStore } from '@/store/useSimulationStore'
 import type { Job, JobState } from '@/types/simulation'
 import { PipelineRegisterForm } from './PipelineRegisterForm'
 
@@ -30,8 +32,19 @@ export function JobScheduler() {
   const pauseJob = useDataStore((s) => s.pauseJob)
   const removeJob = useDataStore((s) => s.removeJob)
   const silos = useSiloStore((s) => s.silos)
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
 
   const [showForm, setShowForm] = useState(false)
+
+  // 라이브 모드 게이트 — 목 파이프라인(타이머 진행)은 서버 상태와 무관해 오해를 부른다
+  if (!mockEnabled && isLiveConfigured()) {
+    return (
+      <div className="deploy-empty">
+        실서버 모드에서는 목 파이프라인 스케줄러를 사용하지 않습니다 — 배치 학습 잡은 서버
+        스케줄러(/api/training-jobs)가 관리합니다.
+      </div>
+    )
+  }
 
   const siloName = (id?: number): string => {
     if (id === undefined) return '전체'
