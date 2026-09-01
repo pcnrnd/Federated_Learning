@@ -1,11 +1,23 @@
 import type {
   CleaningJobApi,
+  DeploymentEntryApi,
+  DeploymentStatusApi,
   MetricSample,
+  ModelEntryApi,
   ResourceLimit,
   ResourceUsageSummary,
 } from '@/api/client'
 import type { SiloDataFields } from '@/store/useDataStore'
-import type { ChartPoint, CleaningJobSummary, MonitorPoint, Silo } from '@/types/simulation'
+import type {
+  Algorithm,
+  ChartPoint,
+  CleaningJobSummary,
+  Deployment,
+  DeployState,
+  ModelVersion,
+  MonitorPoint,
+  Silo,
+} from '@/types/simulation'
 
 /**
  * 서버 응답 → UI 스토어 형태 변환 (순수 함수).
@@ -42,6 +54,77 @@ export function mapUsageToSilos(
       },
     }
   })
+}
+
+// --- 모델 레지스트리 · 배포 (P1) ---------------------------------------------
+
+/** 서버 (name, version) → UI 모델 id. 라운드트립 가능해야 배포 요청에 되쓸 수 있다 */
+export function modelKey(name: string, version: string): string {
+  return `${name}@${version}`
+}
+
+export function parseModelKey(id: string): { name: string; version: string } {
+  const at = id.lastIndexOf('@')
+  return at < 0
+    ? { name: id, version: '' }
+    : { name: id.slice(0, at), version: id.slice(at + 1) }
+}
+
+const ALGORITHMS: readonly Algorithm[] = ['fedavg', 'fedmedian', 'secagg']
+
+const DEPLOY_STATE_MAP: Record<DeploymentStatusApi, DeployState> = {
+  pending: 'pending',
+  running: 'done',
+  failed: 'failed',
+  stopped: 'stopped',
+  rolled_back: 'rolled_back',
+}
+
+function metaNumber(meta: Record<string, unknown>, key: string): number | undefined {
+  const v = meta[key]
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+export function mapModelsToVersions(
+  models: readonly ModelEntryApi[],
+  deployments: readonly DeploymentEntryApi[],
+): ModelVersion[] {
+  // 배포 상태는 레지스트리에 없다 — running 배포가 있는 버전을 '배포됨'으로 승격
+  const running = new Set(
+    deployments
+      .filter((d) => d.status === 'running')
+      .map((d) => modelKey(d.model_name, d.version)),
+  )
+  return models.map((m) => {
+    const meta = m.metadata ?? {}
+    const algorithm = ALGORITHMS.find((a) => a === meta.algorithm) ?? 'fedavg'
+    const note = typeof meta.note === 'string' && meta.note ? { note: meta.note } : {}
+    return {
+      id: modelKey(m.name, m.version),
+      project: m.name,
+      version: m.version,
+      status: running.has(modelKey(m.name, m.version)) ? 'deployed' : 'experimental',
+      // 서버 metadata.accuracy는 0~1 스케일 가정 (지표 API와 동일) → UI %
+      accuracy: Math.round((metaNumber(meta, 'accuracy') ?? 0) * 10000) / 100,
+      algorithm,
+      rounds: metaNumber(meta, 'rounds') ?? 0,
+      createdAt: m.created_at.slice(0, 10),
+      ...note,
+    }
+  })
+}
+
+export function mapApiDeployments(deployments: readonly DeploymentEntryApi[]): Deployment[] {
+  let fallbackIndex = 0
+  return deployments.map((d) => ({
+    id: d.deployment_id,
+    modelId: modelKey(d.model_name, d.version),
+    modelLabel: `${d.model_name} ${d.version}`,
+    strategy: d.strategy,
+    targetSiloIds: d.target_node_ids.map((n) => siloIdToNumber(n, fallbackIndex++)),
+    state: DEPLOY_STATE_MAP[d.status],
+    ts: d.created_at.slice(11, 19),
+  }))
 }
 
 export interface LiveCleaningMapped {

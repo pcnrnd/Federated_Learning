@@ -4,19 +4,24 @@ import {
   isLiveConfigured,
   API_BASE,
   type CleaningJobApi,
+  type DeploymentEntryApi,
   type MetricSample,
+  type ModelEntryApi,
   type Paginated,
   type ResourceLimit,
   type ResourceUsageSummary,
   type TrainingRoundSummary,
 } from '@/api/client'
 import {
+  mapApiDeployments,
   mapCleaningJobs,
   mapMetricsToChartPoints,
   mapMetricsToMonitorPoints,
+  mapModelsToVersions,
   mapUsageToSilos,
 } from '@/api/mappers'
 import { useDataStore } from '@/store/useDataStore'
+import { useModelStore } from '@/store/useModelStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 
@@ -41,7 +46,7 @@ export function useLivePolling(): void {
     const poll = async () => {
       const store = useSimulationStore.getState()
       try {
-        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs] = await Promise.all([
+        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs, models, deployments] = await Promise.all([
           apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
           apiGet<ResourceLimit[]>('/api/resources/limits'),
           apiGet<Paginated<MetricSample>>(
@@ -55,12 +60,18 @@ export function useLivePolling(): void {
           ),
           apiGet<TrainingRoundSummary[]>('/api/training-rounds'),
           apiGet<CleaningJobApi[]>('/api/cleaning-jobs'),
+          apiGet<ModelEntryApi[]>('/api/models'),
+          apiGet<DeploymentEntryApi[]>('/api/deployments'),
         ])
 
         useSiloStore.getState().setSilos(mapUsageToSilos(usage, limits))
 
         const cleaning = mapCleaningJobs(cleaningJobs)
         useDataStore.getState().applyLiveCleaning(cleaning.dataBySilo, cleaning.jobs)
+
+        useModelStore
+          .getState()
+          .applyLiveModels(mapModelsToVersions(models, deployments), mapApiDeployments(deployments))
 
         const chartPoints = mapMetricsToChartPoints(accuracy.items)
         const monitorPoints = mapMetricsToMonitorPoints(throughput.items, latency.items)

@@ -7,6 +7,8 @@ const STATE_LABEL: Record<DeployState, string> = {
   deploying: '배포중',
   done: '완료',
   failed: '실패',
+  stopped: '정지됨',
+  rolled_back: '롤백됨',
 }
 
 const STATE_CLASS: Record<DeployState, string> = {
@@ -14,6 +16,8 @@ const STATE_CLASS: Record<DeployState, string> = {
   deploying: 'dep-state-deploying',
   done: 'dep-state-done',
   failed: 'dep-state-failed',
+  stopped: 'dep-state-pending',
+  rolled_back: 'dep-state-failed',
 }
 
 function scopeText(d: Deployment): string {

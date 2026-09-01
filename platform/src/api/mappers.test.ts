@@ -1,12 +1,22 @@
 import { describe, expect, test } from 'vitest'
 import {
+  mapApiDeployments,
   mapCleaningJobs,
   mapMetricsToChartPoints,
   mapMetricsToMonitorPoints,
+  mapModelsToVersions,
   mapUsageToSilos,
+  modelKey,
+  parseModelKey,
   siloIdToNumber,
 } from '@/api/mappers'
-import type { CleaningJobApi, MetricSample, ResourceUsageSummary } from '@/api/client'
+import type {
+  CleaningJobApi,
+  DeploymentEntryApi,
+  MetricSample,
+  ModelEntryApi,
+  ResourceUsageSummary,
+} from '@/api/client'
 
 const usage = (siloId: string, cpu: number): ResourceUsageSummary => ({
   silo_id: siloId,
@@ -54,6 +64,85 @@ describe('mapUsageToSilos', () => {
     expect(silos[0]).toMatchObject({ id: 1, name: 'silo-1', cpu: 62, disk: 0 })
     expect(silos[0].thresholds).toEqual({ cpu: 70, mem: 80, disk: 90 })
     expect(silos[1].thresholds).toEqual({ cpu: 85, mem: 80, disk: 90 })
+  })
+})
+
+const modelEntry = (overrides: Partial<ModelEntryApi> = {}): ModelEntryApi => ({
+  name: 'demo-alpha',
+  version: '1.0.0',
+  framework: 'pytorch',
+  weights_path: '/srv/weights/demo.pt',
+  metadata: {},
+  created_at: '2026-09-01T08:30:00+00:00',
+  ...overrides,
+})
+
+const deploymentEntry = (overrides: Partial<DeploymentEntryApi> = {}): DeploymentEntryApi => ({
+  deployment_id: 'dep-abc',
+  model_name: 'demo-alpha',
+  version: '1.0.0',
+  image_tag: 'fed-model-demo-alpha:1.0.0',
+  strategy: 'realtime',
+  target_node_ids: ['silo-1', 'silo-2'],
+  status: 'running',
+  created_at: '2026-09-01T08:45:12+00:00',
+  previous_deployment_id: null,
+  error: null,
+  ...overrides,
+})
+
+describe('modelKey / parseModelKey', () => {
+  test('round-trips name@version, tolerating @ inside names', () => {
+    expect(parseModelKey(modelKey('demo-alpha', '1.0.0'))).toEqual({
+      name: 'demo-alpha',
+      version: '1.0.0',
+    })
+    expect(parseModelKey('a@b@2.0.0')).toEqual({ name: 'a@b', version: '2.0.0' })
+  })
+})
+
+describe('mapModelsToVersions', () => {
+  test('promotes versions with a running deployment and reads metadata safely', () => {
+    const versions = mapModelsToVersions(
+      [
+        modelEntry({ metadata: { accuracy: 0.947, algorithm: 'secagg', rounds: 28, note: '메모' } }),
+        modelEntry({ version: '0.9.0', metadata: { algorithm: 'unknown-algo' } }),
+      ],
+      [deploymentEntry()],
+    )
+
+    expect(versions[0]).toEqual({
+      id: 'demo-alpha@1.0.0',
+      project: 'demo-alpha',
+      version: '1.0.0',
+      status: 'deployed',
+      accuracy: 94.7,
+      algorithm: 'secagg',
+      rounds: 28,
+      createdAt: '2026-09-01',
+      note: '메모',
+    })
+    // 알 수 없는 metadata는 기본값으로 폴백, running 배포 없음 → 실험
+    expect(versions[1]).toMatchObject({ status: 'experimental', algorithm: 'fedavg', accuracy: 0 })
+  })
+})
+
+describe('mapApiDeployments', () => {
+  test('maps ids, states and target silos', () => {
+    const [dep] = mapApiDeployments([deploymentEntry({ status: 'rolled_back' })])
+    expect(dep).toEqual({
+      id: 'dep-abc',
+      modelId: 'demo-alpha@1.0.0',
+      modelLabel: 'demo-alpha 1.0.0',
+      strategy: 'realtime',
+      targetSiloIds: [1, 2],
+      state: 'rolled_back',
+      ts: '08:45:12',
+    })
+  })
+
+  test('running maps to done (rollback-eligible)', () => {
+    expect(mapApiDeployments([deploymentEntry()])[0].state).toBe('done')
   })
 })
 

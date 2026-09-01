@@ -1,6 +1,7 @@
 /**
- * app/ FastAPI 폴링 클라이언트 (P0 — 읽기 전용).
- * 계약: docs/specs/2026-08-21-p0-api-contract.md
+ * app/ FastAPI 클라이언트.
+ * 조회(P0 폴링) 계약: docs/specs/2026-08-21-p0-api-contract.md
+ * 변이(P1 — 배포·롤백)는 POST 후 다음 폴링 주기에 상태가 반영된다.
  */
 
 const REQUEST_TIMEOUT_MS = 4000
@@ -13,17 +14,38 @@ export function isLiveConfigured(): boolean {
   return typeof API_BASE === 'string' && API_BASE.length > 0
 }
 
+function buildHeaders(hasBody: boolean): Record<string, string> {
+  const headers: Record<string, string> = {}
+  if (hasBody) headers['Content-Type'] = 'application/json'
+  if (API_KEY) headers['X-FED-API-Key'] = API_KEY
+  return headers
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   if (!API_BASE) throw new Error('VITE_API_BASE가 설정되지 않았습니다')
 
-  const headers: Record<string, string> = {}
-  if (API_KEY) headers['X-FED-API-Key'] = API_KEY
-
   const res = await fetch(`${API_BASE}${path}`, {
-    headers,
+    headers: buildHeaders(false),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`GET ${path} → HTTP ${res.status}`)
+  return (await res.json()) as T
+}
+
+export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  if (!API_BASE) throw new Error('VITE_API_BASE가 설정되지 않았습니다')
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: buildHeaders(body !== undefined),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  if (!res.ok) {
+    // FastAPI 오류 본문의 detail을 살려 사용자에게 원인을 보여준다
+    const detail = await res.text().catch(() => '')
+    throw new Error(`POST ${path} → HTTP ${res.status}${detail ? ` — ${detail}` : ''}`)
+  }
   return (await res.json()) as T
 }
 
@@ -66,6 +88,39 @@ export interface TrainingRoundSummary {
   status: 'open' | 'aggregating' | 'completed' | 'failed'
   contributors: string[]
   total_samples: number
+}
+
+// --- 모델 레지스트리 · 배포 (P1 — models 탭 배선) ----------------------------
+
+export interface ModelEntryApi {
+  name: string
+  version: string
+  framework: 'pytorch' | 'onnx' | 'tensorflow'
+  weights_path: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export type DeploymentStatusApi = 'pending' | 'running' | 'failed' | 'rolled_back' | 'stopped'
+
+export interface DeploymentEntryApi {
+  deployment_id: string
+  model_name: string
+  version: string
+  image_tag: string
+  strategy: 'realtime' | 'batch' | 'edge'
+  target_node_ids: string[]
+  status: DeploymentStatusApi
+  created_at: string
+  previous_deployment_id: string | null
+  error: string | null
+}
+
+export interface DeploymentRequestApi {
+  model_name: string
+  version: string
+  strategy: 'realtime' | 'batch' | 'edge'
+  target_node_ids: string[]
 }
 
 // --- 정제 잡 (P3 — data 탭 배선) -------------------------------------------

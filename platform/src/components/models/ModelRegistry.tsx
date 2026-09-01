@@ -83,12 +83,18 @@ export function ModelRegistry() {
     return { total, deployed, experimental, avgAccuracy }
   }, [visibleModels])
 
+  // 필터는 화면의 실제 모델 목록에서 유도 — 라이브 모드의 서버 모델명도 그대로 필터가 된다
+  const projects = useMemo(
+    () => [...new Set(models.map((m) => m.project))],
+    [models],
+  )
   const filterOptions: Array<{ value: string; label: string }> = [
     { value: ALL_PROJECTS, label: '전체' },
-    ...MODEL_PROJECTS.map((p) => ({ value: p, label: p })),
+    ...projects.map((p) => ({ value: p, label: p })),
   ]
 
-  const defaultProject = projectFilter === ALL_PROJECTS ? MODEL_PROJECTS[0] : projectFilter
+  const defaultProject =
+    projectFilter === ALL_PROJECTS ? (projects[0] ?? MODEL_PROJECTS[0]) : projectFilter
 
   return (
     <div className="model-registry">

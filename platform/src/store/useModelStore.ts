@@ -1,5 +1,13 @@
 import { create } from 'zustand'
+import {
+  apiPost,
+  isLiveConfigured,
+  type DeploymentEntryApi,
+  type DeploymentRequestApi,
+} from '@/api/client'
+import { parseModelKey } from '@/api/mappers'
 import { DEPLOY_STRATEGY_META, DEPLOY_TIMINGS, RUNTIME_OPTIONS } from '@/constants/simulation'
+import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type {
   Algorithm,
@@ -42,6 +50,46 @@ const nextDeployId = (): string => `dep-${deploySeq++}`
 /** 공유 로그 콘솔(시뮬레이션 store)에 모델 이벤트를 기록 */
 function logToConsole(kind: LogKind, message: string): void {
   useSimulationStore.getState().log(kind, message)
+}
+
+/** 라이브 모드 여부 — 목 off + VITE_API_BASE 설정 */
+function isLive(): boolean {
+  return !useSimulationStore.getState().mockEnabled && isLiveConfigured()
+}
+
+/** 배포 대상 노드 이름 목록 — edge는 선택 사일로, 그 외 전략은 전체 사일로 */
+function liveTargetNames(strategy: DeployStrategy, targetSiloIds: number[]): string[] {
+  const silos = useSiloStore.getState().silos
+  const chosen = strategy === 'edge' ? silos.filter((s) => targetSiloIds.includes(s.id)) : silos
+  return chosen.map((s) => s.name)
+}
+
+/** 실서버 배포 생성 — 결과 반영은 다음 폴링 주기가 담당 */
+function liveCreateDeployment(
+  modelId: string,
+  strategy: DeployStrategy,
+  targetSiloIds: number[],
+): void {
+  const { name, version } = parseModelKey(modelId)
+  const targets = liveTargetNames(strategy, targetSiloIds)
+  if (targets.length === 0) {
+    logToConsole('error', `[${name} ${version}] 배포 대상 사일로가 없습니다 — 리소스 수신 사일로를 확인하세요.`)
+    return
+  }
+  const payload: DeploymentRequestApi = {
+    model_name: name,
+    version,
+    strategy,
+    target_node_ids: targets,
+  }
+  logToConsole('server', `[${name} ${version}] 실서버 배포 요청 (${strategy}, 사일로 ${targets.length}곳)...`)
+  apiPost<DeploymentEntryApi>('/api/deployments', payload)
+    .then((entry) =>
+      logToConsole('success', `[${name} ${version}] 배포 생성됨 — ${entry.deployment_id} (${entry.status})`),
+    )
+    .catch((error: unknown) =>
+      logToConsole('error', `[${name} ${version}] 배포 실패 — ${error instanceof Error ? error.message : String(error)}`),
+    )
 }
 
 /**
@@ -118,6 +166,8 @@ export interface ModelStore {
   clearAll: () => void
   /** 목 on — 초기 시드로 복원한다 */
   reseed: () => void
+  /** 라이브 모드 — 서버 폴링 결과(레지스트리·배포 기록)를 반영한다 */
+  applyLiveModels: (models: ModelVersion[], deployments: Deployment[]) => void
 }
 
 /** 단일 배포 상태를 불변 갱신 */
@@ -169,6 +219,32 @@ export const useModelStore = create<ModelStore>((set, get) => ({
 
   clearAll: () =>
     set({ models: [], packages: {}, deployments: [], deployTargetId: null }),
+
+  applyLiveModels: (models, deployments) =>
+    set((state) => ({
+      models,
+      deployments,
+      // 실서버 배포는 백엔드가 이미지 태그를 스스로 보정하므로 전 모델을 '패키징 완료'로 취급
+      packages: Object.fromEntries(
+        models.map((m) => {
+          const { name, version } = parseModelKey(m.id)
+          return [
+            m.id,
+            {
+              modelId: m.id,
+              state: 'built' as const,
+              runtime: RUNTIME_OPTIONS[0],
+              imageTag: `fed-model-${name}:${version}`,
+              builtAt: m.createdAt,
+            },
+          ]
+        }),
+      ),
+      // 선택 모델이 서버 목록에서 사라졌으면 해제
+      deployTargetId: models.some((m) => m.id === state.deployTargetId)
+        ? state.deployTargetId
+        : null,
+    })),
   reseed: () => {
     const models = seedModels()
     set({
@@ -181,6 +257,10 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   },
 
   addModel: (input) => {
+    if (isLive()) {
+      logToConsole('system', '실서버 모드에서는 화면 등록을 지원하지 않습니다 — POST /api/models로 등록하세요.')
+      return
+    }
     const model: ModelVersion = {
       id: nextModelId(),
       project: input.project,
@@ -199,6 +279,11 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   deployModel: (id) => {
     const target = get().models.find((m) => m.id === id)
     if (!target) return
+    if (isLive()) {
+      // 운영 전환 = 실시간 전략으로 전체 사일로 배포 (배포됨 상태는 다음 폴링이 승격)
+      liveCreateDeployment(id, 'realtime', [])
+      return
+    }
     set((state) => ({ models: promoteToDeployed(state.models, target) }))
     logToConsole('success', `[${target.project}] ${target.version} 모델을 배포했습니다.`)
   },
@@ -213,6 +298,10 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   archiveModel: (id) => {
     const target = get().models.find((m) => m.id === id)
     if (!target) return
+    if (isLive()) {
+      logToConsole('system', '실서버 모드에서는 보관 처리를 지원하지 않습니다.')
+      return
+    }
     set((state) => ({
       models: state.models.map((m) => (m.id === id ? { ...m, status: 'archived' as ModelStatus } : m)),
     }))
@@ -222,6 +311,10 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   removeModel: (id) => {
     const target = get().models.find((m) => m.id === id)
     if (!target) return
+    if (isLive()) {
+      logToConsole('system', '실서버 모드에서는 화면 삭제를 지원하지 않습니다 — DELETE /api/models를 사용하세요.')
+      return
+    }
     set((state) => {
       const { [id]: _removed, ...packages } = state.packages
       return {
@@ -237,6 +330,11 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   buildPackage: (modelId, runtime) => {
     const target = get().models.find((m) => m.id === modelId)
     if (!target) return
+    if (isLive()) {
+      // 라이브 모드 패키지는 applyLiveModels가 built로 채운다 — 목 타이머로 덮어쓰지 않는다
+      logToConsole('system', '실서버 모드의 패키징은 배포 시 백엔드가 이미지 태그를 처리합니다.')
+      return
+    }
     const imageTag = buildImageTag(target.project, target.version)
 
     set((state) => ({
@@ -261,6 +359,10 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   createDeployment: (input) => {
     const target = get().models.find((m) => m.id === input.modelId)
     if (!target) return
+    if (isLive()) {
+      liveCreateDeployment(input.modelId, input.strategy, input.targetSiloIds)
+      return
+    }
 
     const id = nextDeployId()
     const modelLabel = `${target.project} ${target.version}`
@@ -300,11 +402,32 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   rollbackDeployment: (id) => {
     const target = get().deployments.find((d) => d.id === id)
     if (!target) return
+    if (isLive()) {
+      logToConsole('server', `[${target.modelLabel}] 실서버 롤백 요청 (${id})...`)
+      apiPost<DeploymentEntryApi>(`/api/deployments/${id}/rollback`)
+        .then((entry) =>
+          logToConsole(
+            'success',
+            `[${target.modelLabel}] 롤백 완료 — 이전 배포를 ${entry.deployment_id}(으)로 재배포했습니다.`,
+          ),
+        )
+        .catch((error: unknown) =>
+          logToConsole(
+            'error',
+            `[${target.modelLabel}] 롤백 실패 — ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        )
+      return
+    }
     set((state) => ({ deployments: state.deployments.filter((d) => d.id !== id) }))
     logToConsole('error', `[${target.modelLabel}] 배포를 롤백하여 이전 운영 모델로 복원했습니다.`)
   },
 
   triggerRetrain: (modelId?: string) => {
+    if (isLive()) {
+      logToConsole('system', '실서버 모드에서는 재학습 트리거를 지원하지 않습니다 — 학습 라운드를 서버에서 여세요.')
+      return
+    }
     const { models } = get()
     // modelId 지정 시 해당 모델, 미지정 시 첫 번째 배포 모델을 재학습 대상으로 선택
     const base =

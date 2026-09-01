@@ -109,8 +109,8 @@ export type PackageState = 'idle' | 'building' | 'built'
 /** 배포 전략: 일괄 / 실시간 / 에지 */
 export type DeployStrategy = 'batch' | 'realtime' | 'edge'
 
-/** 배포 라이프사이클 상태 */
-export type DeployState = 'pending' | 'deploying' | 'done' | 'failed'
+/** 배포 라이프사이클 상태 (stopped/rolled_back은 실서버 배포 기록에서만 온다) */
+export type DeployState = 'pending' | 'deploying' | 'done' | 'failed' | 'stopped' | 'rolled_back'
 
 export interface ModelPackage {
   modelId: string
