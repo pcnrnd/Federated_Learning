@@ -190,6 +190,22 @@ class SiloClient:
     def get_round(self, round_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/training-rounds/{round_id}")
 
+    def list_rounds(
+        self,
+        *,
+        status: str | None = None,
+        model_name: str | None = None,
+    ) -> list[Any]:
+        """학습 라운드 목록 조회 — 주기 수집 워커가 open 라운드를 발견하는 데 쓴다."""
+        query = "&".join(
+            f"{key}={value}"
+            for key, value in (("status", status), ("model_name", model_name))
+            if value
+        )
+        path = "/api/training-rounds" + (f"?{query}" if query else "")
+        result = self._request("GET", path)
+        return result if isinstance(result, list) else []
+
     def list_metrics(
         self,
         model_name: str,

@@ -191,6 +191,36 @@ def test_list_metrics_unwraps_paginated_items():
 
 
 @pytest.mark.unit
+def test_list_rounds_filters_by_status_and_model():
+    """status/model_name 쿼리로 라운드 목록을 조회하고 리스트를 그대로 반환한다."""
+    captured: dict = {}
+
+    def _fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["method"] = req.get_method()
+        return _ok_response([{"round_id": "r1", "status": "open", "contributors": []}])
+
+    client = SiloClient("http://central:8000", silo_id="silo-2")
+    with patch("silo_sdk.client.urllib.request.urlopen", side_effect=_fake_urlopen):
+        rounds = client.list_rounds(status="open", model_name="e2e-ridge")
+
+    assert captured["method"] == "GET"
+    assert captured["url"] == "http://central:8000/api/training-rounds?status=open&model_name=e2e-ridge"
+    assert rounds == [{"round_id": "r1", "status": "open", "contributors": []}]
+
+
+@pytest.mark.unit
+def test_list_rounds_without_filters_hits_bare_path():
+    def _fake_urlopen(req, timeout):
+        assert req.full_url == "http://central:8000/api/training-rounds"
+        return _ok_response([])
+
+    client = SiloClient("http://central:8000", silo_id="silo-2")
+    with patch("silo_sdk.client.urllib.request.urlopen", side_effect=_fake_urlopen):
+        assert client.list_rounds() == []
+
+
+@pytest.mark.unit
 def test_post_sends_idempotency_key_header():
     """POST 요청에 X-Idempotency-Key 헤더를 붙일 수 있다."""
     captured: dict = {}
