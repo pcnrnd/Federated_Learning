@@ -64,9 +64,11 @@ class RoundScheduler:
             await asyncio.wait_for(self._task, timeout=self._interval + 5.0)
         except asyncio.TimeoutError:
             # Task cancel은 대기 중인 await만 끊는다 — to_thread로 넘어간 tick 본체(스레드)는
-            # 취소되지 않고 완료까지 계속 실행된다. 종료 대기 상한·강제 종료 정책은 별도 결정 사항
-            # (docs/research-notes/2026-H2.md L5). tick은 잠금으로 직렬화되어 중복 실행이
-            # 데이터 오염으로 이어지지는 않는다.
+            # 취소되지 않고 완료까지 계속 실행된다. 스케줄러 전체 잠금은 없다: 라운드·기여 쓰기는
+            # _round_lock, 잡 쓰기는 _job_lock으로만 직렬화되고 배포 reconcile의
+            # deployment_service._save 는 무잠금이라, 잔존 tick 스레드와 재기동 tick이 겹치면
+            # 배포 파일 병렬 쓰기가 가능하다. 종료 대기 상한·강제 종료·잔존 스레드 join 정책은
+            # 별도 결정 사항 (docs/research-notes/2026-H2.md L5).
             self._task.cancel()
         finally:
             self._task = None

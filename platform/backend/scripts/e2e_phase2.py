@@ -293,6 +293,9 @@ def main():
             dump_silo_log(silo, "monitor.log")
             raise SystemExit(f"E2E FAIL: {silo} monitor 데몬 사망 (장기 실행 중 종료)")
     _, usage = api("GET", "/api/resources/usage")
+    present = {u["silo_id"] for u in usage}
+    missing = sorted(set(SILOS) - present)
+    assert not missing, f"usage에 없는 사일로(monitor 데몬 push 유실): {missing}"
     now = datetime.now(timezone.utc)
     stale = []
     for u in usage:
@@ -303,7 +306,8 @@ def main():
         if age > MONITOR_FRESHNESS_SEC:
             stale.append(u["silo_id"])
     assert not stale, f"monitor sample 최신성 위반(> {MONITOR_FRESHNESS_SEC}s): {stale}"
-    log(f"  ==> monitor PASS: {len(SILOS)}개 데몬 생존, 최신 sample ≤ {MONITOR_FRESHNESS_SEC}s")
+    log(f"  ==> monitor PASS: {len(SILOS)}개 데몬 생존, usage {len(SILOS)}행 존재, "
+        f"최신 sample ≤ {MONITOR_FRESHNESS_SEC}s")
 
     log("[7] 사후 검증 — 라운드 원장·지표 수집량")
     _, rounds = api("GET", f"/api/training-rounds?model_name={MODEL}&status=completed")
