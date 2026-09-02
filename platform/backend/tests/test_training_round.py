@@ -432,3 +432,54 @@ def test_proxy_submission_provenance_survives_listing():
 
     assert len(records) == 1
     assert records[0].aggregated_from == ["silo-3"]
+
+
+@pytest.mark.unit
+def test_create_round의_저장은_round_lock으로_직렬화된다():
+    """라운드 파일 쓰기 경합 회귀 테스트 — 잠금 없이 쓰면 동시 기여/집계의
+    read-modify-write와 겹쳐 방금 만든 라운드가 유실된다 (기여 404 실측)."""
+    import threading
+
+    done = threading.Event()
+
+    def _create():
+        _create_round()
+        done.set()
+
+    with training_round_service._round_lock:
+        worker = threading.Thread(target=_create, daemon=True)
+        worker.start()
+        # 잠금을 쥔 동안에는 저장이 완료되면 안 된다
+        assert not done.wait(timeout=0.3), "create_round가 _round_lock 없이 라운드를 저장했다"
+    assert done.wait(timeout=3.0), "잠금 해제 후에도 create_round가 완료되지 않았다"
+
+
+@pytest.mark.unit
+def test_동시_라운드_생성과_기여가_라운드를_유실하지_않는다():
+    """생성(쓰기)과 기여(쓰기)가 병렬로 반복돼도 생성된 라운드 전부가 저장소에 남는다."""
+    import threading
+
+    base = _create_round(min_contrib=2)
+    stop = threading.Event()
+
+    def _spam_contributions():
+        seq = 0
+        while not stop.is_set():
+            # 같은 라운드에 서로 다른 silo_id로 기여를 반복 — 라운드 파일 쓰기 유발
+            seq += 1
+            try:
+                _contribute(base.round_id, "silo-1" if seq % 2 else "silo-2", 1, [1.0])
+            except HTTPException:
+                pass  # 중복 기여 409는 정상 — 쓰기 경합 유발이 목적
+
+    spammer = threading.Thread(target=_spam_contributions, daemon=True)
+    spammer.start()
+    try:
+        created = [_create_round().round_id for _ in range(30)]
+    finally:
+        stop.set()
+        spammer.join(timeout=5.0)
+
+    stored = load_training_rounds()
+    missing = [rid for rid in created if rid not in stored]
+    assert not missing, f"동시 쓰기로 유실된 라운드: {missing}"

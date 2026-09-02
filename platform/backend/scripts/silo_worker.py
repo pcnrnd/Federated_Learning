@@ -220,9 +220,21 @@ def run_train_loop(args: argparse.Namespace) -> None:
             try:
                 client.push_parameters(round_id, result.sample_count, result.parameters)
             except SiloClientError as exc:
-                # 409 = 이미 기여했거나 라운드가 방금 마감됨 — 스케줄러와의 정상 경합
-                if exc.status != 409:
+                # 409 = 이미 기여/라운드 마감, 404 = 목록 조회와 push 사이에 라운드 소멸
+                # — 둘 다 분산 폴링의 정상 경합이므로 다음 라운드로 넘어간다
+                if exc.status not in (404, 409):
                     raise
+                if exc.status == 404:
+                    # 기여 성공으로 세지 않는다 — 라운드가 사라졌으므로 다음 폴링에서 재평가
+                    print(
+                        json.dumps(
+                            {"silo_id": args.silo_id, "event": "round_gone",
+                             "round_id": round_id},
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+                    continue
             contributed_rounds.add(round_id)
             acted = True
             idle_deadline = time.monotonic() + args.max_idle

@@ -135,12 +135,15 @@ def main():
     else:
         raise SystemExit("E2E FAIL: /readyz 미응답")
     for silo in SILOS:
+        # 재실행 대비 — 이전 실행이 남긴 워커 데몬을 정리하고 최신 워커를 배포한다
+        wsl_run(["docker", "exec", silo, "sh", "-c",
+                 "pkill -f silo_worker.py || true"], timeout=60)
         r = wsl_run(["docker", "cp",
                      f"{ARGS.repo_wsl}/platform/backend/scripts/silo_worker.py",
                      f"{silo}:/tmp/silo_worker.py"], timeout=120)
         if r.returncode != 0:
             raise SystemExit(f"docker cp 실패: {silo}: {r.stderr}")
-    log(f"  worker 배포 완료: {', '.join(SILOS)}")
+    log(f"  worker 배포 완료: {', '.join(SILOS)} (이전 데몬 정리 포함)")
 
     log(f"[1] 사일로 그룹 보증 — {GROUP} (멤버 {len(SILOS)})")
     payload = {"group_id": GROUP, "description": "Phase2 E2E 6사일로 루트 그룹",
@@ -218,6 +221,12 @@ def main():
     log(f"  ==> 6사일로 연합 PASS: {len(SILOS)}개 사일로 릿지 실학습 기여 → FedAvg → completed")
 
     log(f"[5] {ARGS.rounds}라운드 연속 완주 — chain 잡 + train-loop 데몬")
+    # 재실행 대비 — 같은 모델의 이전 active 잡을 취소해 라운드 공급원이 둘이 되는 걸 막는다
+    _, active_jobs = api("GET", "/api/training-jobs?status=active")
+    for stale in active_jobs:
+        if stale["model_name"] == MODEL:
+            api("POST", f"/api/training-jobs/{stale['job_id']}/cancel")
+            log(f"  이전 active 잡 취소: {stale['job_id']} (completed={stale['rounds_completed']})")
     job_id = f"e2e-chain250-{STAMP}"
     _, job = api("POST", "/api/training-jobs", {
         "job_id": job_id, "model_name": MODEL, "version": VERSION,
@@ -226,9 +235,11 @@ def main():
         "notes": "Phase2 250라운드 연속 실측",
     })
     log(f"  잡 생성: {job_id} (schedule=chain, max_rounds={ARGS.rounds})")
+    # 워커 예산에 여유(+10)를 둔다 — 이전 실행이 남긴 open 라운드를 소화해도
+    # 잡 250라운드를 채울 수 있도록. 성공 판정은 워커 종료가 아니라 잡 completed다.
     for silo in SILOS:
         silo_daemon(silo, ["train-loop", "--central", CENTRAL_IN_NET, "--silo-id", silo,
-                           "--model", MODEL, "--max-rounds", str(ARGS.rounds),
+                           "--model", MODEL, "--max-rounds", str(ARGS.rounds + 10),
                            "--poll-interval", "0.5", "--max-idle", "300"],
                     "train-loop.log")
     log(f"  train-loop 데몬 기동: {len(SILOS)}사일로 (poll 0.5s)")

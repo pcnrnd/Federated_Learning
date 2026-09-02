@@ -84,7 +84,11 @@ def create_round(request: TrainingRoundCreate) -> TrainingRound:
         # open 시점 멤버를 동결 — 라운드 도중 그룹이 바뀌어도 진행 중 라운드는 무영향
         member_snapshot=list(group.member_node_ids),
     )
-    _save_round(entry)
+    # 라운드 파일의 모든 쓰기는 _round_lock으로 직렬화한다 — 잠금 없이 쓰면
+    # 동시 기여/집계의 load→save 와 read-modify-write 경합으로 방금 만든 라운드가
+    # 유실된다 (실측: 250라운드 연속 실행 중 기여 404)
+    with _round_lock:
+        _save_round(entry)
     logger.info("학습 라운드 생성: %s (%s@%s, group=%s)",
                 entry.round_id, request.model_name, request.version, request.group_id)
     return entry
