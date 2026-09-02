@@ -216,7 +216,7 @@
 | alert_rules.yaml, alerts.yaml | 알림 |
 | audit.log | JSON Lines 감사 로그 |
 | silo_groups.yaml | 사일로 그룹 |
-| training_rounds.yaml, contributions.yaml | 학습 라운드 |
+| training_rounds.yaml, contributions.yaml | 학습 라운드 (SQLite: `training_rounds` 단건 upsert, `contributions` (round_id, silo_id) upsert) |
 | training_jobs.yaml | Batch 잡 |
 | resource_limits.yaml | 리소스 임계값 |
 | lineage.yaml, shadow_deployments.yaml, ab_tests.yaml | 유지관리 |

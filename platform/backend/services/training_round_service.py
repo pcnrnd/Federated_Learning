@@ -10,10 +10,11 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from config.federated_manager import (
-    load_contributions,
+    get_training_round,
+    load_round_contributions,
     load_training_rounds,
-    save_contributions,
-    save_training_rounds,
+    upsert_contribution,
+    upsert_training_round,
 )
 from models.federated_schemas import (
     AggregateResult,
@@ -35,9 +36,8 @@ def _now_iso() -> str:
 
 
 def _save_round(entry: TrainingRound) -> None:
-    rounds = load_training_rounds()
-    rounds[entry.round_id] = entry.model_dump()
-    save_training_rounds(rounds)
+    # 라운드 1건 upsert — 이력 전체 read-modify-write를 피한다 (SQLite: 단일 행, YAML: 파일 단위)
+    upsert_training_round(entry.round_id, entry.model_dump())
 
 
 def list_rounds(
@@ -59,10 +59,10 @@ def list_rounds(
 
 
 def get_round(round_id: str) -> TrainingRound:
-    raw = load_training_rounds()
-    if round_id not in raw:
+    raw = get_training_round(round_id)
+    if raw is None:
         raise HTTPException(status_code=404, detail="학습 라운드를 찾을 수 없습니다")
-    return TrainingRound(**raw[round_id])
+    return TrainingRound(**raw)
 
 
 def create_round(request: TrainingRoundCreate) -> TrainingRound:
@@ -165,8 +165,7 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
         _verify_membership(entry, contribution.silo_id)
         _verify_aggregated_from(contribution.silo_id, contribution.aggregated_from)
 
-        contributions = load_contributions()
-        round_bucket = contributions.setdefault(contribution.round_id, {})
+        round_bucket = load_round_contributions(contribution.round_id)
         if contribution.silo_id in round_bucket:
             raise HTTPException(
                 status_code=409,
@@ -181,8 +180,7 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
             "checksum": contribution.checksum or _checksum_params(contribution.parameters),
             "aggregated_from": list(contribution.aggregated_from),
         }
-        round_bucket[contribution.silo_id] = record
-        save_contributions(contributions)
+        upsert_contribution(contribution.round_id, contribution.silo_id, record)
 
         updated = entry.model_copy(
             update={
@@ -212,7 +210,7 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
 
 
 def list_contributions(round_id: str) -> list[ParameterContributionRecord]:
-    contributions = load_contributions().get(round_id, {})
+    contributions = load_round_contributions(round_id)
     records = [
         ParameterContributionRecord(
             round_id=round_id,
@@ -235,7 +233,7 @@ def aggregate_round(round_id: str) -> AggregateResult:
         entry = get_round(round_id)
         if entry.status == "completed":
             raise HTTPException(status_code=409, detail="이미 집계 완료된 라운드입니다")
-        contributions = load_contributions().get(round_id, {})
+        contributions = load_round_contributions(round_id)
         if len(contributions) < entry.min_contributions:
             raise HTTPException(
                 status_code=400,

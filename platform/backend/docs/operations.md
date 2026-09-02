@@ -97,7 +97,16 @@ FED_CONFIG_DIR=../config python scripts/migrate_yaml_to_sqlite.py
 FED_STORAGE=sqlite FED_CONFIG_DIR=../config uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-import 대상: `models`, `deployments`, `silo_groups`, `training_rounds`, `resource_limits`, `alerts`.
+import 대상: `models`, `deployments`, `silo_groups`, `training_rounds`, `contributions`, `resource_limits`, `alerts`.
+
+**기여 원장(contributions) 저장 형식**
+
+- SQLite 백엔드에서 파라미터 기여는 `contributions` 테이블에 `(round_id, silo_id)` 기본키로 **행 단위 upsert** 된다.
+  라운드 레코드(`training_rounds`)도 단건 upsert — 기여 push 1건이 전체 이력을 읽고 다시 쓰지 않는다
+  (250라운드 연속 실측에서 라운드당 지연이 이력에 비례해 늘던 원인).
+- YAML 백엔드는 종전대로 `contributions.yaml` 한 파일(원자 교체)이며 쓰기당 O(이력) 이다.
+- **dual-read**: SQLite로 전환한 뒤 `migrate_yaml_to_sqlite.py`를 돌리지 않아도, SQLite에 없는 라운드의
+  기여는 남아 있는 `contributions.yaml`에서 읽힌다(파일 mtime 기준 1회 파싱·캐시). 새 기여는 SQLite에만 쓰인다.
 메트릭 시계열은 기본적으로 인메모리(`metric_store`)이며, DB 테이블은 마이그레이션 시 선택적 스냅샷용이다.
 
 ## 환경 변수

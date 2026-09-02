@@ -11,7 +11,7 @@ import os
 
 from fastapi import HTTPException
 
-from config.federated_manager import load_contributions
+from config.federated_manager import load_round_contributions
 from services import deployment_service, training_job_service, training_round_service
 
 logger = logging.getLogger(__name__)
@@ -73,9 +73,9 @@ class RoundScheduler:
         """tick의 동기 본체 — 저장소 I/O를 포함하므로 이벤트 루프에서 직접 부르지 않는다."""
         aggregated_ids: list[str] = []
         open_rounds = training_round_service.list_rounds(status="open")
-        contributions = load_contributions()
         for entry in open_rounds:
-            count = len(contributions.get(entry.round_id, {}))
+            # open 라운드별 조회 — 전체 기여 이력을 매 tick 읽지 않는다
+            count = len(load_round_contributions(entry.round_id))
             if count >= entry.min_contributions:
                 try:
                     training_round_service.aggregate_round(entry.round_id)

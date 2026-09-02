@@ -4,14 +4,15 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 
+from . import settings as storage_settings
 from .repository import DictRepository
-from .settings import get_backend, get_sqlite_path
 from .sqlite_repository import (
+    SqliteContributionsRepository,
     SqliteFlatRepository,
     SqliteMetricsRepository,
     SqliteModelsRepository,
 )
-from .yaml_repository import YamlDictRepository
+from .yaml_repository import YamlContributionsRepository, YamlDictRepository
 
 _repositories: dict[tuple[str, str], DictRepository] = {}
 
@@ -23,6 +24,7 @@ class StorageDomain(str, Enum):
     DEPLOYMENTS = "deployments"
     SILO_GROUPS = "silo_groups"
     TRAINING_ROUNDS = "training_rounds"
+    CONTRIBUTIONS = "contributions"
     METRICS = "metrics"
     RESOURCE_LIMITS = "resource_limits"
     ALERTS = "alerts"
@@ -35,14 +37,16 @@ def reset_repositories() -> None:
 
 def get_repository(domain: StorageDomain, yaml_path: Path) -> DictRepository:
     """도메인 + YAML 경로로 Repository를 반환 (백엔드는 환경 변수)."""
-    backend = get_backend()
+    backend = storage_settings.get_backend()
     cache_key = (backend, domain.value)
     if cache_key in _repositories:
         return _repositories[cache_key]
 
     if backend == "sqlite":
-        db_path = get_sqlite_path()
+        db_path = storage_settings.get_sqlite_path()
         repo = _build_sqlite(domain, db_path)
+    elif domain == StorageDomain.CONTRIBUTIONS:
+        repo = YamlContributionsRepository(yaml_path)
     else:
         repo = YamlDictRepository(yaml_path)
 
@@ -60,6 +64,8 @@ def _build_sqlite(domain: StorageDomain, db_path: Path) -> DictRepository:
         return SqliteModelsRepository(db_path)
     if domain == StorageDomain.METRICS:
         return SqliteMetricsRepository(db_path)
+    if domain == StorageDomain.CONTRIBUTIONS:
+        return SqliteContributionsRepository(db_path)
     table_map = {
         StorageDomain.DEPLOYMENTS: ("deployments", "id"),
         StorageDomain.SILO_GROUPS: ("silo_groups", "id"),

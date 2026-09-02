@@ -7,8 +7,8 @@ from typing import Any
 
 from config.yaml_store import load_yaml
 
+from . import settings as storage_settings
 from .factory import StorageDomain, reset_repositories
-from .settings import get_sqlite_path
 from .sqlite_repository import SqliteMetricsRepository
 from .sqlite_store import connect
 
@@ -20,6 +20,7 @@ _YAML_SOURCES: dict[StorageDomain, str] = {
     StorageDomain.DEPLOYMENTS: "deployments.yaml",
     StorageDomain.SILO_GROUPS: "silo_groups.yaml",
     StorageDomain.TRAINING_ROUNDS: "training_rounds.yaml",
+    StorageDomain.CONTRIBUTIONS: "contributions.yaml",
     StorageDomain.RESOURCE_LIMITS: "resource_limits.yaml",
     StorageDomain.ALERTS: "alerts.yaml",
 }
@@ -43,7 +44,7 @@ def import_yaml_to_sqlite(
 
         config_dir = CONFIG_DIR
     config_dir = Path(config_dir)
-    target_db = Path(db_path or get_sqlite_path())
+    target_db = Path(db_path or storage_settings.get_sqlite_path())
 
     reset_repositories()
     imported: list[str] = []

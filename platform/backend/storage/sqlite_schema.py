@@ -41,6 +41,15 @@ CREATE TABLE IF NOT EXISTS training_rounds (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 파라미터 기여 원장 (YAML: {round_id: {silo_id: payload}}) — 라운드×사일로 단위 upsert
+CREATE TABLE IF NOT EXISTS contributions (
+    round_id TEXT NOT NULL,
+    silo_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (round_id, silo_id)
+);
+
 CREATE TABLE IF NOT EXISTS metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id TEXT NOT NULL,
