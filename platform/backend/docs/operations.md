@@ -105,8 +105,9 @@ import 대상: `models`, `deployments`, `silo_groups`, `training_rounds`, `contr
   라운드 레코드(`training_rounds`)도 단건 upsert — 기여 push 1건이 전체 이력을 읽고 다시 쓰지 않는다
   (250라운드 연속 실측에서 라운드당 지연이 이력에 비례해 늘던 원인).
 - YAML 백엔드는 종전대로 `contributions.yaml` 한 파일(원자 교체)이며 쓰기당 O(이력) 이다.
-- **dual-read**: SQLite로 전환한 뒤 `migrate_yaml_to_sqlite.py`를 돌리지 않아도, SQLite에 없는 라운드의
-  기여는 남아 있는 `contributions.yaml`에서 읽힌다(파일 mtime 기준 1회 파싱·캐시). 새 기여는 SQLite에만 쓰인다.
+- **dual-read**: SQLite로 전환한 뒤 `migrate_yaml_to_sqlite.py`를 돌리지 않아도, 라운드 조회는 남아 있는
+  `contributions.yaml`의 같은 라운드 기여와 **병합**된다(silo_id 충돌 시 SQLite 우선, 파일 mtime 기준 1회 파싱·캐시).
+  새 기여는 SQLite에만 쓰인다 — YAML 기여가 있는 라운드에 SQLite 기여가 추가돼도 양쪽이 모두 보인다.
 메트릭 시계열은 기본적으로 인메모리(`metric_store`)이며, DB 테이블은 마이그레이션 시 선택적 스냅샷용이다.
 
 ## 환경 변수

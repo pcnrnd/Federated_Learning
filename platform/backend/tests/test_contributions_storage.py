@@ -173,6 +173,70 @@ def test_dual_read_falls_back_to_legacy_yaml_for_unmigrated_rounds(sqlite_backen
 
 
 @pytest.mark.unit
+def test_dual_read_merges_same_round_yaml_and_sqlite_contributions(sqlite_backend):
+    """회귀: YAML 기여가 있는 라운드에 SQLite 기여가 추가돼도 기존 YAML 기여가 가려지지 않는다."""
+    legacy_path = federated_manager.CONTRIBUTIONS_FILE
+    save_yaml_atomic(legacy_path, {"r-mixed": {"silo-old": _record("silo-old", 5)}})
+    assert set(federated_manager.load_round_contributions("r-mixed")) == {"silo-old"}
+
+    federated_manager.upsert_contribution("r-mixed", "silo-new", _record("silo-new", 7))
+
+    merged = federated_manager.load_round_contributions("r-mixed")
+    assert merged == {"silo-old": _record("silo-old", 5), "silo-new": _record("silo-new", 7)}
+    # 중복 검사·집계 기준이 되는 개수도 양쪽 합
+    assert len(merged) == 2
+
+
+@pytest.mark.unit
+def test_dual_read_sqlite_record_wins_on_silo_id_conflict(sqlite_backend):
+    legacy_path = federated_manager.CONTRIBUTIONS_FILE
+    save_yaml_atomic(legacy_path, {"r-dup": {"silo-1": _record("silo-1", 1)}})
+
+    federated_manager.upsert_contribution("r-dup", "silo-1", _record("silo-1", 99))
+
+    assert federated_manager.load_round_contributions("r-dup") == {"silo-1": _record("silo-1", 99)}
+
+
+@pytest.mark.unit
+def test_submit_contribution_rejects_duplicate_of_legacy_yaml_contribution(sqlite_backend, tmp_path):
+    """서비스 경로 회귀: YAML에만 있는 기여도 중복(409)으로 막히고, 다른 사일로 기여 후에도 그대로 보인다."""
+    from fastapi import HTTPException
+
+    from config.server_manager import save_servers
+    from models.federated_schemas import ParameterContribution, SiloGroupRequest, TrainingRoundCreate
+    from models.packaging_schemas import ModelRegisterRequest
+    from services import model_registry, silo_group_service, training_round_service
+
+    save_servers({
+        f"silo-{i}": {"base_url": f"tcp://localhost:237{i}", "label": f"silo-{i}",
+                      "type": "remote", "role": "client", "tls": False}
+        for i in (1, 2)
+    })
+    weights = tmp_path / "m.pt"
+    weights.write_bytes(b"")
+    model_registry.register_model(ModelRegisterRequest(
+        name="alpha", version="1.0.0", framework="pytorch", weights_path=str(weights)))
+    silo_group_service.create_group(SiloGroupRequest(group_id="g1", member_node_ids=["silo-1", "silo-2"]))
+    rnd = training_round_service.create_round(
+        TrainingRoundCreate(model_name="alpha", version="1.0.0", group_id="g1", min_contributions=2))
+    # silo-1 기여는 SQLite 전환 전 YAML 원장에만 존재한다고 가정
+    save_yaml_atomic(federated_manager.CONTRIBUTIONS_FILE, {rnd.round_id: {"silo-1": {
+        "silo_id": "silo-1", "sample_count": 1, "parameters": [1.0, 1.0],
+        "submitted_at": "2026-09-01T00:00:00+00:00", "checksum": None, "aggregated_from": []}}})
+
+    with pytest.raises(HTTPException) as exc:
+        training_round_service.submit_contribution(ParameterContribution(
+            round_id=rnd.round_id, silo_id="silo-1", sample_count=1, parameters=[1.0, 1.0]))
+    assert exc.value.status_code == 409
+
+    training_round_service.submit_contribution(ParameterContribution(
+        round_id=rnd.round_id, silo_id="silo-2", sample_count=3, parameters=[3.0, 3.0]))
+    assert {r.silo_id for r in training_round_service.list_contributions(rnd.round_id)} == {"silo-1", "silo-2"}
+    result = training_round_service.aggregate_round(rnd.round_id)
+    assert result.contributor_count == 2 and result.total_samples == 4
+
+
+@pytest.mark.unit
 def test_dual_read_caches_legacy_until_file_changes(sqlite_backend, monkeypatch):
     legacy_path = federated_manager.CONTRIBUTIONS_FILE
     save_yaml_atomic(legacy_path, {"r-old": {"silo-1": _record("silo-1", 1)}})

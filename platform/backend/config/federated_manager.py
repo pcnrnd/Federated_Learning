@@ -77,15 +77,19 @@ def _legacy_contributions() -> dict[str, Any]:
 def load_round_contributions(round_id: str) -> dict[str, Any]:
     """라운드 1건의 기여 {silo_id: record}.
 
-    SQLite 백엔드에서 해당 라운드 행이 없으면 legacy contributions.yaml을 본다 —
-    `scripts/migrate_yaml_to_sqlite.py`를 돌리지 않고 전환해도 기존 라운드 기여가 보인다.
+    SQLite 백엔드에서는 legacy contributions.yaml의 같은 라운드 기여와 **병합**해 돌려준다
+    (silo_id가 겹치면 SQLite 우선). "SQLite 버킷이 비었을 때만 YAML"로 하면 YAML 기여가
+    있는 라운드에 새 SQLite 기여가 하나 들어오는 순간 기존 기여가 가려져 라운드 정체·중복
+    재수락이 생긴다 (리뷰 재현: [silo-old] → [silo-new]). 새 기여는 SQLite에만 쓰이므로
+    `scripts/migrate_yaml_to_sqlite.py`를 돌리지 않고 전환해도 무손실이다.
     """
     bucket = get_repository(StorageDomain.CONTRIBUTIONS, CONTRIBUTIONS_FILE).load_round(round_id)
-    if not bucket and get_backend() == "sqlite":
-        legacy = _legacy_contributions().get(round_id)
-        if isinstance(legacy, dict):
-            return dict(legacy)
-    return bucket
+    if get_backend() != "sqlite":
+        return bucket
+    legacy = _legacy_contributions().get(round_id)
+    if not isinstance(legacy, dict):
+        return bucket
+    return {**legacy, **bucket}
 
 
 def upsert_contribution(round_id: str, silo_id: str, record: dict[str, Any]) -> None:
