@@ -105,7 +105,8 @@ export const DEFAULT_CONFIG = {
 }
 
 export const CONFIG_BOUNDS = {
-  rounds: { min: 5, max: 50 },
+  // 라운드 상한 300 — 250라운드 연속 연합 실측(Phase 2)을 UI에서 그대로 설정할 수 있어야 한다
+  rounds: { min: 5, max: 300 },
   epochs: { min: 1, max: 10 },
   learningRate: { min: 0.001, max: 0.1, step: 0.001 },
 } as const

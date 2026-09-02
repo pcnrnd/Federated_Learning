@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from fastapi import HTTPException
 
@@ -18,11 +19,25 @@ logger = logging.getLogger(__name__)
 _DEFAULT_INTERVAL_SECONDS = 15.0
 
 
+def _env_interval() -> float:
+    """FED_SCHEDULER_INTERVAL(초) — 연속 라운드 실측 등에서 tick 간격 단축용."""
+    raw = os.getenv("FED_SCHEDULER_INTERVAL", "")
+    if not raw:
+        return _DEFAULT_INTERVAL_SECONDS
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("FED_SCHEDULER_INTERVAL 값이 숫자가 아님 (%r) — 기본 %.0fs 사용",
+                       raw, _DEFAULT_INTERVAL_SECONDS)
+        return _DEFAULT_INTERVAL_SECONDS
+
+
 class RoundScheduler:
     """주기 백그라운드 수집/집계 스케줄러"""
 
-    def __init__(self, interval_seconds: float = _DEFAULT_INTERVAL_SECONDS) -> None:
-        self._interval = max(1.0, float(interval_seconds))
+    def __init__(self, interval_seconds: float | None = None) -> None:
+        chosen = _env_interval() if interval_seconds is None else float(interval_seconds)
+        self._interval = max(1.0, chosen)
         self._task: asyncio.Task[None] | None = None
         self._stop_event: asyncio.Event | None = None
 
