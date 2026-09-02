@@ -226,6 +226,21 @@ def _local_accuracy(rows: list[dict], parameters: list[float]) -> float:
     return max(0.0, min(1.0, 1.0 - sse / sst))
 
 
+def _already_contributed(client: SiloClient, round_id: str, silo_id: str) -> bool:
+    """409의 원인 판별 — 라운드를 재조회해 내 기여가 실제로 등록돼 있는지 본다.
+
+    True  = 진짜 중복(이전 push가 타임아웃 뒤 서버에는 반영됨) → 기여로 세고 지표 1회 push
+    False = 라운드가 마감(aggregating/completed)된 뒤의 기여 → 기여 미반영이므로
+            지표를 push하면 집계에 없는 라운드의 accuracy가 중복 계상된다 → 건너뛴다
+    재조회 자체가 실패하면(404·일시 오류) 보수적으로 False — 다음 폴링에서 재평가.
+    """
+    try:
+        entry = client.get_round(round_id)
+    except (TimeoutError, OSError, SiloClientError):
+        return False
+    return silo_id in entry.get("contributors", [])
+
+
 def run_train_loop(args: argparse.Namespace) -> None:
     """open 라운드를 폴링해 릿지 실학습 기여 + 라운드별 accuracy 지표를 push한다.
 
@@ -284,15 +299,18 @@ def run_train_loop(args: argparse.Namespace) -> None:
                 )
                 break
             except SiloClientError as exc:
-                # 409 = 이미 기여/라운드 마감, 404 = 목록 조회와 push 사이에 라운드 소멸
-                # — 둘 다 분산 폴링의 정상 경합이므로 다음 라운드로 넘어간다
+                # 409 = 이미 기여 또는 라운드 마감, 404 = 목록 조회와 push 사이에 라운드 소멸
+                # — 모두 분산 폴링의 정상 경합이므로 워커는 죽지 않는다
                 if exc.status not in (404, 409):
                     raise
-                if exc.status == 404:
-                    # 기여 성공으로 세지 않는다 — 라운드가 사라졌으므로 다음 폴링에서 재평가
+                if exc.status == 404 or not _already_contributed(
+                    client, round_id, args.silo_id
+                ):
+                    # 기여가 반영되지 않은 라운드 — 세지 않고 지표도 push하지 않는다
                     print(
                         json.dumps(
-                            {"silo_id": args.silo_id, "event": "round_gone",
+                            {"silo_id": args.silo_id,
+                             "event": "round_gone" if exc.status == 404 else "round_closed",
                              "round_id": round_id},
                             ensure_ascii=False,
                         ),

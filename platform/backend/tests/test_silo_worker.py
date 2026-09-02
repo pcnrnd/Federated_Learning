@@ -150,3 +150,57 @@ def test_monitor_fails_fast_on_coding_error(quiet_probes, monkeypatch):
 )
 def test_is_transient_classification(exc, transient):
     assert silo_worker._is_transient(exc) is transient
+
+
+# ---------- train-loop: 409 원인 구분 (진짜 중복 vs 라운드 마감 후 기여) ----------
+
+
+def _loop_args() -> argparse.Namespace:
+    return argparse.Namespace(central="http://c", silo_id="silo-1", model="m",
+                              max_rounds=1, poll_interval=0, max_idle=0.05)
+
+
+def _open_round(round_id: str) -> dict:
+    return {"round_id": round_id, "model_name": "m", "version": "1.0.0",
+            "status": "open", "contributors": []}
+
+
+@pytest.mark.unit
+def test_train_loop_409_after_round_closed_does_not_count_or_push_metric(
+    quiet_probes, monkeypatch, capsys
+):
+    # push 시점엔 라운드가 이미 aggregating/completed → 409, 재조회에 내 기여 없음
+    fake = _FakeClient(
+        [SiloClientError(409, "라운드 상태가 'completed'이므로 기여를 받을 수 없습니다")],
+        rounds=[_open_round("r1")],
+        round_lookup={"r1": {**_open_round("r1"), "status": "completed",
+                             "contributors": ["silo-2", "silo-3"]}},
+    )
+    _install(monkeypatch, fake)
+
+    silo_worker.run_train_loop(_loop_args())
+
+    events = _events(capsys)
+    assert any(e.get("event") == "round_closed" and e["round_id"] == "r1" for e in events)
+    assert fake.metrics == []  # 기여 미반영 라운드의 accuracy를 중복 집계하지 않는다
+    final = events[-1]
+    assert final["event"] == "idle_timeout" and final["contributed"] == 0
+
+
+@pytest.mark.unit
+def test_train_loop_409_real_duplicate_counts_once_and_pushes_metric_once(
+    quiet_probes, monkeypatch, capsys
+):
+    # 이전 push가 타임아웃 뒤 서버에 반영된 경우 — 재조회 contributors에 내가 있다
+    fake = _FakeClient(
+        [SiloClientError(409, "사일로 'silo-1'는 이미 기여하였습니다")],
+        rounds=[_open_round("r1")],
+        round_lookup={"r1": {**_open_round("r1"), "contributors": ["silo-1"]}},
+    )
+    _install(monkeypatch, fake)
+
+    silo_worker.run_train_loop(_loop_args())
+
+    events = _events(capsys)
+    assert events[-1]["event"] == "completed" and events[-1]["contributed"] == 1
+    assert len(fake.metrics) == 1 and fake.metrics[0][2] == "accuracy"
