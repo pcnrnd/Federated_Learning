@@ -20,6 +20,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Windows 콘솔(cp949)에서 한글·특수문자 출력이 깨지지 않도록 강제
@@ -29,6 +30,9 @@ if hasattr(sys.stdout, "reconfigure"):
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_LOG = BACKEND_DIR / "e2e-phase2.log"
 GROUP = "e2e-root-group-6"
+MONITOR_INTERVAL_SEC = 5
+# monitor push 주기(5s) + SiloClient 재시도 상한을 넉넉히 덮는 최신성 허용치
+MONITOR_FRESHNESS_SEC = 30
 MODEL = "e2e-ridge6"
 VERSION = "1.0.0"
 STAMP = time.strftime("%Y%m%d%H%M%S")
@@ -158,7 +162,8 @@ def main():
     log("[1b] 리소스 monitor 데몬 기동 (5초 주기 실측 push)")
     for silo in SILOS:
         silo_daemon(silo, ["monitor", "--central", CENTRAL_IN_NET, "--silo-id", silo,
-                           "--interval", "5", "--count", "0"], "monitor.log")
+                           "--interval", str(MONITOR_INTERVAL_SEC), "--count", "0"],
+                    "monitor.log")
 
     log("[2] 리소스 수집 검증 — /api/resources/usage 에 6사일로")
     deadline = time.monotonic() + 60
@@ -279,7 +284,27 @@ def main():
     assert job["rounds_completed"] == ARGS.rounds
     assert job["rounds_failed"] == 0
 
-    log("[6] 사후 검증 — 라운드 원장·지표 수집량")
+    log(f"[6] 사후 검증 — monitor 데몬 {len(SILOS)}개 생존 + 리소스 최신성")
+    for silo in SILOS:
+        r = wsl_run(["docker", "exec", silo, "sh", "-c",
+                     "pgrep -f 'silo_worker.py monitor' >/dev/null"], timeout=60)
+        if r.returncode != 0:
+            dump_silo_log(silo, "monitor.log")
+            raise SystemExit(f"E2E FAIL: {silo} monitor 데몬 사망 (장기 실행 중 종료)")
+    _, usage = api("GET", "/api/resources/usage")
+    now = datetime.now(timezone.utc)
+    stale = []
+    for u in usage:
+        if u["silo_id"] not in SILOS:
+            continue
+        age = (now - datetime.fromisoformat(u["last_sample_at"])).total_seconds()
+        log(f"  {u['silo_id']}: 최신 sample {age:.0f}s 전 (cpu={u['cpu_pct']}%)")
+        if age > MONITOR_FRESHNESS_SEC:
+            stale.append(u["silo_id"])
+    assert not stale, f"monitor sample 최신성 위반(> {MONITOR_FRESHNESS_SEC}s): {stale}"
+    log(f"  ==> monitor PASS: {len(SILOS)}개 데몬 생존, 최신 sample ≤ {MONITOR_FRESHNESS_SEC}s")
+
+    log("[7] 사후 검증 — 라운드 원장·지표 수집량")
     _, rounds = api("GET", f"/api/training-rounds?model_name={MODEL}&status=completed")
     job_rounds = [r for r in rounds if r.get("notes") == f"auto from job={job_id}"]
     log(f"  completed 라운드: 모델 전체 {len(rounds)}건 / 이번 잡 {len(job_rounds)}건")

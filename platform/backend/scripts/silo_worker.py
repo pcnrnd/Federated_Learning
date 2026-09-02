@@ -152,24 +152,61 @@ def _disk_pct(path: str = "/") -> float:
     return round(100.0 * (1.0 - st.f_bavail * st.f_frsize / total), 1)
 
 
+def _is_transient(exc: BaseException) -> bool:
+    """재시도 가능 오류인가 — 네트워크 단절·타임아웃·429·5xx.
+
+    그 외 4xx(잘못된 payload 등)와 코딩 오류는 다시 보내도 같은 결과이므로 영구 오류로
+    본다 — 즉시 종료해 원인이 로그에 드러나게 한다.
+    """
+    if isinstance(exc, SiloClientError):
+        return exc.status == 429 or exc.status >= 500
+    return isinstance(exc, (TimeoutError, OSError))  # urllib URLError ⊂ OSError
+
+
 def run_monitor(args: argparse.Namespace) -> None:
-    """리소스 실측치를 주기 push. --count 0 = 무한 (컨테이너 종료 시까지)."""
+    """리소스 실측치를 주기 push. --count 0 = 무한 (컨테이너 종료 시까지).
+
+    push 실패 내성: SiloClient 자체 재시도(3회 지수 백오프) 위에 이 루프가
+    연속 실패 횟수만 센다 — 백오프를 중복하지 않고 다음 주기에 다시 시도하며,
+    성공하면 카운터를 리셋한다. --max-failures 연속 실패 시 종료(bounded retry).
+    매회 성공 출력(JSON 한 줄)이 곧 생존 신호다.
+    """
     client = SiloClient(args.central, args.silo_id)
     pushed = 0
+    failures = 0  # 연속 실패 — 성공 시 0으로
     while True:
         cpu, mem, disk = _cpu_pct(), _mem_pct(), _disk_pct()
-        client.push_resource_sample(cpu, mem, disk_pct=disk)
-        pushed += 1
-        print(
-            json.dumps(
-                {"silo_id": args.silo_id, "cpu_pct": cpu, "mem_pct": mem,
-                 "disk_pct": disk, "pushed": pushed},
-                ensure_ascii=False,
-            ),
-            flush=True,
-        )
-        if args.count > 0 and pushed >= args.count:
-            return
+        try:
+            client.push_resource_sample(cpu, mem, disk_pct=disk)
+        except Exception as exc:  # noqa: BLE001 — 분류 후 영구 오류는 그대로 다시 던진다
+            if not _is_transient(exc):
+                raise
+            failures += 1
+            print(
+                json.dumps(
+                    {"silo_id": args.silo_id, "event": "transient_error",
+                     "failures": failures, "error": str(exc)[:200]},
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            if failures >= args.max_failures:
+                raise SystemExit(
+                    f"monitor 종료: 연속 {failures}회 push 실패 (--max-failures)"
+                ) from exc
+        else:
+            failures = 0
+            pushed += 1
+            print(
+                json.dumps(
+                    {"silo_id": args.silo_id, "cpu_pct": cpu, "mem_pct": mem,
+                     "disk_pct": disk, "pushed": pushed},
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            if args.count > 0 and pushed >= args.count:
+                return
         time.sleep(args.interval)
 
 
@@ -330,6 +367,10 @@ def main(argv: list[str]) -> None:
     monitor.add_argument("--silo-id", required=True)
     monitor.add_argument("--interval", type=float, default=5.0, help="push 주기(초)")
     monitor.add_argument("--count", type=int, default=0, help="push 횟수 (0=무한)")
+    monitor.add_argument(
+        "--max-failures", type=int, default=12,
+        help="연속 push 실패 허용 횟수 — 초과 시 종료 (기본 12 ≈ 5s 주기에서 1분+ 단절 허용)",
+    )
     monitor.set_defaults(func=run_monitor)
 
     loop = sub.add_parser("train-loop", help="open 라운드 폴링 연속 학습 기여")
