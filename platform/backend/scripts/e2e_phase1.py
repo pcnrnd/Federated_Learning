@@ -22,6 +22,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Windows 콘솔(cp949)에서 한글·특수문자 출력이 깨지지 않도록 강제
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_LOG = BACKEND_DIR / "e2e-phase1.log"
 GROUP = "e2e-root-group"
