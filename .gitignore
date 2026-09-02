@@ -4,6 +4,7 @@ __pycache__
 .python-version
 .pytest_cache/
 .ruff_cache/
+.coverage
 pyproject.toml
 uv.lock
 
