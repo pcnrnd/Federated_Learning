@@ -36,7 +36,7 @@ export function createNode(identity: NodeIdentity): NodeState {
 }
 
 /**
- * 중앙 서버에 직결된 1단 사일로 12개의 초기 상태를 생성한다.
+ * 중앙 서버에 직결된 1단 사일로(SILO_SEEDS)의 초기 상태를 생성한다.
  * 정체성은 SILO_SEEDS 단일 소스에서 가져온다.
  */
 export function createInitialNodes(): NodeState[] {

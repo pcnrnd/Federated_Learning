@@ -2,7 +2,7 @@ import type { Algorithm, DeployStrategy, TabId } from '@/types/simulation'
 
 /**
  * 연합학습 참여 사일로의 단일 정의 소스(SSOT).
- * 같은 12개 사일로를 세 관점으로 본다:
+ * 같은 6개 사일로를 세 관점으로 본다 (도커 스택 silo-1~6과 1:1 대응):
  *  - 학습 런타임(엔진 nodes, `nodeFactory`)
  *  - 리소스/등록(`useSiloStore`)
  *  - 데이터 파이프라인(`useDataStore`)
@@ -24,7 +24,7 @@ export interface SiloSeed {
   disk: number
 }
 
-// PoC 단계: 사일로는 도메인명 없이 번호로만 식별 (사일로1 ~ 사일로12)
+// PoC 단계: 사일로는 도메인명 없이 번호로만 식별 (사일로1 ~ 사일로6) — 도커 silo-N과 대응
 export const SILO_SEEDS: readonly SiloSeed[] = [
   { id: 1, name: '사일로1', shortName: '사일로1', endpoint: 'tcp://10.0.0.11:2375', collectIntervalSec: 15, cpu: 62, mem: 71, disk: 48 },
   { id: 2, name: '사일로2', shortName: '사일로2', endpoint: 'tcp://10.0.0.12:2375', collectIntervalSec: 15, cpu: 54, mem: 60, disk: 52 },
@@ -32,12 +32,6 @@ export const SILO_SEEDS: readonly SiloSeed[] = [
   { id: 4, name: '사일로4', shortName: '사일로4', endpoint: 'tcp://10.0.0.14:2375', collectIntervalSec: 30, cpu: 47, mem: 58, disk: 61 },
   { id: 5, name: '사일로5', shortName: '사일로5', endpoint: 'tcp://10.0.0.15:2375', collectIntervalSec: 30, cpu: 39, mem: 49, disk: 44 },
   { id: 6, name: '사일로6', shortName: '사일로6', endpoint: 'tcp://10.0.0.16:2375', collectIntervalSec: 20, cpu: 73, mem: 66, disk: 70 },
-  { id: 7, name: '사일로7', shortName: '사일로7', endpoint: 'tcp://10.0.0.17:2375', collectIntervalSec: 20, cpu: 58, mem: 52, disk: 63 },
-  { id: 8, name: '사일로8', shortName: '사일로8', endpoint: 'tcp://10.0.0.18:2375', collectIntervalSec: 25, cpu: 66, mem: 78, disk: 57 },
-  { id: 9, name: '사일로9', shortName: '사일로9', endpoint: 'tcp://10.0.0.19:2375', collectIntervalSec: 60, cpu: 33, mem: 41, disk: 38 },
-  { id: 10, name: '사일로10', shortName: '사일로10', endpoint: 'tcp://10.0.0.20:2375', collectIntervalSec: 25, cpu: 71, mem: 69, disk: 74 },
-  { id: 11, name: '사일로11', shortName: '사일로11', endpoint: 'tcp://10.0.0.21:2375', collectIntervalSec: 10, cpu: 41, mem: 83, disk: 92 },
-  { id: 12, name: '사일로12', shortName: '사일로12', endpoint: 'tcp://10.0.0.22:2375', collectIntervalSec: 10, cpu: 49, mem: 80, disk: 88 },
 ] as const
 
 /** 연합학습 참여 사일로 수 (= 학습 노드 수). SILO_SEEDS 길이로 단일화. */

@@ -66,7 +66,7 @@ export function SiloCard({ silo }: SiloCardProps) {
           >
             <i className="fa-solid fa-sliders" /> 임계값
           </button>
-          {/* 1단 사일로 12개는 연합 구조의 고정 참여자라 해제 버튼을 노출하지 않는다 */}
+          {/* 1단 사일로(SILO_SEEDS)는 연합 구조의 고정 참여자라 해제 버튼을 노출하지 않는다 */}
           {!isRoot && (
             <button
               type="button"

@@ -19,8 +19,8 @@ export interface SiloDataFields {
   stepCounters?: Record<string, number>
 }
 
-// 12개 사일로별 정제율/샤드/레코드 시드 (id 순서 대응, 결정적 값)
-const CLEANSE_SEED = [100, 72, 38, 88, 64, 95, 41, 79, 56, 100, 33, 68]
+// 사일로별 정제율/샤드/레코드 시드 (SILO_SEEDS id 순서 대응, 결정적 값)
+const CLEANSE_SEED = [100, 72, 38, 88, 64, 95]
 
 function seedDataBySilo(): Record<number, SiloDataFields> {
   const out: Record<number, SiloDataFields> = {}

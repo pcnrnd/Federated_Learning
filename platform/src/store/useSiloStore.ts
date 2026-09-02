@@ -15,7 +15,7 @@ function logToConsole(kind: LogKind, message: string): void {
 
 const DEFAULT_THRESHOLDS: SiloThresholds = { cpu: 85, mem: 80, disk: 90 }
 
-/** 12개 사일로의 리소스 관점 시드 — 학습/파이프라인과 동일한 id·이름 공유 */
+/** 사일로(SILO_SEEDS)의 리소스 관점 시드 — 학습/파이프라인과 동일한 id·이름 공유 */
 function seedSilos(): Silo[] {
   return SILO_SEEDS.map((s) => ({
     id: s.id,
@@ -115,7 +115,7 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
   removeSilo: (id) => {
     const target = get().silos.find((s) => s.id === id)
     if (!target) return
-    // 1단 사일로 12개는 연합 구조의 고정 참여자 — 하위 노드만 해제할 수 있다
+    // 1단 사일로는 연합 구조의 고정 참여자 — 하위 노드만 해제할 수 있다
     if (target.parentId === undefined) {
       logToConsole('error', `[${target.name}]은(는) 1단 사일로이므로 해제할 수 없습니다.`)
       return
