@@ -753,7 +753,7 @@ button {
 
 .dashboard-split-grid {
   display: grid;
-  /* 12개 사일로가 한 줄로 늘어서는 계층 토폴로지에 가로 폭을 몰아준다 */
+  /* 사일로(SILO_SEEDS 수, 현재 6)가 한 줄로 늘어서는 계층 토폴로지에 가로 폭을 몰아준다 */
   grid-template-columns: minmax(360px, 440px) 1fr;
   gap: var(--space-5);
   height: 100%;
