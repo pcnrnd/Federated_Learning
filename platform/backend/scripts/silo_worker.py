@@ -212,13 +212,40 @@ def run_train_loop(args: argparse.Namespace) -> None:
             )
             return
         acted = False
-        for entry in client.list_rounds(status="open", model_name=args.model):
+        try:
+            open_rounds = client.list_rounds(status="open", model_name=args.model)
+        except (TimeoutError, OSError) as exc:
+            # 서버 일시 지연/단절 — 워커는 죽지 않고 재폴링한다 (max-idle이 총 상한)
+            # 실측: 이력 누적으로 서버 응답이 밀리는 구간에서 타임아웃 연쇄로 워커 사망
+            print(
+                json.dumps(
+                    {"silo_id": args.silo_id, "event": "transient_error",
+                     "error": str(exc)[:200]},
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            time.sleep(args.poll_interval)
+            continue
+        for entry in open_rounds:
             round_id = entry["round_id"]
             if round_id in contributed_rounds or args.silo_id in entry.get("contributors", []):
                 continue
             result = train_ridge(rows, FEATURES, "y", l2=1e-6)
             try:
                 client.push_parameters(round_id, result.sample_count, result.parameters)
+            except (TimeoutError, OSError) as exc:
+                # push 자체가 타임아웃 — 성공했는지 불명이므로 세지 않고 재폴링
+                # (중복 push는 서버가 409로 걸러준다)
+                print(
+                    json.dumps(
+                        {"silo_id": args.silo_id, "event": "transient_error",
+                         "round_id": round_id, "error": str(exc)[:200]},
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                break
             except SiloClientError as exc:
                 # 409 = 이미 기여/라운드 마감, 404 = 목록 조회와 push 사이에 라운드 소멸
                 # — 둘 다 분산 폴링의 정상 경합이므로 다음 라운드로 넘어간다
@@ -238,12 +265,15 @@ def run_train_loop(args: argparse.Namespace) -> None:
             contributed_rounds.add(round_id)
             acted = True
             idle_deadline = time.monotonic() + args.max_idle
-            client.push_metric(
-                entry["model_name"],
-                entry["version"],
-                "accuracy",
-                _local_accuracy(rows, result.parameters),
-            )
+            try:
+                client.push_metric(
+                    entry["model_name"],
+                    entry["version"],
+                    "accuracy",
+                    _local_accuracy(rows, result.parameters),
+                )
+            except (TimeoutError, OSError, SiloClientError):
+                pass  # 지표 push는 best-effort — 기여 진행을 막지 않는다
         if not acted:
             time.sleep(args.poll_interval)
     print(

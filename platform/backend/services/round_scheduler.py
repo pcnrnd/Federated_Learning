@@ -69,8 +69,8 @@ class RoundScheduler:
             self._stop_event = None
             logger.info("RoundScheduler 정지")
 
-    async def tick(self) -> list[str]:
-        """단일 tick — 집계 가능한 라운드를 모두 집계하고 라운드 ID 목록을 반환한다."""
+    def _tick_blocking(self) -> list[str]:
+        """tick의 동기 본체 — 저장소 I/O를 포함하므로 이벤트 루프에서 직접 부르지 않는다."""
         aggregated_ids: list[str] = []
         open_rounds = training_round_service.list_rounds(status="open")
         contributions = load_contributions()
@@ -90,10 +90,18 @@ class RoundScheduler:
                     logger.error("라운드 %s 집계 예외: %s", entry.round_id, exc)
         return aggregated_ids
 
+    async def tick(self) -> list[str]:
+        """단일 tick — 집계 가능한 라운드를 모두 집계하고 라운드 ID 목록을 반환한다.
+
+        저장소 이력이 커지면 tick이 수 초까지 길어진다 — 이벤트 루프를 잡아두면
+        모든 HTTP 응답이 밀려 사일로 push가 타임아웃되므로 스레드로 위임한다 (실측).
+        """
+        return await asyncio.to_thread(self._tick_blocking)
+
     async def tick_jobs(self) -> list[str]:
         """잡 스케줄러 단일 tick — active 잡들의 다음 라운드를 트리거한다."""
         try:
-            return training_job_service.tick()
+            return await asyncio.to_thread(training_job_service.tick)
         except Exception as exc:  # noqa: BLE001
             logger.error("잡 tick 오류: %s", exc)
             return []
@@ -108,7 +116,7 @@ class RoundScheduler:
                 await self.tick_jobs()
                 # 3. running/pending 배포 상태를 Docker 실제 상태와 동기화
                 try:
-                    deployment_service.reconcile_all_active()
+                    await asyncio.to_thread(deployment_service.reconcile_all_active)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("배포 reconcile 실패: %s", exc)
             except Exception as exc:  # noqa: BLE001
