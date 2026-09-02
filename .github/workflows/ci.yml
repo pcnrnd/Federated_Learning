@@ -1,4 +1,9 @@
-# GitHub Actions — fed-platform CI
+# GitHub Actions — 연합컴퓨팅 플랫폼 CI
+#
+# 백엔드(platform/backend, FastAPI)와 프론트엔드(platform/, Vite+React) 두 갈래.
+# 게이트: pytest(커버리지 ≥80%) · 스모크 · ruff check · tsc · vitest.
+# `ruff format --check`는 게이트에서 제외 — 전 파일 일괄 포맷은 diff 추적성을 해치므로
+# 별도 결정 후 도입한다 (platform/backend/ci/ruff.toml 참조).
 
 name: ci
 
@@ -6,22 +11,33 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'app/**'
+      - 'platform/backend/**'
+      - 'platform/src/**'
+      - 'platform/package.json'
+      - 'platform/package-lock.json'
+      - 'platform/tsconfig*.json'
+      - 'platform/vite.config.ts'
+      - 'platform/compose.yaml'
       - '.github/workflows/ci.yml'
-      - 'compose.fed-platform.yaml'
   pull_request:
     branches: [main, master]
     paths:
-      - 'app/**'
-
-defaults:
-  run:
-    working-directory: app
+      - 'platform/backend/**'
+      - 'platform/src/**'
+      - 'platform/package.json'
+      - 'platform/package-lock.json'
+      - 'platform/tsconfig*.json'
+      - 'platform/vite.config.ts'
+      - 'platform/compose.yaml'
+      - '.github/workflows/ci.yml'
 
 jobs:
-  test:
-    name: pytest + coverage
+  backend-test:
+    name: backend pytest + coverage
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/backend
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
@@ -34,11 +50,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: |
+            platform/backend/requirements.txt
+            platform/backend/requirements-dev.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
         run: |
@@ -54,12 +73,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
-          path: app/coverage.xml
+          path: platform/backend/coverage.xml
 
-  smoke:
-    name: probe + dashboard smoke
+  backend-smoke:
+    name: backend probe + dashboard smoke
     runs-on: ubuntu-latest
-    needs: test
+    needs: backend-test
+    defaults:
+      run:
+        working-directory: platform/backend
     steps:
       - uses: actions/checkout@v4
 
@@ -68,9 +90,12 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: |
+            platform/backend/requirements.txt
+            platform/backend/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Runtime smoke (TestClient)
         run: |
@@ -80,9 +105,12 @@ jobs:
             tests/test_api_auth_integration.py \
             -q
 
-  lint:
-    name: ruff
+  backend-lint:
+    name: backend ruff check
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/backend
     steps:
       - uses: actions/checkout@v4
 
@@ -90,15 +118,34 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: pip
 
       - name: Install ruff
         run: pip install 'ruff>=0.5.0'
 
       - name: Lint
-        working-directory: app
         run: ruff check . --output-format=github
 
-      - name: Format check
-        working-directory: app
-        run: ruff format --check .
+  frontend:
+    name: frontend typecheck + vitest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: platform/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        run: npm test

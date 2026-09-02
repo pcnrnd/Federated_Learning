@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 
 import pytest
 
 from config.yaml_store import load_yaml, save_yaml_atomic
 from storage.factory import StorageDomain, get_repository, reset_repositories
 from storage.migration import import_yaml_to_sqlite
-from storage.settings import get_sqlite_path
 from storage.sqlite_store import backup_database, restore_database
 from storage.yaml_repository import YamlDictRepository
 

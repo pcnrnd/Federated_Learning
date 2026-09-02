@@ -107,7 +107,7 @@ def silo_bar_resource_usage(metric: str = "cpu_pct") -> ChartEnvelope:
 
 def silo_bar_round_contributions(round_id: str) -> ChartEnvelope:
     """특정 학습 라운드의 사일로별 표본수 기여"""
-    rnd = training_round_service.get_round(round_id)
+    training_round_service.get_round(round_id)  # 라운드 존재 검증 (없으면 404)
     contributions = training_round_service.list_contributions(round_id)
     items = [
         SiloBarItem(silo_id=c.silo_id, value=float(c.sample_count))

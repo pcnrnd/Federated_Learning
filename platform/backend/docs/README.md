@@ -111,17 +111,11 @@ Dockerfile은 `app/Dockerfile`, Compose 파일은 저장소 루트
 | `FED_API_KEY` | 빈 값 | 설정 시 `/api/*` 요청에 `X-FED-API-Key` 헤더 필요 |
 | `FED_PLATFORM_PORT` | `8000` | Compose 호스트 포트 |
 
-### 6. CI (선택)
+### 6. CI
 
-`app/ci/ci.yml`을 저장소 루트 `.github/workflows/`로 복사하면 PR/push 시 자동 실행:
-
-```bash
-mkdir -p .github/workflows
-cp app/ci/ci.yml .github/workflows/ci.yml
-cp app/ci/ruff.toml ruff.toml
-```
-
-자세한 내용은 [app/ci/README.md](../ci/README.md) 참조.
+저장소 루트 `.github/workflows/ci.yml`이 `platform/backend/**`·`platform/src/**` 변경에 대해
+백엔드 pytest(커버리지 ≥80%)·스모크·`ruff check`, 프론트엔드 `tsc`·`vitest`를 실행한다.
+구성표와 로컬 동일 검증 명령은 [ci/README.md](../ci/README.md) 참조.
 
 ### 7. 사일로 측 사용
 

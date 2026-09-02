@@ -8,7 +8,7 @@ from typing import Any
 from storage.factory import StorageDomain, get_repository
 
 from .settings import CONFIG_DIR
-from .yaml_store import load_yaml, save_yaml_atomic
+from .yaml_store import load_yaml
 
 logger = logging.getLogger(__name__)
 

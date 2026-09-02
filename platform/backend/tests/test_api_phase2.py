@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from models.monitoring_schemas import MetricIngest
 from models.packaging_schemas import DeploymentRequest, ModelRegisterRequest
-from models.federated_schemas import SiloGroupRequest
 from models.resource_schemas import ResourceLimit, ResourceSample
 from services import deployment_service, metric_store, model_registry, resource_service
 

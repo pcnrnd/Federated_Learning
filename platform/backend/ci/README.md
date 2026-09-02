@@ -1,44 +1,33 @@
-# CI 파이프라인 템플릿
+# CI 파이프라인
 
-GitHub Actions 워크플로우와 lint 설정을 보관한다.
-GitHub Actions는 저장소 루트의 `.github/workflows/` 디렉토리만 인식하므로 **본 파일을 그곳에 복사**해야 실제 트리거된다.
+실제 워크플로우는 저장소 루트 **`.github/workflows/ci.yml`** 하나다 (GitHub Actions는 그 위치만 인식).
+이 디렉터리에는 아직 게이트에 넣지 않은 lint 설정 템플릿만 남긴다.
 
-## 설치 (저장소 루트에서)
+## 워크플로우 구성 (`.github/workflows/ci.yml`)
 
-```bash
-mkdir -p .github/workflows
-cp app/ci/ci.yml .github/workflows/ci.yml
-cp app/ci/ruff.toml ruff.toml      # 또는 pyproject.toml에 [tool.ruff] 섹션으로 병합
-```
+| Job | 작업 디렉터리 | 단계 |
+|---|---|---|
+| **backend-test** | `platform/backend` | Python 3.11/3.12 × pytest + pytest-cov (≥ 80% 강제), coverage.xml artifact |
+| **backend-smoke** | `platform/backend` | TestClient 스모크 (`test_runtime_operations`, `test_dashboard_e2e`, `test_api_auth_integration`) |
+| **backend-lint** | `platform/backend` | `ruff check` (ruff 기본 규칙) |
+| **frontend** | `platform` | `npm ci` → `tsc --noEmit` → `vitest run` |
 
-이후 PR/main push에서 자동 실행된다.
+트리거: `platform/backend/**`, `platform/src/**`, 프론트 빌드 설정, `platform/compose.yaml`, 워크플로우 자신.
 
-## 실행 내용
+## `ruff.toml` (템플릿, 미적용)
 
-| Job | 단계 |
-|---|---|
-| **test** | Python 3.11/3.12 매트릭스 × pytest + pytest-cov (≥ 80% 강제) |
-| **lint** | `ruff check` + `ruff format --check` |
-
-테스트 커버리지 XML은 워크플로우 artifact로 업로드된다.
+`platform/backend` 루트에 복사하면 isort·bugbear·pyupgrade 규칙과 포맷 규칙이 켜진다.
+현재 CI 게이트는 **ruff 기본 규칙의 `ruff check`만** 강제한다 — `ruff format --check`와 확장 규칙은
+전 파일 일괄 수정(100+ 파일)이 필요해 diff 추적성을 위해 별도 결정 사항으로 보류했다.
 
 ## 로컬에서 동일 검증
 
 ```bash
-cd app
-
-# 테스트 + 커버리지
-pip install pytest pytest-asyncio pytest-cov
+cd platform/backend
+pip install -r requirements-dev.txt
 python -m pytest tests/ --cov=. --cov-fail-under=80 --cov-report=term-missing
-
-# 린트
-pip install 'ruff>=0.5.0'
 ruff check .
-ruff format --check .
+
+cd ../    # platform/
+npm ci && npm run typecheck && npm test
 ```
-
-## 커스터마이즈
-
-- 배포 단계가 필요하면 `cd` 잡 추가 (예: Docker Hub push, K8s rollout)
-- `paths` 필터로 `app/**` 변경 시에만 실행 — 다른 영역 작업 시 워크플로우가 안 돈다.
-- 매트릭스 Python 버전은 `strategy.matrix.python-version` 에서 조정.
