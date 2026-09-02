@@ -1,6 +1,7 @@
 """Batch Scheduling 자동화 — TrainingJob 서비스 테스트"""
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -245,3 +246,107 @@ def test_concurrent_rounds_capacity_limits_tick():
 
     assert len(triggered) == 1
     assert triggered[0] in {"a", "b"}
+
+
+# ---------- 잡 취소 ↔ tick 경합 (스냅샷 → cancel 완료 → tick 재개 순서를 Event로 강제) ----------
+
+
+def _run_tick_in_thread() -> tuple[threading.Thread, dict]:
+    result: dict = {}
+
+    def _target() -> None:
+        try:
+            result["triggered"] = training_job_service.tick()
+        except BaseException as exc:  # noqa: BLE001 — 스레드 예외를 본 스레드로 전달
+            result["error"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    return thread, result
+
+
+@pytest.mark.unit
+def test_cancel_between_tick_snapshot_and_round_open_wins(monkeypatch):
+    """tick이 active 스냅샷을 잡은 뒤 cancel이 끝나면 라운드를 열지 않아야 한다."""
+    training_job_service.create_job(_job())
+    snapshot_taken = threading.Event()
+    cancel_done = threading.Event()
+    real_pressure = training_job_service.resource_service.group_has_pressure
+
+    def gate(member_ids):
+        # 자원 게이트는 스냅샷 이후·라운드 open 직전에 호출된다 — 여기서 tick을 세운다
+        snapshot_taken.set()
+        assert cancel_done.wait(5), "cancel이 5초 내 끝나지 않음"
+        return real_pressure(member_ids)
+
+    monkeypatch.setattr(training_job_service.resource_service, "group_has_pressure", gate)
+    thread, result = _run_tick_in_thread()
+    assert snapshot_taken.wait(5), "tick이 스냅샷 지점에 도달하지 않음"
+
+    cancelled = training_job_service.cancel_job("j1")
+    assert cancelled.status == "cancelled"
+    cancel_done.set()
+    thread.join(10)
+    assert not thread.is_alive() and "error" not in result
+
+    assert result["triggered"] == []
+    job = training_job_service.get_job("j1")
+    assert job.status == "cancelled"
+    assert job.current_round_id is None
+    assert training_round_service.list_rounds() == []
+
+
+@pytest.mark.unit
+def test_cancel_during_reconcile_is_not_overwritten_by_stale_snapshot(monkeypatch):
+    """스냅샷 이후 cancel된 잡을 reconcile이 active로 되돌리거나 다음 라운드를 열지 않는다."""
+    training_job_service.create_job(_job(max_rounds=3))
+    training_job_service.tick()
+    rnd_id = training_job_service.get_job("j1").current_round_id
+    _contribute(rnd_id, "silo-1", 1, [1.0])
+    _contribute(rnd_id, "silo-2", 1, [3.0])
+    training_round_service.aggregate_round(rnd_id)
+
+    snapshot_taken = threading.Event()
+    cancel_done = threading.Event()
+    real_get_round = training_job_service.training_round_service.get_round
+    parked = threading.Event()
+
+    def gated_get_round(round_id):
+        if not parked.is_set():  # reconcile의 첫 조회에서만 세운다
+            parked.set()
+            snapshot_taken.set()
+            assert cancel_done.wait(5), "cancel이 5초 내 끝나지 않음"
+        return real_get_round(round_id)
+
+    monkeypatch.setattr(
+        training_job_service.training_round_service, "get_round", gated_get_round
+    )
+    thread, result = _run_tick_in_thread()
+    assert snapshot_taken.wait(5)
+
+    training_job_service.cancel_job("j1")
+    cancel_done.set()
+    thread.join(10)
+    assert not thread.is_alive() and "error" not in result
+
+    assert result["triggered"] == []
+    job = training_job_service.get_job("j1")
+    assert job.status == "cancelled"
+    assert job.rounds_completed == 1  # 완료 라운드 카운터는 최신 잡 위에 반영된다
+    assert job.current_round_id is None
+    assert len(training_round_service.list_rounds()) == 1  # 추가 라운드 0
+
+
+@pytest.mark.unit
+def test_pause_and_cancel_preconditions_checked_under_lock():
+    training_job_service.create_job(_job())
+    training_job_service.cancel_job("j1")
+    with pytest.raises(HTTPException) as exc:
+        training_job_service.pause_job("j1")
+    assert exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc:
+        training_job_service.cancel_job("j1")
+    assert exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc:
+        training_job_service.create_job(_job())
+    assert exc.value.status_code == 409
