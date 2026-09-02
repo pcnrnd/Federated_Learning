@@ -320,3 +320,43 @@ def test_push_parameters_defaults_to_empty_aggregated_from():
         client.push_parameters("r1", sample_count=42, parameters=[1.0])
 
     assert captured["body"]["aggregated_from"] == []
+
+
+@pytest.mark.unit
+def test_list_rounds_percent_encodes_special_characters():
+    """모델명에 공백·&·=·한글이 섞여도 쿼리가 깨지지 않고 서버가 원값을 복원할 수 있어야 한다."""
+    captured: dict = {}
+
+    def _fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        return _ok_response([])
+
+    client = SiloClient("http://central:8000", silo_id="silo-2")
+    with patch("silo_sdk.client.urllib.request.urlopen", side_effect=_fake_urlopen):
+        client.list_rounds(status="open", model_name="e2e ridge&x=1/한글")
+
+    from urllib.parse import parse_qs, urlsplit
+
+    split = urlsplit(captured["url"])
+    assert split.path == "/api/training-rounds"
+    assert "&x=1" not in split.query  # 원문 & 가 구분자로 새지 않는다
+    assert parse_qs(split.query) == {"status": ["open"], "model_name": ["e2e ridge&x=1/한글"]}
+
+
+@pytest.mark.unit
+def test_list_metrics_percent_encodes_and_keeps_zero_offset():
+    captured: dict = {}
+
+    def _fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        return _ok_response({"items": [], "total": 0})
+
+    client = SiloClient("http://central:8000", silo_id="silo-2")
+    with patch("silo_sdk.client.urllib.request.urlopen", side_effect=_fake_urlopen):
+        client.list_metrics("a b", "1.0.0+build", limit=5, offset=0)
+
+    from urllib.parse import parse_qs, urlsplit
+
+    query = parse_qs(urlsplit(captured["url"]).query)
+    assert query == {"model_name": ["a b"], "version": ["1.0.0+build"],
+                     "limit": ["5"], "offset": ["0"]}

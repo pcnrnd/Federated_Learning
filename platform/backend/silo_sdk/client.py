@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -26,6 +27,12 @@ class SiloClientError(Exception):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _query(**params: Any) -> str:
+    """None이 아닌 파라미터만 percent-encoding 해 ?a=b&c=d 문자열로 만든다 (없으면 빈 문자열)."""
+    kept = {k: v for k, v in params.items() if v is not None}
+    return f"?{urllib.parse.urlencode(kept)}" if kept else ""
 
 
 def _unwrap_paginated(body: dict[str, Any]) -> list[Any]:
@@ -197,12 +204,8 @@ class SiloClient:
         model_name: str | None = None,
     ) -> list[Any]:
         """학습 라운드 목록 조회 — 주기 수집 워커가 open 라운드를 발견하는 데 쓴다."""
-        query = "&".join(
-            f"{key}={value}"
-            for key, value in (("status", status), ("model_name", model_name))
-            if value
-        )
-        path = "/api/training-rounds" + (f"?{query}" if query else "")
+        # 모델명·상태에 공백/&/한글이 섞여도 서버가 그대로 받도록 percent-encoding 한다
+        path = "/api/training-rounds" + _query(status=status or None, model_name=model_name or None)
         result = self._request("GET", path)
         return result if isinstance(result, list) else []
 
@@ -215,10 +218,7 @@ class SiloClient:
         offset: int = 0,
     ) -> list[Any]:
         """페이지네이션 응답에서 items만 반환한다."""
-        query = (
-            f"?model_name={model_name}&version={version}"
-            f"&limit={limit}&offset={offset}"
-        )
+        query = _query(model_name=model_name, version=version, limit=limit, offset=offset)
         return self._request(
             "GET",
             f"/api/monitoring/metrics{query}",
