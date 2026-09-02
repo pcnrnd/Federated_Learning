@@ -79,11 +79,9 @@ CREATE TABLE IF NOT EXISTS alerts (
 def apply_schema(conn: sqlite3.Connection) -> None:
     """스키마를 적용하고 migration 버전을 기록한다."""
     conn.executescript(DDL)
-    row = conn.execute(
-        "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
-        conn.execute(
-            "INSERT INTO schema_migrations (version) VALUES (?)",
-            (SCHEMA_VERSION,),
-        )
+    # SELECT 후 INSERT는 신규 DB에 동시에 첫 연결이 들어오면 둘 다 빈 결과를 보고 INSERT해
+    # UNIQUE 위반(IntegrityError)이 난다 — 멱등 INSERT로 한 문장에 끝낸다
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
+        (SCHEMA_VERSION,),
+    )
