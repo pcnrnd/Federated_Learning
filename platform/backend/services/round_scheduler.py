@@ -63,6 +63,10 @@ class RoundScheduler:
         try:
             await asyncio.wait_for(self._task, timeout=self._interval + 5.0)
         except asyncio.TimeoutError:
+            # Task cancel은 대기 중인 await만 끊는다 — to_thread로 넘어간 tick 본체(스레드)는
+            # 취소되지 않고 완료까지 계속 실행된다. 종료 대기 상한·강제 종료 정책은 별도 결정 사항
+            # (docs/research-notes/2026-H2.md L5). tick은 잠금으로 직렬화되어 중복 실행이
+            # 데이터 오염으로 이어지지는 않는다.
             self._task.cancel()
         finally:
             self._task = None

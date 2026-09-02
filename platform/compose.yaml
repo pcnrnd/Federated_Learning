@@ -136,6 +136,9 @@ services:
     privileged: true
     ports:
       - "2227:22"
+      # 호스트 2375는 dockerd 관례 TCP 포트와 겹친다 — 호스트 dockerd가 TCP를 열지 않는 WSL 기본
+      # 구성에서만 충돌 없음. 재매핑은 servers.yaml(silo-5)·포트표·연번 규칙 연쇄 변경이라 현행 유지
+      # (docs/research-notes/2026-H2.md L4). 충돌 시 이 한 줄만 다른 호스트 포트로 바꾸면 된다.
       - "2375:2375"
       - "7009:9000"
       - "7010:9001"

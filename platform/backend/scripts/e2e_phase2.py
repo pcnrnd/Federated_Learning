@@ -5,7 +5,8 @@
   [1] 6사일로 그룹 보증 + monitor 데몬 기동 (리소스 실측 주기 push)
   [2] /api/resources/usage 에 6사일로 수집 확인 (SPA 사일로 리소스 화면 데이터원)
   [3] 6사일로 단일 연합 라운드 — 릿지 실학습 기여 → FedAvg → completed  (지표: '사일로 6')
-  [4] chain 잡(max_rounds=250) + 6사일로 train-loop 데몬 → 250라운드 연속 완주 (지표: '250라운드')
+  [4] chain 잡(max_rounds=250) + 6사일로 train-loop 데몬 → 250라운드 연속 완주
+      (스케줄러 내구성 시험 — 1단계 KPI가 아니다; KPI는 [3]의 '사일로 6')
 
 스택 기동 전제 (platform/ 에서, tick 단축 권장):
     FED_SCHEDULER_INTERVAL=1 docker compose -p fed-platform up -d --build
