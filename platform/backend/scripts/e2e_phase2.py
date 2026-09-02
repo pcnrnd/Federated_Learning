@@ -50,7 +50,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="참여 사일로 컨테이너 이름 (콤마 구분)",
     )
     parser.add_argument("--rounds", type=int, default=250, help="연속 완주 라운드 수")
-    parser.add_argument("--timeout-min", type=float, default=60.0, help="250라운드 전체 제한(분)")
+    # 라운드당 지연은 저장된 라운드·기여 이력에 비례해 선형 증가한다 (전량 read-modify-write)
+    # — 250라운드 실측 기준 총 60~75분이므로 기본 제한을 120분으로 둔다
+    parser.add_argument("--timeout-min", type=float, default=120.0, help="250라운드 전체 제한(분)")
     parser.add_argument("--stall-sec", type=float, default=180.0, help="라운드 무진행 판정(초)")
     parser.add_argument("--log", default=str(DEFAULT_LOG), help="증거 로그 파일 경로")
     return parser.parse_args(argv)
