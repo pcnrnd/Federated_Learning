@@ -24,10 +24,10 @@
 > `platform/backend/`(4e20ed9 이식)로 정정._
 
 - 날짜: 2026-08-21
-- 상태: **구현 완료** — 이후 대상 백엔드가 `backup/poc2/`로 아카이브되어 신규 작업 대상 아님
+- 상태: **구현 완료** — 4e20ed9로 `platform/backend/`에 이식되어 현재 라이브 구현(원본 `backup/poc2/`는 아카이브)
 - 선행: [2026-07-24-silo-hierarchy-design.md](./2026-07-24-silo-hierarchy-design.md) (UI 구현 완료),
   [2026-08-21-p0-api-contract.md](./2026-08-21-p0-api-contract.md) (P0 폴링 연동 완료)
-- 대상: `app/` FastAPI (현 `backup/poc2/`) — `platform/` 시뮬레이션에만 있는 HFL 2단 집계를
+- 대상: `app/` FastAPI (현 `platform/backend/`, 이식 전 `backup/poc2/`) — `platform/` 시뮬레이션에만 있는 HFL 2단 집계를
   실제 백엔드로 이식
 
 ## 1. 배경과 목표
