@@ -1,12 +1,15 @@
 # HFL(계층형 연합학습) 서버 이식 설계 — P4
 
-> **범위 주의 — 백엔드 PoC 기록물.**
-> 본 문서의 대상은 `backup/poc2/`(구 `app/`) FastAPI 백엔드다. 저장소 재편으로
-> 해당 백엔드는 `backup/` 아래 아카이브로 이동했고, 현재 라이브 앱은 자체 백엔드 없이
-> 동작하는 React 시뮬레이션 SPA `platform/`(선택적 읽기 전용 폴링만 지원)이다.
-> **따라서 본 문서는 `platform/`의 기준·요구 문서가 아니다.** `platform/`의 기준 문서는
+> **범위 주의 — `platform/backend` 계층 설계 기준 문서.**
+> 본 문서의 대상 코드는 `platform/backend/` FastAPI 백엔드다. 원 구현은 `backup/poc2/`
+> (구 `app/`)에서 작성됐으나, 4e20ed9("Phase 0 — 백엔드·사일로를 platform 하위로 통합")로
+> `platform/backend/`에 이식되어 현재 라이브 구현이 됐다. `backup/poc2/`는 이식 전
+> 스냅샷을 보존한 아카이브 경로로만 남는다.
+> **본 문서는 `platform/backend`의 계층(사일로 → 하위 노드 2단 집계) 설계 기준 문서다**
+> — 2단 제한 결정은 §3(L60), 3단 이상 재귀 제외는 §8(L164) 참고. `platform/`의 UI·시뮬레이션
+> 쪽 기준 문서는 여전히
 > [2026-07-24-silo-hierarchy-design.md](./2026-07-24-silo-hierarchy-design.md)다.
-> 본문에서 `app/`으로 표기된 경로는 모두 현재 `backup/poc2/`로 읽는다.
+> 본문에서 `app/`으로 표기된 경로는 모두 현재 `platform/backend/`로 읽는다.
 >
 > 집계 모델 차이 1건도 함께 기록한다: 본 문서는 집계자 제출의 `sample_count`를
 > "하위 합계"로 서술하지만(§3·§4.2·§4.3), `platform/`은 **상위 자신 + 하위**를 엣지
@@ -14,8 +17,11 @@
 > 조직 경계이자 데이터 보유자이므로 `platform/` 쪽이 기준이며, 서버 작업 재개 시
 > 문구를 "자신 + 하위 합계"로, provenance를 `{silo_id} ∪ aggregated_from`으로 정정한다.
 > (구현된 검증 로직 자체는 양쪽을 모두 허용한다 —
-> `backup/poc2/services/silo_group_service.py` `_validate_topology` ⑤ "집계자는 루트
+> `platform/backend/services/silo_group_service.py` `_validate_topology` ⑤ "집계자는 루트
 > 그룹 멤버여야 정상")
+>
+> _변경 이력: 2026-09-09 — 헤더 계보 갱신. 대상 코드를 `backup/poc2/`에서
+> `platform/backend/`(4e20ed9 이식)로 정정._
 
 - 날짜: 2026-08-21
 - 상태: **구현 완료** — 이후 대상 백엔드가 `backup/poc2/`로 아카이브되어 신규 작업 대상 아님
