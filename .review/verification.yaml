@@ -1,0 +1,23 @@
+schema_version: 1
+checks:
+  - id: backend-tests
+    cwd: platform/backend
+    command: ['{python}', -m, pytest, tests/, '--cov=.', '--cov-fail-under=80', -q]
+    requires_modules: [pytest, pytest_cov, fastapi]
+    timeout_seconds: 600
+  - id: backend-lint
+    cwd: platform/backend
+    command: ['{python}', -m, ruff, check, .]
+    requires_modules: [ruff]
+  - id: frontend-typecheck
+    cwd: platform
+    command: [npm, run, typecheck]
+    requires_files: [platform/node_modules/.package-lock.json]
+  - id: frontend-tests
+    cwd: platform
+    command: [npm, test]
+    requires_files: [platform/node_modules/.package-lock.json]
+  - id: frontend-build
+    cwd: platform
+    command: [npm, run, build]
+    requires_files: [platform/node_modules/.package-lock.json]
