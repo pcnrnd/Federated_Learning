@@ -43,7 +43,13 @@ CENTRAL_IN_NET = "http://fed-backend:8000"  # 컨테이너망 기준 중앙 URL
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase 2 E2E 중앙 드라이버")
     parser.add_argument("--base", default="http://localhost:8000", help="중앙 API 베이스 URL")
-    parser.add_argument("--distro", default="Ubuntu-24.04", help="WSL 배포판 이름")
+    # 리눅스 호스트(dts 등)에서는 docker 를 네이티브로 부른다 — 기본값이 빈 문자열이면
+    # WSL 프리픽스 없이 실행된다. Windows 기본값은 기존과 동일하게 유지한다.
+    parser.add_argument(
+        "--distro",
+        default="Ubuntu-24.04" if sys.platform == "win32" else "",
+        help="WSL 배포판 이름 (빈 값이면 docker 를 네이티브로 호출)",
+    )
     parser.add_argument(
         "--repo-wsl",
         default="/mnt/f/rnd_github/pcnrnd/Federated_Learning",
@@ -65,7 +71,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 ARGS = parse_args(sys.argv[1:])
 BASE = ARGS.base
-WSL = ["wsl", "-d", ARGS.distro]
+WSL = ["wsl", "-d", ARGS.distro] if ARGS.distro else []
 SILOS = [s.strip() for s in ARGS.silos.split(",") if s.strip()]
 
 log_file = open(ARGS.log, "w", encoding="utf-8")
