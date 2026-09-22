@@ -2,6 +2,7 @@
 
 정제(clean): 레시피 조회 → 샤드 start → 로컬 더미 데이터에 apply_recipe → 카운터 report.
 학습(train): 사일로별 non-IID 로컬 데이터 생성 → train_ridge 실학습 → 파라미터 기여 push.
+엣지 집계(train-edge): 자기 실학습 + 하위 파라미터를 combine 해 1건으로 대리 제출 (2단 HFL).
 수집(monitor): /proc 실측 리소스(cpu/mem/disk %)를 주기 push — SPA 사일로 리소스 화면 데이터원.
 연속학습(train-loop): open 라운드를 폴링해 릿지 실학습 기여 + 로컬 R² 지표를 라운드마다 push.
 
@@ -12,6 +13,8 @@
         --job-id job-x --shard-index 0 --recipe-name r --recipe-version 1.0.0
     python3 silo_worker.py train --central http://fed-backend:8000 --silo-id silo-1 \
         --round-id <round_id>
+    python3 silo_worker.py train-edge --central http://fed-backend:8000 --silo-id silo-2 \
+        --round-id <round_id> --children-json children.json   # '-' = stdin
     python3 silo_worker.py monitor --central http://fed-backend:8000 --silo-id silo-1 \
         --interval 5 --count 0
     python3 silo_worker.py train-loop --central http://fed-backend:8000 --silo-id silo-1 \
@@ -29,6 +32,7 @@ import time
 
 from silo_sdk import SiloClient, apply_recipe, train_ridge
 from silo_sdk.client import SiloClientError
+from silo_sdk.edge import combine
 
 FEATURES = ["x1", "x2", "x3"]
 
@@ -361,6 +365,75 @@ def run_train(args: argparse.Namespace) -> None:
     )
 
 
+def _load_children(source: str) -> list[dict]:
+    """하위 노드의 학습 결과를 읽어들인다 — `-`면 stdin, 아니면 파일 경로.
+
+    하위 파라미터를 실제로 모으는 전송 수단은 사내망 사정에 따라 다르므로 SDK 범위 밖이다
+    (설계 스펙 2026-08-21-hfl-server-design.md §4.3). 이 워커는 이미 모인 결과를 JSON으로
+    받는 것까지만 책임진다.
+    형식: [{"silo_id": str, "sample_count": int, "parameters": [float, ...]}, ...]
+    """
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        with open(source, encoding="utf-8") as f:
+            raw = f.read()
+    children = json.loads(raw)
+    if not isinstance(children, list) or not children:
+        raise SystemExit("--children-json: 하위 결과가 비어 있습니다")
+    for child in children:
+        missing = {"silo_id", "sample_count", "parameters"} - set(child)
+        if missing:
+            raise SystemExit(f"--children-json: 필드 누락 {sorted(missing)}")
+    return children
+
+
+def run_train_edge(args: argparse.Namespace) -> None:
+    """엣지 집계자 모드 — 자기 실학습 + 하위 파라미터를 로컬 가중평균해 1건 대리 제출.
+
+    집계자 사일로는 순수 중계자가 아니라 **자신도 로컬 데이터를 가진 사일로**이므로
+    자기 학습 결과를 combine 참여 목록의 첫 원소로 넣는다. 빼면 그 표본이 분자·분모
+    양쪽에서 사라져 라운드 total_samples가 평면 등가보다 작아진다 — 2026-09-08·09-21
+    2단 HFL 실측 7건이 이 누락으로 3300 대신 2900을 기록했다.
+
+    provenance(`aggregated_from`)는 **하위 id만** 담는다 — 서버가 자기 자신 포함을
+    422로 거부하며(`training_round_service._verify_aggregated_from` ③), 이 계약은
+    이번 정정 범위 밖이다.
+    """
+    client = SiloClient(args.central, args.silo_id)
+    children = _load_children(args.children_json)
+
+    rows = _local_train_rows(args.silo_id)
+    mine = train_ridge(rows, FEATURES, "y", l2=1e-6)
+
+    participants = [(args.silo_id, mine.sample_count, mine.parameters)]
+    participants += [
+        (c["silo_id"], int(c["sample_count"]), [float(v) for v in c["parameters"]])
+        for c in children
+    ]
+    edge_total, edge_params = combine(participants)
+
+    child_ids = [c["silo_id"] for c in children]
+    record = client.push_parameters(
+        args.round_id, edge_total, edge_params, aggregated_from=child_ids
+    )
+    print(
+        json.dumps(
+            {
+                "silo_id": args.silo_id,
+                "own_sample_count": mine.sample_count,
+                "child_sample_counts": {
+                    c["silo_id"]: int(c["sample_count"]) for c in children
+                },
+                "edge_total": edge_total,
+                "edge_parameters": [round(p, 6) for p in edge_params],
+                "aggregated_from": record.get("aggregated_from", child_ids),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description="사일로 E2E 워커")
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -379,6 +452,20 @@ def main(argv: list[str]) -> None:
     train.add_argument("--silo-id", required=True)
     train.add_argument("--round-id", required=True)
     train.set_defaults(func=run_train)
+
+    edge_mode = sub.add_parser(
+        "train-edge", help="엣지 집계자 — 자기 학습 + 하위 combine 후 대리 제출"
+    )
+    edge_mode.add_argument("--central", required=True)
+    edge_mode.add_argument("--silo-id", required=True, help="집계자 자신의 사일로 id")
+    edge_mode.add_argument("--round-id", required=True)
+    edge_mode.add_argument(
+        "--children-json",
+        required=True,
+        help="하위 학습 결과 JSON 경로 ('-' = stdin): "
+        "[{silo_id, sample_count, parameters}, ...]",
+    )
+    edge_mode.set_defaults(func=run_train_edge)
 
     monitor = sub.add_parser("monitor", help="리소스 실측 주기 push")
     monitor.add_argument("--central", required=True)

@@ -175,8 +175,10 @@ class SiloClient:
     ) -> dict[str, Any]:
         """파라미터 기여를 push.
 
-        엣지 집계자가 하위를 대리 제출할 때는 `edge.combine()` 결과와 함께
-        `aggregated_from`에 하위 노드 id 목록을 넘긴다 (id 목록일 뿐 원시 데이터 아님).
+        엣지 집계자가 대리 제출할 때는 `edge.combine([자신, *하위])` 결과와 함께
+        `aggregated_from`에 **하위 노드 id 목록만** 넘긴다 (id 목록일 뿐 원시 데이터 아님).
+        즉 `sample_count`는 **집계자 자신 + 하위**의 표본 합이고, `aggregated_from`은
+        provenance 이므로 하위만 담는다 — 자기 자신을 넣으면 서버가 422로 거부한다.
         평면 제출이면 생략 — 빈 목록으로 나가 기존 동작과 동일하다.
         """
         payload = {

@@ -51,6 +51,14 @@
 
 - `currentRound` = 배열 길이(개설된 라운드 수). 라운드 번호 개념이 서버에 없어서 개수로 대신한다.
 - `status`별 시각화(open→다운로드 애니메이션 등)는 P2 범위.
+- **`total_samples` 정의** — 그 라운드 기여들의 `sample_count` 단순 합이며, FedAvg 가중치의
+  분모와 같은 값이다(`services/fedavg_aggregator.py`). 계층(HFL) 라운드에서 집계자가
+  대리 제출한 기여의 `sample_count`는 **집계자 자신 + 하위 노드**의 표본 합이므로,
+  `total_samples`는 계층 여부와 무관하게 **그 라운드에 참여한 전 사일로의 표본 총합**이
+  된다(평면 제출과 수치 동일 — 가중평균 결합법칙). `contributors[]` 길이와는 무관하다:
+  계층 라운드에서는 하위 사일로가 `contributors`에 나타나지 않고 집계자 1건에 접힌다.
+  하위 노드 식별자는 해당 기여의 `aggregated_from`(provenance, 하위 id만)에 남는다.
+  자세한 내용은 [2026-08-21-hfl-server-design.md](./2026-08-21-hfl-server-design.md) 헤더 참고.
 
 ## 불변 규칙
 

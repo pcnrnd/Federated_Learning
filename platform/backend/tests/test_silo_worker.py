@@ -1,4 +1,8 @@
-"""사일로 E2E 워커(scripts/silo_worker.py) — monitor 내성·train-loop 409 원인 구분 테스트"""
+"""사일로 E2E 워커(scripts/silo_worker.py)
+
+- monitor 내성 / train-loop 409 원인 구분
+- train-edge(엣지 집계자 모드) — 자기 표본 포함 여부
+"""
 from __future__ import annotations
 
 import argparse
@@ -204,3 +208,144 @@ def test_train_loop_409_real_duplicate_counts_once_and_pushes_metric_once(
     events = _events(capsys)
     assert events[-1]["event"] == "completed" and events[-1]["contributed"] == 1
     assert len(fake.metrics) == 1 and fake.metrics[0][2] == "accuracy"
+
+
+# ---------- train-edge (엣지 집계자 모드) ----------
+
+
+class _RecordingClient:
+    """push_parameters 인자를 그대로 붙잡는 SiloClient 대역."""
+
+    def __init__(self) -> None:
+        self.pushed: dict = {}
+
+    def push_parameters(self, round_id, sample_count, parameters, *,
+                        aggregated_from=None, **_kw):
+        self.pushed = {
+            "round_id": round_id,
+            "sample_count": sample_count,
+            "parameters": parameters,
+            "aggregated_from": list(aggregated_from or []),
+        }
+        return {"aggregated_from": self.pushed["aggregated_from"]}
+
+
+def _edge_args(children_path: str) -> argparse.Namespace:
+    return argparse.Namespace(
+        central="http://central:8000",
+        silo_id="silo-2",
+        round_id="r1",
+        children_json=children_path,
+    )
+
+
+def _child(silo_id: str) -> dict:
+    """하위 사일로의 실제 로컬 학습 결과 — 드라이버가 모아 넘겨주는 형식."""
+    rows = silo_worker._local_train_rows(silo_id)
+    result = silo_worker.train_ridge(rows, silo_worker.FEATURES, "y", l2=1e-6)
+    return {
+        "silo_id": silo_id,
+        "sample_count": result.sample_count,
+        "parameters": result.parameters,
+    }
+
+
+@pytest.mark.unit
+def test_train_edge_includes_own_samples(tmp_path, monkeypatch, capsys):
+    """L3 실측 형상 — 집계자 silo-2(400) + silo-3(500) + silo-4(600) = 1500.
+
+    구 동작은 자기 400을 빼고 1100을 제출해 라운드 합계가 3300 대신 2900이 됐다.
+    provenance는 하위 2건만 — 자기 자신을 넣으면 서버가 422로 거부한다.
+    """
+    children = [_child("silo-3"), _child("silo-4")]
+    path = tmp_path / "children.json"
+    path.write_text(json.dumps(children), encoding="utf-8")
+
+    fake = _RecordingClient()
+    monkeypatch.setattr(silo_worker, "SiloClient", lambda *_a, **_k: fake)
+
+    silo_worker.run_train_edge(_edge_args(str(path)))
+
+    assert fake.pushed["sample_count"] == 1500  # 400 + 500 + 600
+    assert fake.pushed["aggregated_from"] == ["silo-3", "silo-4"]
+
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["own_sample_count"] == 400
+    assert out["edge_total"] == 1500
+
+
+@pytest.mark.unit
+def test_train_edge_matches_flat_aggregate(tmp_path, monkeypatch, capsys):
+    """엣지 집계 결과가 세 사일로 평면 집계와 수치적으로 같다 (결합법칙)."""
+    from services import fedavg_aggregator
+
+    children = [_child("silo-3"), _child("silo-4")]
+    path = tmp_path / "children.json"
+    path.write_text(json.dumps(children), encoding="utf-8")
+
+    fake = _RecordingClient()
+    monkeypatch.setattr(silo_worker, "SiloClient", lambda *_a, **_k: fake)
+    silo_worker.run_train_edge(_edge_args(str(path)))
+    capsys.readouterr()
+
+    mine = _child("silo-2")
+    flat_params, flat_total = fedavg_aggregator.aggregate(
+        [(c["silo_id"], c["sample_count"], c["parameters"]) for c in [mine, *children]]
+    )
+
+    assert fake.pushed["sample_count"] == flat_total
+    assert fake.pushed["parameters"] == pytest.approx(flat_params)
+
+
+@pytest.mark.unit
+def test_train_edge_reads_children_from_stdin(tmp_path, monkeypatch, capsys):
+    """`-` 이면 stdin에서 읽는다 — 드라이버가 파이프로 넘기는 경로."""
+    import io as _io
+
+    children = [_child("silo-3")]
+    monkeypatch.setattr(silo_worker.sys, "stdin", _io.StringIO(json.dumps(children)))
+
+    fake = _RecordingClient()
+    monkeypatch.setattr(silo_worker, "SiloClient", lambda *_a, **_k: fake)
+
+    silo_worker.run_train_edge(_edge_args("-"))
+
+    assert fake.pushed["sample_count"] == 900  # silo-2 400 + silo-3 500
+    assert fake.pushed["aggregated_from"] == ["silo-3"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "payload",
+    ["[]", '[{"silo_id": "silo-3", "sample_count": 500}]'],
+    ids=["empty", "missing_field"],
+)
+def test_train_edge_rejects_malformed_children(tmp_path, payload):
+    path = tmp_path / "children.json"
+    path.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(SystemExit):
+        silo_worker._load_children(str(path))
+
+
+@pytest.mark.unit
+def test_flat_train_path_sends_no_aggregated_from(monkeypatch, capsys):
+    """평면 제출 경로는 불변 — aggregated_from 없이 자기 표본만 push한다."""
+    captured: dict = {}
+
+    class _FlatClient:
+        def push_parameters(self, round_id, sample_count, parameters, **kwargs):
+            captured.update(
+                {"sample_count": sample_count, "kwargs": kwargs}
+            )
+            return {"parameter_dim": len(parameters)}
+
+    monkeypatch.setattr(silo_worker, "SiloClient", lambda *_a, **_k: _FlatClient())
+    silo_worker.run_train(
+        argparse.Namespace(
+            central="http://central:8000", silo_id="silo-2", round_id="r1"
+        )
+    )
+
+    assert captured["sample_count"] == 400  # 자기 표본만
+    assert captured["kwargs"] == {}

@@ -11,17 +11,22 @@
 > [2026-07-24-silo-hierarchy-design.md](./2026-07-24-silo-hierarchy-design.md)다.
 > 본문에서 `app/`으로 표기된 경로는 모두 현재 `platform/backend/`로 읽는다.
 >
-> 집계 모델 차이 1건도 함께 기록한다: 본 문서는 집계자 제출의 `sample_count`를
-> "하위 합계"로 서술하지만(§3·§4.2·§4.3), `platform/`은 **상위 자신 + 하위**를 엣지
-> 집계에 포함한다(`platform/src/lib/aggregation.ts` `aggregateHierarchy`). 사일로는
-> 조직 경계이자 데이터 보유자이므로 `platform/` 쪽이 기준이며, 서버 작업 재개 시
-> 문구를 "자신 + 하위 합계"로, provenance를 `{silo_id} ∪ aggregated_from`으로 정정한다.
-> (구현된 검증 로직 자체는 양쪽을 모두 허용한다 —
-> `platform/backend/services/silo_group_service.py` `_validate_topology` ⑤ "집계자는 루트
-> 그룹 멤버여야 정상")
+> **집계 모델 정정 (2026-09-22 집행 완료 — `sample_count` 한정).** 본 문서는 당초
+> 집계자 제출의 `sample_count`를 "하위 합계"로 서술했으나, `platform/`은 **상위 자신 +
+> 하위**를 엣지 집계에 포함한다(`platform/src/lib/aggregation.ts` `aggregateHierarchy`).
+> 사일로는 조직 경계이자 데이터 보유자이므로 `platform/` 쪽이 기준이다. 이 문서의
+> §3·§4.2·§4.3·§5 문구와 `silo_sdk/edge.py`·`scripts/silo_worker.py`·테스트를
+> **"자신 + 하위 합계"로 정정했다.** (구현된 토폴로지 검증은 원래부터 양쪽을 모두
+> 허용한다 — `platform/backend/services/silo_group_service.py` `_validate_topology`
+> ⑤ "집계자는 루트 그룹 멤버여야 정상")
+>
+> **미집행 잔여 1건 — provenance.** `aggregated_from`은 여전히 **하위만** 담는다.
+> `{silo_id} ∪ aggregated_from`으로의 정정은 `_verify_aggregated_from` ③의 422 계약을
+> 뒤집는 일이라 외부 소비자 확인 후 별건으로 판단한다(§5 표 참고).
 >
 > _변경 이력: 2026-09-09 — 헤더 계보 갱신. 대상 코드를 `backup/poc2/`에서
-> `platform/backend/`(4e20ed9 이식)로 정정._
+> `platform/backend/`(4e20ed9 이식)로 정정.
+> 2026-09-22 — `sample_count` 의미를 "자신 + 하위"로 정정(집행 완료), provenance는 보류._
 
 - 날짜: 2026-08-21
 - 상태: **구현 완료** — 4e20ed9로 `platform/backend/`에 이식되어 현재 라이브 구현(원본 `backup/poc2/`는 아카이브)
@@ -57,7 +62,7 @@ UI는 `사일로(로컬 집계자) → 하위 노드` 계층과 6페이즈 HFL �
 
 | 질문 | 결정 | 근거 |
 |------|------|------|
-| 2단 집계를 어디서 수행? | **사일로 측(엣지)** — 집계자가 하위 것을 로컬 평균 후 1건 제출. 중앙이 하위 기여를 직접 받아 2단 계산하는 안(중앙 집계형)은 기각 | §2 결합법칙으로 중앙 무변경. WAN 절감이라는 HFL 본래 성격과 일치. 하위 파라미터가 중앙에 도달하지 않아 프라이버시 경계도 강화 |
+| 2단 집계를 어디서 수행? | **사일로 측(엣지)** — 집계자가 **자신 + 하위**를 로컬 평균 후 1건 제출. 중앙이 하위 기여를 직접 받아 2단 계산하는 안(중앙 집계형)은 기각 | §2 결합법칙으로 중앙 무변경. WAN 절감이라는 HFL 본래 성격과 일치. 하위 파라미터가 중앙에 도달하지 않아 프라이버시 경계도 강화 |
 | 계층을 어느 도메인에? | **`SiloGroup` 확장** — `aggregator_node_id` 필드 추가. 엣지 클러스터 = "집계자 1 + 하위 멤버들"인 그룹 | 신규 도메인 없이 기존 그룹·멤버십 검증 재사용. UI `parentId` ↔ 클러스터 그룹 1:1 대응 |
 | 라운드는 무엇을 대상으로? | 기존대로 **루트 그룹**(1단 사일로들). 엣지 클러스터 그룹은 라운드 대상이 아니라 집계자의 제출 검증용 | 라운드 라이프사이클(`open→aggregating→completed`) 무변경 |
 | 기여 출처 기록? | `ParameterContribution`에 **`aggregated_from: list[str]` (선택)** 추가 — 집계자가 대리 제출한 하위 노드 목록. 서버는 해당 클러스터 그룹 멤버십과 대조 검증 | 원시 데이터 아님(id 목록 = 카운트성 메타데이터, 프라이버시 불변식 유지). 리니지·감사에 필요 |
@@ -105,7 +110,10 @@ class TrainingRound(BaseModel):
 - `submit_contribution`: `aggregated_from`이 있으면
   ① 제출자가 그 클러스터의 `aggregator_node_id`인지,
   ② 목록이 클러스터 멤버의 부분집합인지 검증 (아니면 403/422).
-  수학은 무변경 — `sample_count`가 이미 하위 합계이므로 기존 `aggregate()` 그대로.
+  수학은 무변경 — `sample_count`가 이미 **집계자 자신 + 하위**의 표본 합으로 들어오므로
+  기존 `aggregate()` 그대로다. 서버는 이 값의 의미를 해석하지 않으며(하위별 표본수를
+  받지 않아 `sample_count >= Σ하위` 같은 방어도 걸 수 없다), 자신 포함 여부는
+  **사일로 SDK 쪽 계약**이다 — `silo_sdk/edge.py` `combine()` 참조.
 
 `fedavg_aggregator`: **무변경.** (결합법칙 검증 테스트만 추가)
 
@@ -114,14 +122,23 @@ class TrainingRound(BaseModel):
 `edge.py` 신규 — stdlib만 사용(기존 SDK 규약):
 
 ```python
-def combine(children: list[tuple[str, int, list[float]]]) -> tuple[int, list[float]]:
-    """하위 (silo_id, sample_count, params) → (샘플 합, 가중평균 파라미터).
+def combine(
+    participants: list[tuple[str, int, list[float]]],
+) -> tuple[int, list[float]]:
+    """엣지 참여자(**집계자 자신 + 하위**) (silo_id, sample_count, params)
+    → (표본 합, 가중평균 파라미터).
     fedavg_aggregator.aggregate와 동일 수식 — 차원 불일치/비양수 샘플수 거부."""
 ```
 
-집계자 사용 흐름: 하위들로부터 파라미터 수집(사내망, SDK 범위 밖) →
-`combine()` → `client.push_parameters(..., sample_count=합계, aggregated_from=[...])`.
+집계자 사용 흐름: **자기 로컬 학습**(`train_ridge`) + 하위들로부터 파라미터 수집(사내망,
+SDK 범위 밖) → `combine([자신, *하위])` →
+`client.push_parameters(..., sample_count=자신+하위 합계, aggregated_from=[하위 id, ...])`.
 `push_parameters` 시그니처에 `aggregated_from` 선택 인자 추가(기본 빈 목록 — 기존 호출 무변경).
+
+집계자가 자기 학습 결과를 참여 목록에서 빼면 그 표본이 분자·분모 양쪽에서 사라져
+라운드 합계가 평면 등가보다 작아진다. 프로덕션 구현체는
+`scripts/silo_worker.py` `train-edge` 서브커맨드다(하위 결과는 `--children-json`으로
+받는다 — 수집 전송 수단은 여전히 SDK 범위 밖).
 
 ### 4.4 API
 
@@ -133,7 +150,8 @@ def combine(children: list[tuple[str, int, list[float]]]) -> tuple[int, list[flo
 | 케이스 | 동작 |
 |--------|------|
 | `aggregated_from` 빈 목록(평면 제출) | 기존 경로와 완전 동일 — 검증·수학 모두 무변경 |
-| 집계자가 자기 자신을 `aggregated_from`에 포함 | 422 (하위 목록엔 하위만) |
+| 집계자가 자기 자신을 `aggregated_from`에 포함 | 422 (provenance 목록엔 하위만). `sample_count`에는 자기 표본이 **포함된다** — 값의 의미와 provenance 목록은 별개다 |
+| 집계자가 자기 데이터를 갖지 않는 순수 중계자 | `combine(하위만)` — 등식은 그대로 성립. 자기 데이터가 있는데 빼는 경우만 결함이다 |
 | 스냅샷에 없는 노드의 기여 | 403 (라운드 중 등록 노드 → 다음 라운드부터) |
 | 클러스터 멤버가 중앙에 직접 기여 | 403 — 클러스터 멤버는 루트 그룹 소속이 아니므로 스냅샷 검증에서 자동 차단 |
 | 집계자 미제출 | 클러스터 전체 미참여, `min_contributions` 미달 시 기존 400 |
@@ -159,6 +177,7 @@ def combine(children: list[tuple[str, int, list[float]]]) -> tuple[int, list[flo
 | `services/fedavg_aggregator.py` | 무변경 (테스트만 추가) |
 | `silo_sdk/edge.py` (신규) | `combine()` |
 | `silo_sdk/client.py` / `async_client.py` | `push_parameters(aggregated_from=...)` |
+| `scripts/silo_worker.py` | `train-edge` 집계자 모드 (2026-09-22 추가) |
 | `tests/test_fedavg.py` 외 3파일 | §6 테스트 |
 
 스토리지 마이그레이션 불필요 — 신규 필드 전부 기본값 있는 선택 필드라 기존

@@ -239,10 +239,30 @@ def test_post_sends_idempotency_key_header():
 
 
 # ---------- 엣지 집계 combine (HFL 설계 스펙 §4.3) ----------
+#
+# combine 의 참여 목록 = **집계자 자신 + 하위**. 집계자는 순수 중계자가 아니라
+# 자기 로컬 데이터를 가진 사일로이므로 자신의 기여가 목록에 들어 있는 것이 정상이다.
+
+
+@pytest.mark.unit
+def test_combine_includes_aggregator_own_samples():
+    """집계자 자신(silo-2, 40) + 하위(silo-3 30 / silo-4 10) → 합 80."""
+    total, params = edge.combine(
+        [
+            ("silo-2", 40, [1.0, 1.0]),
+            ("silo-3", 30, [2.0, 6.0]),
+            ("silo-4", 10, [10.0, 2.0]),
+        ]
+    )
+
+    assert total == 80
+    # (40/80)·[1,1] + (30/80)·[2,6] + (10/80)·[10,2] = [0.5+0.75+1.25, 0.5+2.25+0.25]
+    assert params == pytest.approx([2.5, 3.0])
 
 
 @pytest.mark.unit
 def test_combine_returns_sample_sum_and_weighted_average():
+    """순수 중계자(자기 데이터 없는 집계자) 형상 — 넘긴 참여자만 합산한다."""
     total, params = edge.combine(
         [("silo-3", 30, [2.0, 6.0]), ("silo-4", 10, [10.0, 2.0])]
     )
@@ -274,8 +294,8 @@ def test_combine_rejects_non_positive_sample_count():
 
 
 @pytest.mark.unit
-def test_combine_rejects_empty_children():
-    with pytest.raises(ValueError):
+def test_combine_rejects_empty_participants():
+    with pytest.raises(ValueError, match="엣지 참여 기여가 없습니다"):
         edge.combine([])
 
 

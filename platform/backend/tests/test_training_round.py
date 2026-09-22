@@ -13,6 +13,7 @@ from models.federated_schemas import (
 )
 from models.packaging_schemas import ModelRegisterRequest
 from services import (
+    fedavg_aggregator,
     model_registry,
     silo_group_service,
     training_round_service,
@@ -326,19 +327,29 @@ def test_cluster_member_cannot_contribute_directly():
 def test_proxy_submission_end_to_end_matches_hand_calculation():
     """집계자 대리 제출 E2E — 엣지 집계 후 글로벌 집계 결과를 손계산과 대조.
 
-    클러스터 c1(집계자 silo-1): silo-3 30샘플 [2.0, 6.0], silo-4 10샘플 [10.0, 2.0]
-      엣지 = (30/40)·[2,6] + (10/40)·[10,2] = [1.5+2.5, 4.5+0.5] = [4.0, 5.0], N_c=40
-    루트: silo-1 대리 40샘플 [4.0, 5.0], silo-2 60샘플 [1.0, 0.0]
-      글로벌 = (40/100)·[4,5] + (60/100)·[1,0] = [1.6+0.6, 2.0+0.0] = [2.2, 2.0]
+    집계자 silo-1도 **자기 로컬 데이터를 가진 사일로**이므로 자신의 기여가 엣지
+    참여 목록에 들어간다 (2026-07-24-silo-hierarchy-design.md §엣지 집계의 참여 범위).
+
+    클러스터 c1(집계자 silo-1 자신 40샘플 [1.0, 1.0]):
+      하위 silo-3 30샘플 [2.0, 6.0], silo-4 10샘플 [10.0, 2.0]
+      엣지 = (40/80)·[1,1] + (30/80)·[2,6] + (10/80)·[10,2] = [2.5, 3.0], N_c=80
+    루트: silo-1 대리 80샘플 [2.5, 3.0], silo-2 20샘플 [1.0, 0.0]
+      글로벌 = (80/100)·[2.5,3] + (20/100)·[1,0] = [2.0+0.2, 2.4+0.0] = [2.2, 2.4]
+
+    provenance는 하위만 — `aggregated_from`에 자기 자신을 넣으면 422다(계약 유지).
     """
     _make_cluster("c1", "silo-1", ["silo-3", "silo-4"])
     rnd = _create_round(min_contrib=2)
 
     cluster_total, combined = edge.combine(
-        [("silo-3", 30, [2.0, 6.0]), ("silo-4", 10, [10.0, 2.0])]
+        [
+            ("silo-1", 40, [1.0, 1.0]),  # 집계자 자신의 로컬 학습
+            ("silo-3", 30, [2.0, 6.0]),
+            ("silo-4", 10, [10.0, 2.0]),
+        ]
     )
-    assert cluster_total == 40
-    assert combined == pytest.approx([4.0, 5.0])
+    assert cluster_total == 80
+    assert combined == pytest.approx([2.5, 3.0])
 
     record = _contribute(
         rnd.round_id,
@@ -347,17 +358,29 @@ def test_proxy_submission_end_to_end_matches_hand_calculation():
         combined,
         aggregated_from=["silo-3", "silo-4"],
     )
-    _contribute(rnd.round_id, "silo-2", 60, [1.0, 0.0])
+    _contribute(rnd.round_id, "silo-2", 20, [1.0, 0.0])
 
     assert record.aggregated_from == ["silo-3", "silo-4"]
-    assert record.sample_count == 40
+    assert record.sample_count == 80
 
     result = training_round_service.aggregate_round(rnd.round_id)
 
     assert result.contributor_count == 2
     assert result.total_samples == 100
     assert result.parameters[0] == pytest.approx(2.2)
-    assert result.parameters[1] == pytest.approx(2.0)
+    assert result.parameters[1] == pytest.approx(2.4)
+
+    # 평면 등가 — 같은 4개 사일로를 평면 제출했을 때와 수치가 일치한다
+    flat_params, flat_total = fedavg_aggregator.aggregate(
+        [
+            ("silo-1", 40, [1.0, 1.0]),
+            ("silo-3", 30, [2.0, 6.0]),
+            ("silo-4", 10, [10.0, 2.0]),
+            ("silo-2", 20, [1.0, 0.0]),
+        ]
+    )
+    assert flat_total == result.total_samples
+    assert result.parameters == pytest.approx(flat_params)
 
 
 @pytest.mark.unit
