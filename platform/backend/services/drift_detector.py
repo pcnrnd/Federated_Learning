@@ -46,6 +46,10 @@ def set_baseline(request: BaselineRequest) -> None:
         )
     baselines = load_baselines()
     baselines[_baseline_key(request.model_name, request.version, request.feature)] = {
+        # 식별자에 "::"가 들어가도 키 분해 없이 목록을 만들 수 있도록 함께 저장한다
+        "model_name": request.model_name,
+        "version": request.version,
+        "feature": request.feature,
         "bin_edges": list(request.bin_edges),
         "bin_counts": list(request.bin_counts),
     }
@@ -64,7 +68,11 @@ def list_baselines(
     """등록된 베이스라인의 model·version·feature 목록 (필터는 주어진 것만 적용)"""
     items = []
     for key, b in load_baselines().items():
-        m, v, f = key.split("::", 2)
+        if "model_name" in b:
+            m, v, f = b["model_name"], b["version"], b["feature"]
+        else:
+            # ponytail: 식별자 필드가 없는 기존 레코드 — model_name의 "::"만 복원, feature의 "::"는 판별 불가
+            m, v, f = key.rsplit("::", 2)
         if (model_name and m != model_name) or (version and v != version):
             continue
         items.append(

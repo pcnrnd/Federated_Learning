@@ -101,3 +101,45 @@ def test_detect_drift_bin_mismatch_returns_400():
     with pytest.raises(HTTPException) as exc:
         drift_detector.detect_drift(stats)
     assert exc.value.status_code == 400
+
+
+def _baseline(model_name: str, version: str, feature: str) -> BaselineRequest:
+    return BaselineRequest(
+        model_name=model_name,
+        version=version,
+        feature=feature,
+        bin_edges=[0.0, 1.0, 2.0],
+        bin_counts=[1, 1],
+    )
+
+
+@pytest.mark.unit
+def test_list_baselines_keeps_identifiers_containing_separator():
+    drift_detector.set_baseline(_baseline("alpha::edge", "1.0.0", "age"))
+    drift_detector.set_baseline(_baseline("beta", "2.0.0", "age"))
+
+    expected = [("alpha::edge", "1.0.0", "age")]
+    by_model = drift_detector.list_baselines(model_name="alpha::edge")
+    by_version = drift_detector.list_baselines(version="1.0.0")
+
+    assert [(b.model_name, b.version, b.feature) for b in by_model] == expected
+    assert [(b.model_name, b.version, b.feature) for b in by_version] == expected
+
+
+@pytest.mark.unit
+def test_list_baselines_splits_legacy_key_from_right():
+    from config.monitoring_manager import save_baselines
+
+    # 식별자 필드가 없는 기존 레코드 — 키만으로 복원한다
+    save_baselines(
+        {"alpha::edge::1.0.0::age": {"bin_edges": [0.0, 1.0], "bin_counts": [3]}}
+    )
+
+    [item] = drift_detector.list_baselines(model_name="alpha::edge")
+
+    assert (item.model_name, item.version, item.feature, item.bin_count) == (
+        "alpha::edge",
+        "1.0.0",
+        "age",
+        1,
+    )
