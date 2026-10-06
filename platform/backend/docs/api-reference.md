@@ -49,6 +49,8 @@
 | GET | `/api/monitoring/retrain-triggers` | 재교육 트리거 조회 |
 | GET | `/api/monitoring/prometheus` | Prometheus exposition |
 
+`GET /api/monitoring/baselines`는 신규 등록 레코드에 `model_name`·`version`·`feature`를 함께 저장해 정확히 목록화한다. 해당 필드가 없는 기존 레코드는 키를 오른쪽부터 분해하므로, `feature`에 `::`가 든 기존 레코드는 식별자가 틀릴 수 있다(알려진 한계).
+
 ## 사일로 그룹 (P1)
 
 | Method | Path | 설명 |

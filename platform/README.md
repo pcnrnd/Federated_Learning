@@ -43,19 +43,23 @@ src/
 ├── constants/simulation.ts # NODE_COUNT, TOPOLOGY, TIMINGS, 알고리즘 메타
 ├── lib/
 │   ├── topology.ts         # 노드 좌표 계산 (순수)
+│   ├── vizTopology.ts      # 실서버 연합 토폴로지 좌표 계산 (순수)
 │   ├── aggregation.ts      # FedAvg / Median / SecAgg 집계 (순수)
 │   ├── nodeFactory.ts      # 초기 노드 생성
 │   └── format.ts           # 포맷 유틸
 ├── store/useSimulationStore.ts  # Zustand: 단일 상태 소스
 ├── hooks/useSimulationEngine.ts # 라운드 오케스트레이션 + 취소 가능
+├── hooks/useVisualizationData.ts # 실서버 시각화 데이터 조회
+├── views/
+│   └── VisualizationView.tsx # 데이터 시각화 탭 컨테이너
 ├── components/
 │   ├── layout/             # Sidebar, GlobalHeader, AppLayout
 │   ├── topology/           # SVG 토폴로지 + 패킷 애니메이션
 │   ├── controls/           # 시뮬레이션 컨트롤 패널 + 슬라이더
 │   ├── nodes/              # 노드 카드
 │   ├── analytics/          # Chart.js 성능 차트
+│   ├── visualization/      # 실서버 시각화 차트 5개
 │   └── logs/               # 로그 콘솔 + 필터
-└── views/                  # 탭별 컨테이너 (Dashboard / Nodes / Analytics / Logs)
 ```
 
 ## 데이터 흐름
@@ -77,7 +81,7 @@ useSimulationEngine ──라운드 사이클──▶ store 업데이트(불변
 ## 기능
 
 - 12개 분산 노드 + 중앙 서버 토폴로지 (SVG)
-- 4개 탭 (메인 대시보드 / 분산 노드 관리 / 성능 분석 / 실시간 로그)
+- 「데이터 시각화」 탭 — 실서버 성능 추이·참여 매트릭스·사일로 비교·연합 토폴로지·기준 분포 5종
 - 3개 집계 알고리즘
   - **FedAvg** — 연합 가중 평균
   - **Federated Median** — 이상치에 견고
