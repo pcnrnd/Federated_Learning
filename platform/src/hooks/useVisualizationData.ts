@@ -47,6 +47,39 @@ export type VizChartKey = keyof Omit<VizData, 'baselines'>
 export interface VizSnapshot {
   data: Partial<VizData>
   failed: VizChartKey[]
+  /** 이 결과를 조회한 조건 */
+  query: VizQuery
+  /** 선택이 바뀌어 새 응답을 기다리는 차트 — 값을 지우고 로딩으로 보인다 */
+  loading: VizChartKey[]
+}
+
+/** 차트별로 결과를 바꾸는 조회 조건. 여기 없는 조건이 바뀌어도 그 차트는 계속 보인다 */
+const CHART_QUERY_FIELDS: Record<VizChartKey, Array<keyof VizQuery>> = {
+  trend: ['modelName', 'modelVersion', 'trendMetric'],
+  participation: [],
+  roundBar: [],
+  resourceBar: ['resourceMetric'],
+  topology: [],
+  histogram: ['baselineKey'],
+}
+
+/**
+ * 조회 당시 조건과 현재 선택이 다른 차트의 값·실패를 지우고 `loading`에 담는다.
+ * 새 응답 전까지 이전 결과가 새 라벨·배율로 그려지지 않게 한다 (예: 150ms → 정확도 15,000%).
+ */
+export function hideStaleCharts(snapshot: VizSnapshot, current: VizQuery): VizSnapshot {
+  const stale = (Object.keys(CHART_QUERY_FIELDS) as VizChartKey[]).filter((key) =>
+    CHART_QUERY_FIELDS[key].some((field) => snapshot.query[field] !== current[field]),
+  )
+  if (stale.length === 0) return snapshot
+  const data = { ...snapshot.data }
+  for (const key of stale) delete data[key]
+  return {
+    ...snapshot,
+    data,
+    failed: snapshot.failed.filter((key) => !stale.includes(key)),
+    loading: stale,
+  }
 }
 
 const getPayload = <P>(path: string): Promise<P> =>
@@ -108,13 +141,14 @@ async function fetchSnapshot(q: VizQuery): Promise<VizSnapshot> {
   const failed = (Object.keys(data) as Array<keyof VizData>).filter(
     (key): key is VizChartKey => key !== 'baselines' && data[key] === undefined,
   )
-  return { data, failed }
+  return { data, failed, query: q, loading: [] }
 }
 
 /**
  * 시각화 탭 전용 조회. 탭이 열려 있고 라이브 모드일 때만 10초 주기로 돈다.
  * 전역 5초 폴링(useLivePolling)과 분리 — 다른 탭에는 부하를 주지 않는다.
  * 선택(모델·지표·기준 분포)이 바뀌면 진행 중 요청을 버리고 즉시 다시 조회한다.
+ * 새 응답이 오기 전까지 그 선택에 딸린 차트는 로딩으로 둔다(hideStaleCharts).
  */
 export function useVisualizationData(query: VizQuery): { isLive: boolean; snapshot: VizSnapshot | null } {
   const mockEnabled = useSimulationStore((s) => s.mockEnabled)
@@ -159,5 +193,5 @@ export function useVisualizationData(query: VizQuery): { isLive: boolean; snapsh
     }
   }, [isLive, modelName, modelVersion, trendMetric, resourceMetric, selectedBaseline])
 
-  return { isLive, snapshot }
+  return { isLive, snapshot: snapshot && hideStaleCharts(snapshot, query) }
 }

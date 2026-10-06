@@ -119,7 +119,7 @@ function slot(
   emptyText: string | null,
   render: () => ReactNode,
 ): ReactNode {
-  if (!snapshot) return <Empty>데이터를 불러오는 중입니다.</Empty>
+  if (!snapshot || snapshot.loading.includes(key)) return <Empty>데이터를 불러오는 중입니다.</Empty>
   if (snapshot.failed.includes(key)) {
     return <Empty>데이터를 불러오지 못했습니다. 서버 연결을 확인해 주세요. 10초마다 다시 시도합니다.</Empty>
   }
@@ -242,10 +242,11 @@ function BarCard({ snapshot, mode, onModeChange, resource, onResourceChange }: B
 
 interface HistogramCardProps {
   snapshot: VizSnapshot | null
+  selected: string | null
   onBaselineChange: (key: string) => void
 }
 
-function HistogramCard({ snapshot, onBaselineChange }: HistogramCardProps) {
+function HistogramCard({ snapshot, selected, onBaselineChange }: HistogramCardProps) {
   const baselines = snapshot?.data.baselines ?? []
   const shown = snapshot?.data.histogram
   const input = useMemo(() => (shown ? mapHistogram(shown.payload) : null), [shown])
@@ -254,7 +255,7 @@ function HistogramCard({ snapshot, onBaselineChange }: HistogramCardProps) {
     <div className="viz-select select-wrapper">
       <select
         aria-label="기준 분포 선택"
-        value={shown?.key ?? ''}
+        value={shown?.key ?? selected ?? ''}
         onChange={(e) => onBaselineChange(e.target.value)}
         disabled={baselines.length === 0}
       >
@@ -344,7 +345,7 @@ export function VisualizationView() {
           resource={resourceMetric}
           onResourceChange={setResourceMetric}
         />
-        <HistogramCard snapshot={snapshot} onBaselineChange={setSelectedBaseline} />
+        <HistogramCard snapshot={snapshot} selected={selectedBaseline} onBaselineChange={setSelectedBaseline} />
       </div>
       <TopologyCard snapshot={snapshot} />
     </div>
