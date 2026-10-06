@@ -101,6 +101,9 @@ class TrainingRound(BaseModel):
     # None = 스냅샷 도입 이전 레코드 → 현재 그룹 멤버십으로 폴백.
     # []   = 멤버 0명인 그룹의 진짜 빈 스냅샷 → 기여 전부 403 (폴백하지 않는다).
     member_snapshot: list[str] | None = None
+    # open 시점 클러스터 스냅샷 — 집계자 → 클러스터 멤버 (member_snapshot 안 집계자만).
+    # None = 도입 이전 레코드 → 현재 그룹 설정으로 추정. {} = 집계자 없음 (추정하지 않는다).
+    cluster_snapshot: dict[str, list[str]] | None = None
 
 
 class AggregateResult(BaseModel):

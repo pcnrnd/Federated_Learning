@@ -167,12 +167,17 @@ def _round_members(
     """라운드에 참여해야 했던 사일로 범위.
 
     스냅샷(없으면 현재 그룹 멤버) ∪ 스냅샷 안 집계자가 맡은 클러스터 멤버 ∪ 실제 대리 제출 출처.
-    클러스터 멤버는 라운드 시점 기록이 없어 **현재 그룹 설정으로 추정**한다.
+    클러스터 멤버는 라운드의 `cluster_snapshot`을 쓰고, 스냅샷이 없는 이전 라운드만
+    **현재 그룹 설정으로 추정**한다.
     """
     snapshot = r.member_snapshot
     if snapshot is None:  # 스냅샷 도입 이전 라운드 → 현재 그룹 멤버로 대체
         snapshot = groups.get(r.group_id, {}).get("member_node_ids", [])
     members = set(snapshot) | via
+    if r.cluster_snapshot is not None:
+        for cluster_members in r.cluster_snapshot.values():
+            members.update(cluster_members)
+        return members
     for g in groups.values():
         if g.get("aggregator_node_id") in snapshot:
             members.update(g.get("member_node_ids", []))
@@ -202,7 +207,8 @@ def heatmap_participation(*, group_id: str | None = None, limit: int = 20) -> Ch
     """행=사일로, 열=최근 limit개 라운드(오래된 → 최근), 값=직접 기여 표본수.
 
     집계자 경유 사일로는 개별 표본수를 서버가 모르므로 값 없이 via_aggregator로 표시한다.
-    클러스터 멤버의 라운드 참여 범위는 현재 그룹 설정 기준 추정이다.
+    클러스터 멤버의 라운드 참여 범위는 라운드 시점 `cluster_snapshot` 기준이며,
+    스냅샷이 없는 이전 라운드만 현재 그룹 설정으로 추정한다.
     """
     rounds = training_round_service.list_rounds(group_id=group_id)[:limit][::-1]
     groups = load_silo_groups()

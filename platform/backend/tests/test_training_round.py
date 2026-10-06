@@ -214,6 +214,54 @@ def test_create_round_freezes_member_snapshot():
 
 
 @pytest.mark.unit
+def test_create_round_records_cluster_snapshot():
+    """스냅샷 안 집계자의 클러스터 멤버를 생성 시점 그대로 기록한다 — 이후 클러스터 변경 무영향"""
+    _make_cluster("edge-a", "silo-2", ["silo-3", "silo-4"])
+
+    rnd = _create_round()
+    silo_group_service.update_group(
+        "edge-a",
+        SiloGroupRequest(group_id="edge-a", member_node_ids=["silo-3"], aggregator_node_id="silo-2"),
+    )
+
+    assert rnd.cluster_snapshot == {"silo-2": ["silo-3", "silo-4"]}
+    stored = training_round_service.get_round(rnd.round_id)
+    assert stored.cluster_snapshot == {"silo-2": ["silo-3", "silo-4"]}
+
+
+@pytest.mark.unit
+def test_create_round_without_aggregator_records_empty_cluster_snapshot():
+    """집계자가 없으면 {} — 스냅샷 없는 이전 레코드(None)와 구분된다"""
+    assert _create_round().cluster_snapshot == {}
+
+
+@pytest.mark.unit
+def test_cluster_snapshot_round_trips_through_sqlite(monkeypatch, tmp_path):
+    from storage.factory import reset_repositories
+
+    monkeypatch.setenv("FED_STORAGE", "sqlite")
+    reset_repositories()
+    weights = tmp_path / "s.pt"
+    weights.write_bytes(b"")
+    model_registry.register_model(
+        ModelRegisterRequest(
+            name="alpha", version="1.0.0", framework="pytorch", weights_path=str(weights)
+        )
+    )
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="g1", member_node_ids=["silo-1", "silo-2"])
+    )
+    _make_cluster("edge-a", "silo-2", ["silo-3"])
+    rnd = _create_round()
+
+    reset_repositories()  # 저장소를 새로 연다
+
+    stored = training_round_service.get_round(rnd.round_id)
+    assert stored.cluster_snapshot == {"silo-2": ["silo-3"]}
+    assert load_training_rounds()[rnd.round_id]["cluster_snapshot"] == {"silo-2": ["silo-3"]}
+
+
+@pytest.mark.unit
 def test_node_added_mid_round_is_rejected_by_snapshot():
     """라운드 open 후 그룹에 추가된 노드는 진행 중 라운드에 기여할 수 없다 (403)"""
     rnd = _create_round()

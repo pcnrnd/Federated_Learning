@@ -445,6 +445,59 @@ def test_participation_legacy_round_falls_back_to_current_group(six_silos, alpha
 
 
 @pytest.mark.unit
+def test_participation_keeps_round_cluster_after_cluster_change(six_silos, alpha_model):
+    """라운드 시점 cluster_snapshot 기준 — 이후 클러스터를 바꿔도 이전 라운드 행·상태가 그대로"""
+    _two_tier(["silo-3", "silo-4"])
+    with patch.object(
+        training_round_service, "_now_iso", return_value="2026-10-06T03:29:13+00:00"
+    ):
+        old = _round("root", min_contributions=2)
+    _contribute(old.round_id, "silo-1", 500)
+    _contribute(old.round_id, "silo-2", 1100, aggregated_from=["silo-3"])
+    training_round_service.aggregate_round(old.round_id)
+    before = visualization_service.heatmap_participation().payload
+
+    silo_group_service.update_group(
+        "l3-edge",
+        SiloGroupRequest(group_id="l3-edge", member_node_ids=["silo-5"], aggregator_node_id="silo-2"),
+    )
+
+    assert visualization_service.heatmap_participation().payload == before
+
+    # 변경 뒤 새 라운드는 새 클러스터(silo-5)를 쓴다
+    with patch.object(
+        training_round_service, "_now_iso", return_value="2026-10-06T03:34:13+00:00"
+    ):
+        _round("root")
+    payload = visualization_service.heatmap_participation().payload
+    assert payload["row_labels"] == ["silo-1", "silo-2", "silo-3", "silo-4", "silo-5"]
+    assert _cells(payload, "silo-4") == [(None, "missing"), (None, "not_member")]
+    assert _cells(payload, "silo-5") == [(None, "not_member"), (None, "pending")]
+
+
+@pytest.mark.unit
+def test_participation_round_without_cluster_snapshot_estimates_current_cluster(
+    six_silos, alpha_model
+):
+    """cluster_snapshot 없는 이전 라운드만 현재 그룹 설정으로 클러스터 멤버를 추정한다"""
+    _two_tier(["silo-3", "silo-4"])
+    rnd = _round("root")
+    rounds = load_training_rounds()
+    legacy = dict(rounds[rnd.round_id])
+    legacy.pop("cluster_snapshot", None)
+    rounds[rnd.round_id] = legacy
+    save_training_rounds(rounds)
+    silo_group_service.update_group(
+        "l3-edge",
+        SiloGroupRequest(group_id="l3-edge", member_node_ids=["silo-5"], aggregator_node_id="silo-2"),
+    )
+
+    payload = visualization_service.heatmap_participation().payload
+
+    assert payload["row_labels"] == ["silo-1", "silo-2", "silo-5"]
+
+
+@pytest.mark.unit
 def test_participation_no_rounds_returns_empty(six_silos):
     payload = visualization_service.heatmap_participation().payload
 

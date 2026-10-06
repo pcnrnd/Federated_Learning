@@ -142,7 +142,7 @@
 
 참여 매트릭스는 라운드의 `member_snapshot`·기여 기록·`aggregated_from`으로 칸 상태
 (`contributed`·`via_aggregator`·`missing`·`pending`·`not_member`)를 판정한다. 클러스터 멤버는
-라운드 시점 기록이 없어 현재 그룹 설정으로 추정한다. 토폴로지는 `aggregator_node_id`가 있는
+라운드 시점 `cluster_snapshot`을 쓰고, 스냅샷이 없는 이전 라운드만 현재 그룹 설정으로 추정한다. 토폴로지는 `aggregator_node_id`가 있는
 그룹마다 집계자 → 멤버 `aggregation` 간선을 두고 집계자 노드 `role`을 `aggregator`로 표시한다.
 
 **Notion 공인인증 KPI 충족**:

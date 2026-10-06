@@ -69,6 +69,13 @@ def create_round(request: TrainingRoundCreate) -> TrainingRound:
     """학습 라운드 생성 — 모델/그룹 존재 사전 검증"""
     get_model(request.model_name, request.version)
     group = silo_group_service.get_group(request.group_id)
+    members = list(group.member_node_ids)
+    # 집계자는 클러스터 1개만 맡는다 (silo_group_service 규칙) — 집계자 → 멤버 사본
+    clusters = {
+        g.aggregator_node_id: list(g.member_node_ids)
+        for g in silo_group_service.list_groups()
+        if g.aggregator_node_id in members
+    }
 
     entry = TrainingRound(
         round_id=uuid.uuid4().hex,
@@ -82,7 +89,8 @@ def create_round(request: TrainingRoundCreate) -> TrainingRound:
         created_at=_now_iso(),
         notes=request.notes,
         # open 시점 멤버를 동결 — 라운드 도중 그룹이 바뀌어도 진행 중 라운드는 무영향
-        member_snapshot=list(group.member_node_ids),
+        member_snapshot=members,
+        cluster_snapshot=clusters,
     )
     # 라운드 파일의 모든 쓰기는 _round_lock으로 직렬화한다 — 잠금 없이 쓰면
     # 동시 기여/집계의 load→save 와 read-modify-write 경합으로 방금 만든 라운드가
