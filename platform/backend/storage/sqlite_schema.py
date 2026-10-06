@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS metrics (
 CREATE INDEX IF NOT EXISTS idx_metrics_lookup
     ON metrics (model_name, version, metric, timestamp);
 
+-- 자원 샘플 (resource_service 인메모리 창의 선택적 영속, 사일로당 최근 500개만 유지)
+CREATE TABLE IF NOT EXISTS resource_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    silo_id TEXT NOT NULL,
+    cpu_pct REAL NOT NULL,
+    mem_pct REAL NOT NULL,
+    gpu_pct REAL,
+    disk_pct REAL,
+    timestamp TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_resource_samples_silo
+    ON resource_samples (silo_id, id);
+
 CREATE TABLE IF NOT EXISTS resource_limits (
     node_id TEXT PRIMARY KEY,
     payload TEXT NOT NULL,

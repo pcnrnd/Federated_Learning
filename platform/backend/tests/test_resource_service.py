@@ -206,3 +206,82 @@ def test_batch_tick_proceeds_after_pressure_relieved():
     triggered = training_job_service.tick()
 
     assert triggered == ["j1"]
+
+
+# ---------- 선택적 SQLite 영속 (FED_STORAGE=sqlite) ----------
+
+@pytest.mark.unit
+def test_sqlite_mode_keeps_samples_after_restart(monkeypatch):
+    # Arrange
+    monkeypatch.setenv("FED_STORAGE", "sqlite")
+    resource_service.ingest_sample(_sample("silo-1", cpu=10.0, ts="2026-05-14T00:00:00Z"))
+    resource_service.ingest_sample(_sample("silo-1", cpu=20.0, gpu=5.0, ts="2026-05-14T00:01:00Z"))
+    resource_service.ingest_sample(_sample("silo-2", cpu=30.0, ts="2026-05-14T00:00:30Z"))
+
+    # Act: 재시작 — 인메모리 창만 비우고 SQLite 파일은 그대로 둔다
+    resource_service.clear_samples()
+
+    # Assert
+    latest = resource_service.latest_sample("silo-1")
+    assert latest is not None
+    assert (latest.cpu_pct, latest.gpu_pct) == (20.0, 5.0)
+    items, total = resource_service.list_samples("silo-1")
+    assert total == 2
+    assert [s.cpu_pct for s in items] == [10.0, 20.0]
+    assert [s.silo_id for s in resource_service.usage_summary()] == ["silo-1", "silo-2"]
+
+
+@pytest.mark.unit
+def test_sqlite_mode_caps_samples_per_silo(monkeypatch):
+    from storage.settings import get_sqlite_path
+    from storage.sqlite_store import connect
+
+    monkeypatch.setenv("FED_STORAGE", "sqlite")
+    cap = resource_service._MAX_SAMPLES_PER_SILO
+    assert cap == 500
+    # 상한까지는 한 연결로 미리 채운다 (ingest 500회는 연결을 500번 열어 느리다)
+    with connect(get_sqlite_path()) as conn:
+        conn.execute("BEGIN")
+        conn.executemany(
+            "INSERT INTO resource_samples (silo_id, cpu_pct, mem_pct, timestamp) VALUES (?, ?, ?, ?)",
+            [("silo-1", 10.0, 10.0, f"t{i:04d}") for i in range(cap)],
+        )
+        conn.execute("COMMIT")
+    resource_service.ingest_sample(_sample("silo-2", ts="t0000"))
+    for i in range(cap, cap + 3):
+        resource_service.ingest_sample(_sample("silo-1", ts=f"t{i:04d}"))
+
+    resource_service.clear_samples()
+
+    items, total = resource_service.list_samples("silo-1", limit=cap + 10)
+    assert total == cap
+    assert (items[0].timestamp, items[-1].timestamp) == ("t0003", f"t{cap + 2:04d}")
+    assert resource_service.list_samples("silo-2")[1] == 1
+
+
+@pytest.mark.unit
+def test_memory_mode_stays_volatile_without_sqlite_file(monkeypatch):
+    from storage.settings import get_sqlite_path
+
+    monkeypatch.delenv("FED_STORAGE", raising=False)
+    resource_service.ingest_sample(_sample("silo-1"))
+    assert resource_service.latest_sample("silo-1") is not None
+
+    resource_service.clear_samples()
+
+    assert resource_service.latest_sample("silo-1") is None
+    assert resource_service.usage_summary() == []
+    assert not get_sqlite_path().exists()
+
+
+@pytest.mark.unit
+def test_sqlite_failure_falls_back_to_memory(monkeypatch, tmp_path):
+    monkeypatch.setenv("FED_STORAGE", "sqlite")
+    # 디렉터리를 DB 경로로 주면 연결이 실패한다
+    monkeypatch.setattr(resource_service, "get_sqlite_path", lambda: tmp_path)
+
+    resource_service.ingest_sample(_sample("silo-1", cpu=42.0))
+
+    latest = resource_service.latest_sample("silo-1")
+    assert latest is not None and latest.cpu_pct == 42.0
+    assert resource_service.list_samples("silo-1")[1] == 1

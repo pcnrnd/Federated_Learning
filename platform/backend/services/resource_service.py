@@ -6,7 +6,9 @@
   * 임계값 초과 시 ResourceAlert + 감사 로그 발행
   * Batch Scheduler가 호출하는 `is_silo_available` 자원 게이트 헬퍼
 
-샘플은 휘발성이며 (프로세스 재시작 시 사라짐), Prometheus 등 영구 저장은 외부 도구에 위임한다.
+샘플은 기본적으로 휘발성(인메모리)이다. FED_STORAGE=sqlite 이면 메트릭 저장소(metric_store)와 같은
+규칙으로 SQLite `resource_samples`에도 기록하고 조회해 재시작 후에도 남는다(사일로당 최근 500개).
+장기 보관은 Prometheus 등 외부 도구에 위임한다.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from models.resource_schemas import (
     ResourceUsageSummary,
 )
 from services import audit_logger
+from storage.settings import get_backend, get_sqlite_path
 
 logger = logging.getLogger(__name__)
 
@@ -118,15 +121,73 @@ def _check_against_limit(
     return triggered
 
 
+_SAMPLE_COLUMNS = "silo_id, cpu_pct, mem_pct, gpu_pct, disk_pct, timestamp"
+
+
+def _persist_sqlite(sample: ResourceSample) -> None:
+    """SQLite resource_samples에 1건 기록하고 그 사일로는 최근 _MAX_SAMPLES_PER_SILO개만 남긴다."""
+    if get_backend() != "sqlite":
+        return
+    try:
+        from storage.sqlite_store import connect
+
+        with connect(get_sqlite_path()) as conn:
+            conn.execute(
+                f"INSERT INTO resource_samples ({_SAMPLE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    sample.silo_id,
+                    sample.cpu_pct,
+                    sample.mem_pct,
+                    sample.gpu_pct,
+                    sample.disk_pct,
+                    sample.timestamp,
+                ),
+            )
+            conn.execute(
+                """
+                DELETE FROM resource_samples
+                WHERE silo_id = ? AND id NOT IN (
+                    SELECT id FROM resource_samples WHERE silo_id = ? ORDER BY id DESC LIMIT ?
+                )
+                """,
+                (sample.silo_id, sample.silo_id, _MAX_SAMPLES_PER_SILO),
+            )
+    except Exception as exc:  # noqa: BLE001 — 영속 실패는 수집을 막지 않음
+        logger.warning("리소스 샘플 SQLite 영속 실패: %s", exc)
+
+
+def _query_sqlite(where: str, params: tuple[object, ...], order: str = "ASC") -> list[ResourceSample]:
+    """SQLite에서 샘플을 삽입 순서로 읽는다. sqlite 모드가 아니거나 실패하면 빈 목록(호출자가 메모리 사용).
+
+    where·order는 이 모듈의 고정 문자열만 받는다 — 값은 params로 바인딩.
+    """
+    if get_backend() != "sqlite":
+        return []
+    try:
+        from storage.sqlite_store import connect
+
+        sql = f"SELECT {_SAMPLE_COLUMNS} FROM resource_samples WHERE {where} ORDER BY id {order}"
+        with connect(get_sqlite_path()) as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [ResourceSample(**dict(r)) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("리소스 샘플 SQLite 조회 실패: %s", exc)
+        return []
+
+
 def ingest_sample(sample: ResourceSample) -> dict[str, list[str]]:
     """리소스 샘플을 저장하고 임계값 평가 → 발화된 알림 id 반환"""
     with _lock:
         _samples[sample.silo_id].append(sample)
         triggered = _check_against_limit(sample.silo_id, sample)
+    _persist_sqlite(sample)
     return {"alerts": [a.alert_id for a in triggered]}
 
 
 def latest_sample(silo_id: str) -> ResourceSample | None:
+    persisted = _query_sqlite("silo_id = ?", (silo_id,), "DESC LIMIT 1")
+    if persisted:
+        return persisted[0]
     with _lock:
         bucket = _samples.get(silo_id)
         if not bucket:
@@ -142,11 +203,13 @@ def list_samples(
     offset: int = 0,
 ) -> tuple[list[ResourceSample], int]:
     """사일로 리소스 샘플을 시간 범위·페이지네이션으로 조회한다."""
-    with _lock:
-        bucket = _samples.get(silo_id)
-        if not bucket:
-            return [], 0
-        items = list(bucket)
+    items = _query_sqlite("silo_id = ?", (silo_id,))
+    if not items:
+        with _lock:
+            bucket = _samples.get(silo_id)
+            if not bucket:
+                return [], 0
+            items = list(bucket)
     items.sort(key=lambda s: s.timestamp)
     if start_time:
         items = [s for s in items if s.timestamp >= start_time]
@@ -229,8 +292,12 @@ def group_has_pressure(member_silo_ids: list[str]) -> bool:
 
 def usage_summary() -> list[ResourceUsageSummary]:
     summaries: list[ResourceUsageSummary] = []
+    # 사일로마다 가장 최근 1건 — 그 사일로 목록만 쓴다
+    persisted = _query_sqlite(
+        "id IN (SELECT MAX(id) FROM resource_samples GROUP BY silo_id)", ()
+    )
     with _lock:
-        active_silos = list(_samples.keys())
+        active_silos = [s.silo_id for s in persisted] or list(_samples.keys())
     for silo_id in active_silos:
         sample = latest_sample(silo_id)
         if sample is None:
