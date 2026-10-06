@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { TopologyEdgeApi, TopologyNodeApi, TopologyRole } from '@/api/client'
-import { VIZ_TOPOLOGY, layoutVizTopology } from '@/lib/vizTopology'
+import { VIZ_TOPOLOGY, layoutVizTopology, vizLegendKinds } from '@/lib/vizTopology'
 
 const { gapX, rowGap, marginX, marginTop } = VIZ_TOPOLOGY
 
@@ -161,5 +161,51 @@ describe('layoutVizTopology', () => {
     const layout = layoutVizTopology({ nodes: [], edges: [] })
     expect(layout.nodes).toEqual([])
     expect(layout.edges).toEqual([])
+  })
+})
+
+describe('vizLegendKinds', () => {
+  test('lists only the edge kinds that are drawn, in legend order', () => {
+    const layout = layoutVizTopology({
+      nodes: [central, node('silo-1'), node('silo-2'), group('g'), node('deploy::a', 'deployment')],
+      edges: [
+        edge('deploy::a', 'silo-1', 'deployment'),
+        edge('group::g', 'silo-1', 'group'),
+        edge('group::g', 'silo-2', 'group'),
+      ],
+    })
+
+    expect(vizLegendKinds(layout.edges)).toEqual(['trunk', 'group', 'deployment'])
+  })
+
+  test('omits running deployments when the response has none', () => {
+    const layout = layoutVizTopology({
+      nodes: [central, node('silo-1'), group('g')],
+      edges: [edge('group::g', 'silo-1', 'group')],
+    })
+
+    expect(vizLegendKinds(layout.edges)).toEqual(['trunk', 'group'])
+  })
+
+  test('omits the central link without a central server', () => {
+    const layout = layoutVizTopology({
+      nodes: [node('silo-1', 'aggregator'), node('silo-2'), group('g')],
+      edges: [edge('group::g', 'silo-1', 'group'), edge('silo-1', 'silo-2', 'aggregation')],
+    })
+
+    expect(vizLegendKinds(layout.edges)).toEqual(['group', 'aggregation'])
+  })
+
+  test('omits group membership when the only group is folded into its aggregator', () => {
+    const layout = layoutVizTopology({
+      nodes: [central, node('silo-1', 'aggregator'), node('silo-2'), group('edge-a')],
+      edges: [edge('group::edge-a', 'silo-2', 'group'), edge('silo-1', 'silo-2', 'aggregation')],
+    })
+
+    expect(vizLegendKinds(layout.edges)).toEqual(['trunk', 'aggregation'])
+  })
+
+  test('is empty for an empty payload', () => {
+    expect(vizLegendKinds(layoutVizTopology({ nodes: [], edges: [] }).edges)).toEqual([])
   })
 })

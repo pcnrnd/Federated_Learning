@@ -21,6 +21,13 @@ export const VIZ_TOPOLOGY = {
 /** trunk = 중앙 서버 → 1단(그룹·직결 사일로). 서버 응답에는 없고 계층을 보여주려 그린다 */
 export type VizEdgeKind = 'trunk' | 'group' | 'aggregation' | 'deployment'
 
+const LEGEND_ORDER: VizEdgeKind[] = ['trunk', 'group', 'aggregation', 'deployment']
+
+/** 범례에 둘 간선 종류 — 실제로 그린 간선만, 범례 순서대로 (중앙 연결은 중앙 서버가 있을 때만 그려진다) */
+export function vizLegendKinds(edges: VizPlacedEdge[]): VizEdgeKind[] {
+  return LEGEND_ORDER.filter((kind) => edges.some((e) => e.kind === kind))
+}
+
 export interface VizPlacedNode {
   id: string
   label: string

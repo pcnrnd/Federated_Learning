@@ -1,12 +1,12 @@
-import type { VizEdgeKind, VizPlacedNode, VizTopologyLayout } from '@/lib/vizTopology'
+import { vizLegendKinds, type VizEdgeKind, type VizPlacedNode, type VizTopologyLayout } from '@/lib/vizTopology'
 import { siloColorVar } from '@/lib/chartTheme'
 
-const EDGE_LEGEND: Array<{ kind: VizEdgeKind; label: string }> = [
-  { kind: 'trunk', label: '중앙 연결' },
-  { kind: 'group', label: '그룹 소속' },
-  { kind: 'aggregation', label: '집계자 경유' },
-  { kind: 'deployment', label: '실행 중 배포' },
-]
+const EDGE_LABEL: Record<VizEdgeKind, string> = {
+  trunk: '중앙 연결',
+  group: '그룹 소속',
+  aggregation: '집계자 경유',
+  deployment: '실행 중 배포',
+}
 
 const SILO_RADIUS = 14
 const AGGREGATOR_RADIUS = 16
@@ -80,18 +80,21 @@ interface LiveTopologyProps {
 
 /** 실서버 연합 구성: 중앙 서버 → 그룹 → 집계자 → 사일로, 실행 중 배포 */
 export function LiveTopology({ layout }: LiveTopologyProps) {
+  const legendKinds = vizLegendKinds(layout.edges)
   return (
     <>
-      <div className="viz-legend" aria-label="연결 범례">
-        {EDGE_LEGEND.map(({ kind, label }) => (
-          <span key={kind} className="viz-legend-item">
-            <svg width="24" height="8" aria-hidden="true">
-              <line className={`viz-edge viz-edge--${kind}`} x1="0" y1="4" x2="24" y2="4" />
-            </svg>
-            {label}
-          </span>
-        ))}
-      </div>
+      {legendKinds.length > 0 && (
+        <div className="viz-legend" aria-label="연결 범례">
+          {legendKinds.map((kind) => (
+            <span key={kind} className="viz-legend-item">
+              <svg width="24" height="8" aria-hidden="true">
+                <line className={`viz-edge viz-edge--${kind}`} x1="0" y1="4" x2="24" y2="4" />
+              </svg>
+              {EDGE_LABEL[kind]}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="viz-topology">
         <svg
           width={layout.width}
