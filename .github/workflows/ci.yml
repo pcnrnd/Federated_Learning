@@ -1,7 +1,7 @@
 # GitHub Actions — 연합컴퓨팅 플랫폼 CI
 #
 # 백엔드(platform/backend, FastAPI)와 프론트엔드(platform/, Vite+React) 두 갈래.
-# 게이트: pytest(커버리지 ≥80%) · 스모크 · ruff check · tsc · vitest.
+# 게이트: pytest(커버리지 ≥80%) · 스모크 · ruff check · tsc · vitest · build.
 # `ruff format --check`는 게이트에서 제외 — 전 파일 일괄 포맷은 diff 추적성을 해치므로
 # 별도 결정 후 도입한다 (platform/backend/ci/ruff.toml 참조).
 
@@ -129,3 +129,6 @@ jobs:
 
       - name: Unit tests (vitest)
         run: npm test
+
+      - name: Build
+        run: npm run build

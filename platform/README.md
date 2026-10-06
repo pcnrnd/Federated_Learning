@@ -29,6 +29,9 @@ npm run build      # tsc -b && vite build → dist/
 npm run preview    # build 결과 미리보기
 ```
 
+- 실서버 연결 화면은 백엔드 주소를 넣어 빌드해야 합니다: `VITE_API_BASE=<백엔드 주소> npm run build:dashboard`
+- 결과(`backend/static/dist`)는 백엔드 `/dashboard`가 서빙합니다(dist를 처음 만들었다면 백엔드 재시작).
+
 > 모듈 경로는 `@/` 별칭(`tsconfig.json` + `vite.config.ts`)으로 `src/`를 가리킵니다.
 > 예: `import { aggregate } from '@/lib/aggregation'`
 
