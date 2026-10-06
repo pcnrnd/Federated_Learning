@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from config.monitoring_manager import load_baselines, save_baselines
 from models.monitoring_schemas import (
     BaselineRequest,
+    BaselineSummary,
     DistributionStats,
     DriftReport,
     DriftSeverity,
@@ -55,6 +56,21 @@ def set_baseline(request: BaselineRequest) -> None:
         request.version,
         request.feature,
     )
+
+
+def list_baselines(
+    *, model_name: str | None = None, version: str | None = None
+) -> list[BaselineSummary]:
+    """등록된 베이스라인의 model·version·feature 목록 (필터는 주어진 것만 적용)"""
+    items = []
+    for key, b in load_baselines().items():
+        m, v, f = key.split("::", 2)
+        if (model_name and m != model_name) or (version and v != version):
+            continue
+        items.append(
+            BaselineSummary(model_name=m, version=v, feature=f, bin_count=len(b["bin_counts"]))
+        )
+    return sorted(items, key=lambda s: (s.model_name, s.version, s.feature))
 
 
 def get_baseline(model_name: str, version: str, feature: str) -> dict[str, list]:

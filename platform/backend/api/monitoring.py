@@ -3,7 +3,7 @@
 엔드포인트 분류:
   * 수집: POST /metrics, POST /distribution
   * 조회: GET /metrics, GET /summary, GET /audit, GET /retrain-triggers
-  * 드리프트: POST /baselines, POST /drift
+  * 드리프트: POST/GET /baselines, POST /drift
   * 알림 규칙: POST/GET/DELETE /rules
   * 알림 인스턴스: GET /alerts, POST /alerts/{id}/ack
 """
@@ -25,6 +25,7 @@ from models.monitoring_schemas import (
     Alert,
     AlertRule,
     BaselineRequest,
+    BaselineSummary,
     DistributionStats,
     DriftReport,
     MetricIngest,
@@ -108,6 +109,15 @@ def metrics_summary(model_name: str, version: str) -> MetricsSummaryResponse:
 def set_baseline_endpoint(request: BaselineRequest) -> OkResponse:
     drift_detector.set_baseline(request)
     return OkResponse(ok=True)
+
+
+@router.get("/baselines", response_model=list[BaselineSummary])
+def list_baselines_endpoint(
+    model_name: str | None = Query(default=None),
+    version: str | None = Query(default=None),
+) -> list[BaselineSummary]:
+    """등록된 베이스라인 목록 — 분포 값은 GET /api/visualizations/histogram 으로 조회"""
+    return drift_detector.list_baselines(model_name=model_name, version=version)
 
 
 @router.post("/drift", response_model=DriftReport)

@@ -55,6 +55,15 @@ def heatmap_endpoint(model_name: str, version: str) -> ChartEnvelope:
     )
 
 
+@router.get("/heatmap/participation", response_model=ChartEnvelope)
+def heatmap_participation_endpoint(
+    group_id: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> ChartEnvelope:
+    """사일로 × 라운드 참여 매트릭스 (최근 limit개 라운드, 오래된 → 최근)"""
+    return visualization_service.heatmap_participation(group_id=group_id, limit=limit)
+
+
 @router.get("/topology", response_model=ChartEnvelope)
 def topology_endpoint() -> ChartEnvelope:
     return visualization_service.topology()

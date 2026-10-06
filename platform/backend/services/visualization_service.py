@@ -12,10 +12,14 @@ from fastapi import HTTPException
 from config.federated_manager import load_silo_groups
 from config.monitoring_manager import load_baselines
 from config.server_manager import load_servers
+from models.federated_schemas import TrainingRound
 from models.visualization_schemas import (
     ChartEnvelope,
     HeatmapData,
     HistogramData,
+    ParticipationCellStatus,
+    ParticipationHeatmapData,
+    ParticipationRoundMeta,
     SiloBarData,
     SiloBarItem,
     TimeSeriesData,
@@ -154,10 +158,95 @@ def heatmap_silo_metric(
     )
 
 
+_CLOSED_ROUND_STATUSES = ("completed", "failed")
+
+
+def _round_members(
+    r: TrainingRound, groups: dict[str, Any], via: set[str]
+) -> set[str]:
+    """라운드에 참여해야 했던 사일로 범위.
+
+    스냅샷(없으면 현재 그룹 멤버) ∪ 스냅샷 안 집계자가 맡은 클러스터 멤버 ∪ 실제 대리 제출 출처.
+    클러스터 멤버는 라운드 시점 기록이 없어 **현재 그룹 설정으로 추정**한다.
+    """
+    snapshot = r.member_snapshot
+    if snapshot is None:  # 스냅샷 도입 이전 라운드 → 현재 그룹 멤버로 대체
+        snapshot = groups.get(r.group_id, {}).get("member_node_ids", [])
+    members = set(snapshot) | via
+    for g in groups.values():
+        if g.get("aggregator_node_id") in snapshot:
+            members.update(g.get("member_node_ids", []))
+    return members
+
+
+def _participation_cell(
+    silo_id: str,
+    r: TrainingRound,
+    members: set[str],
+    samples: dict[str, int],
+    via: set[str],
+) -> tuple[float | None, ParticipationCellStatus]:
+    """판정 순서: contributed → via_aggregator → not_member → missing → pending"""
+    if silo_id in samples:
+        return float(samples[silo_id]), "contributed"
+    if silo_id in via:
+        return None, "via_aggregator"
+    if silo_id not in members:
+        return None, "not_member"
+    if r.status in _CLOSED_ROUND_STATUSES:
+        return None, "missing"
+    return None, "pending"
+
+
+def heatmap_participation(*, group_id: str | None = None, limit: int = 20) -> ChartEnvelope:
+    """행=사일로, 열=최근 limit개 라운드(오래된 → 최근), 값=직접 기여 표본수.
+
+    집계자 경유 사일로는 개별 표본수를 서버가 모르므로 값 없이 via_aggregator로 표시한다.
+    클러스터 멤버의 라운드 참여 범위는 현재 그룹 설정 기준 추정이다.
+    """
+    rounds = training_round_service.list_rounds(group_id=group_id)[:limit][::-1]
+    groups = load_silo_groups()
+
+    columns = []
+    for r in rounds:
+        contributions = training_round_service.list_contributions(r.round_id)
+        samples = {c.silo_id: c.sample_count for c in contributions}
+        via = {s for c in contributions for s in c.aggregated_from}
+        columns.append((r, _round_members(r, groups, via), samples, via))
+
+    rows = sorted(set().union(*(members for _, members, _, _ in columns)))
+    matrix: list[list[float | None]] = []
+    cell_status: list[list[ParticipationCellStatus]] = []
+    for silo_id in rows:
+        cells = [_participation_cell(silo_id, *col) for col in columns]
+        matrix.append([value for value, _ in cells])
+        cell_status.append([status for _, status in cells])
+
+    data = ParticipationHeatmapData(
+        row_labels=rows,
+        col_labels=[r.round_id[:8] for r in rounds],
+        col_meta=[
+            ParticipationRoundMeta(
+                round_id=r.round_id, status=r.status, created_at=r.created_at, group_id=r.group_id
+            )
+            for r in rounds
+        ],
+        matrix=matrix,
+        cell_status=cell_status,
+    )
+    return ChartEnvelope(
+        chart_type="heatmap",
+        title="사일로 × 라운드 참여",
+        x_axis="round",
+        y_axis="silo_id",
+        payload=data.model_dump(),
+    )
+
+
 # ---------- 5. topology ----------
 
 def topology() -> ChartEnvelope:
-    """사일로 그룹 토폴로지: 그룹 → 멤버 사일로, 사일로 → 배포 컨테이너"""
+    """사일로 그룹 토폴로지: 그룹 → 멤버 사일로, 집계자 → 클러스터 멤버, 배포 → 사일로"""
     servers = load_servers()
     groups_raw = load_silo_groups()
     deployments = deployment_service.list_deployments()
@@ -190,6 +279,24 @@ def topology() -> ChartEnvelope:
             )
             if silo_id in nodes:
                 nodes[silo_id] = nodes[silo_id].model_copy(update={"group": group_id})
+
+        # 엣지 클러스터: 집계자 → 멤버 (2단 계층)
+        aggregator = group_data.get("aggregator_node_id")
+        if not aggregator:
+            continue
+        if aggregator in nodes:
+            nodes[aggregator] = nodes[aggregator].model_copy(update={"role": "aggregator"})
+        for silo_id in group_data.get("member_node_ids", []):
+            if silo_id == aggregator:
+                continue
+            edges.append(
+                TopologyEdge(
+                    source=aggregator,
+                    target=silo_id,
+                    kind="aggregation",
+                    metadata={"group_id": group_id},
+                )
+            )
 
     # 배포 → 노드 (running 만)
     for d in deployments:
@@ -226,6 +333,8 @@ def list_available_charts() -> list[dict[str, Any]]:
         {"type": "timeseries", "endpoint": "/api/visualizations/timeseries"},
         {"type": "histogram", "endpoint": "/api/visualizations/histogram"},
         {"type": "silo_bar", "endpoint": "/api/visualizations/silo-bar/resource"},
+        {"type": "silo_bar", "endpoint": "/api/visualizations/silo-bar/round"},
         {"type": "heatmap", "endpoint": "/api/visualizations/heatmap"},
+        {"type": "heatmap", "endpoint": "/api/visualizations/heatmap/participation"},
         {"type": "topology", "endpoint": "/api/visualizations/topology"},
     ]

@@ -240,3 +240,51 @@ def test_models_list_returns_model_entry_shape(client, seeded_model):
     assert "name" in items[0]
     assert "framework" in items[0]
     assert "created_at" in items[0]
+
+
+@pytest.mark.unit
+def test_baselines_list_endpoint_filters_and_omits_distribution(client):
+    for model, version, feature, counts in (
+        ("alpha", "1.0.0", "age", [1, 2, 3, 4, 5]),
+        ("alpha", "1.0.0", "income", [7, 3]),
+        ("beta", "2.0.0", "age", [1, 1, 1]),
+    ):
+        resp = client.post(
+            "/api/monitoring/baselines",
+            json={
+                "model_name": model,
+                "version": version,
+                "feature": feature,
+                "bin_edges": [float(i) for i in range(len(counts) + 1)],
+                "bin_counts": counts,
+            },
+        )
+        assert resp.status_code == 201
+
+    resp = client.get("/api/monitoring/baselines")
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {"model_name": "alpha", "version": "1.0.0", "feature": "age", "bin_count": 5},
+        {"model_name": "alpha", "version": "1.0.0", "feature": "income", "bin_count": 2},
+        {"model_name": "beta", "version": "2.0.0", "feature": "age", "bin_count": 3},
+    ]
+
+    only_beta = client.get(
+        "/api/monitoring/baselines", params={"model_name": "beta", "version": "2.0.0"}
+    )
+    assert [b["feature"] for b in only_beta.json()] == ["age"]
+    assert client.get("/api/monitoring/baselines", params={"version": "9.9.9"}).json() == []
+
+
+@pytest.mark.unit
+def test_participation_heatmap_endpoint_empty_and_limit_bounds(client):
+    resp = client.get("/api/visualizations/heatmap/participation")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["chart_type"] == "heatmap"
+    assert body["payload"]["row_labels"] == []
+    assert body["payload"]["cell_status"] == []
+
+    assert client.get("/api/visualizations/heatmap/participation?limit=0").status_code == 422
+    assert client.get("/api/visualizations/heatmap/participation?limit=101").status_code == 422
+    assert client.get("/api/visualizations/heatmap/participation?limit=100").status_code == 200

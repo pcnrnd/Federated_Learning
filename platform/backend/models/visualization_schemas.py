@@ -4,8 +4,8 @@
   * timeseries     — 시간축 메트릭 추이 (라인 차트)
   * histogram      — 분포 (막대)
   * silo_bar       — 사일로 간 비교 (그룹 막대)
-  * heatmap        — silo × metric 격자
-  * topology       — 사일로 그룹 토폴로지 (노드/엣지)
+  * heatmap        — silo × metric 격자, silo × round 참여 매트릭스
+  * topology       — 사일로 그룹 토폴로지 (노드/엣지, 집계자 계층 포함)
 
 각 차트는 차트 라이브러리(Chart.js / ECharts / Vega-Lite) 무관하게 매핑 가능한
 중립적 JSON 페이로드를 노출한다.
@@ -15,6 +15,8 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from models.federated_schemas import RoundStatus
 
 ChartType = Literal["timeseries", "histogram", "silo_bar", "heatmap", "topology"]
 
@@ -67,12 +69,31 @@ class HeatmapData(BaseModel):
     matrix: list[list[float | None]]
 
 
+ParticipationCellStatus = Literal[
+    "contributed", "via_aggregator", "missing", "pending", "not_member"
+]
+
+
+class ParticipationRoundMeta(BaseModel):
+    round_id: str
+    status: RoundStatus
+    created_at: str
+    group_id: str
+
+
+class ParticipationHeatmapData(HeatmapData):
+    """행=silo_id, 열=라운드(오래된 → 최근), 값=표본수(직접 기여 칸만, 나머지 None)"""
+
+    col_meta: list[ParticipationRoundMeta]
+    cell_status: list[list[ParticipationCellStatus]]
+
+
 # ---------- 5. topology ----------
 
 class TopologyNode(BaseModel):
     id: str
     label: str
-    role: str  # central / client
+    role: str  # central / client / aggregator / group / deployment
     group: str | None = None
     over_budget: bool | None = None
 
@@ -80,7 +101,7 @@ class TopologyNode(BaseModel):
 class TopologyEdge(BaseModel):
     source: str
     target: str
-    kind: Literal["group", "deployment"]
+    kind: Literal["group", "deployment", "aggregation"]
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

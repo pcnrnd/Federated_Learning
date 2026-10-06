@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from config.federated_manager import load_training_rounds, save_training_rounds
 from config.server_manager import save_servers
 from models.federated_schemas import (
     ParameterContribution,
@@ -71,6 +72,10 @@ def test_chart_catalog_has_5_types(six_silos):
     charts = visualization_service.list_available_charts()
     types = {c["type"] for c in charts}
     assert types == {"timeseries", "histogram", "silo_bar", "heatmap", "topology"}
+    # 참여 매트릭스·라운드 막대는 기존 유형(heatmap·silo_bar)의 추가 엔드포인트
+    endpoints = {c["endpoint"] for c in charts}
+    assert "/api/visualizations/heatmap/participation" in endpoints
+    assert "/api/visualizations/silo-bar/round" in endpoints
 
 
 @pytest.mark.unit
@@ -226,6 +231,227 @@ def test_topology_includes_silos_groups_and_running_deployment(six_silos, alpha_
     silo1 = next(n for n in payload["nodes"] if n["id"] == "silo-1")
     assert silo1["over_budget"] is True
 
-    # 엣지 종류
+    # 엣지 종류 — 집계자 있는 클러스터가 없으므로 aggregation 간선 없음
     kinds = {e["kind"] for e in payload["edges"]}
     assert kinds == {"group", "deployment"}
+    assert {n["role"] for n in payload["nodes"] if n["id"].startswith("silo-")} == {"client"}
+
+
+@pytest.mark.unit
+def test_topology_two_tier_cluster_has_aggregation_edges(six_silos):
+    """루트 그룹 [silo-1, silo-2] + 엣지 클러스터(집계자 silo-2 → silo-3, silo-4)"""
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="root", member_node_ids=["silo-1", "silo-2"])
+    )
+    silo_group_service.create_group(
+        SiloGroupRequest(
+            group_id="l3-edge",
+            member_node_ids=["silo-3", "silo-4"],
+            aggregator_node_id="silo-2",
+        )
+    )
+
+    payload = visualization_service.topology().payload
+
+    roles = {n["id"]: n["role"] for n in payload["nodes"]}
+    assert roles["silo-2"] == "aggregator"
+    assert roles["silo-1"] == roles["silo-3"] == "client"
+
+    aggregation = [e for e in payload["edges"] if e["kind"] == "aggregation"]
+    assert sorted((e["source"], e["target"]) for e in aggregation) == [
+        ("silo-2", "silo-3"),
+        ("silo-2", "silo-4"),
+    ]
+    assert all(e["metadata"] == {"group_id": "l3-edge"} for e in aggregation)
+    # 그룹 간선은 그대로 — 클러스터 그룹 노드도 멤버로 이어진다
+    group_edges = {(e["source"], e["target"]) for e in payload["edges"] if e["kind"] == "group"}
+    assert ("group::l3-edge", "silo-3") in group_edges
+    assert ("group::root", "silo-2") in group_edges
+
+
+# ---------- 참여 매트릭스 (사일로 × 라운드) ----------
+
+
+def _round(group_id: str, *, min_contributions: int = 1):
+    return training_round_service.create_round(
+        TrainingRoundCreate(
+            model_name="alpha",
+            version="1.0.0",
+            group_id=group_id,
+            min_contributions=min_contributions,
+        )
+    )
+
+
+def _contribute(round_id: str, silo_id: str, samples: int, aggregated_from=()) -> None:
+    training_round_service.submit_contribution(
+        ParameterContribution(
+            round_id=round_id,
+            silo_id=silo_id,
+            sample_count=samples,
+            parameters=[1.0],
+            aggregated_from=list(aggregated_from),
+        )
+    )
+
+
+def _cells(payload: dict, silo_id: str) -> list[tuple]:
+    i = payload["row_labels"].index(silo_id)
+    return list(zip(payload["matrix"][i], payload["cell_status"][i]))
+
+
+def _two_tier(cluster_members: list[str]) -> None:
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="root", member_node_ids=["silo-1", "silo-2"])
+    )
+    silo_group_service.create_group(
+        SiloGroupRequest(
+            group_id="l3-edge",
+            member_node_ids=cluster_members,
+            aggregator_node_id="silo-2",
+        )
+    )
+
+
+@pytest.mark.unit
+def test_participation_all_six_silos_contributed(six_silos, alpha_model):
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="g6", member_node_ids=[f"silo-{i}" for i in range(1, 7)])
+    )
+    rnd = _round("g6")
+    for i in range(1, 7):
+        _contribute(rnd.round_id, f"silo-{i}", 100 * i)
+    training_round_service.aggregate_round(rnd.round_id)
+
+    env = visualization_service.heatmap_participation()
+
+    assert env.chart_type == "heatmap"
+    assert (env.x_axis, env.y_axis) == ("round", "silo_id")
+    payload = env.payload
+    assert payload["row_labels"] == [f"silo-{i}" for i in range(1, 7)]
+    assert payload["col_labels"] == [rnd.round_id[:8]]
+    assert payload["col_meta"] == [
+        {
+            "round_id": rnd.round_id,
+            "status": "completed",
+            "created_at": rnd.created_at,
+            "group_id": "g6",
+        }
+    ]
+    assert payload["matrix"] == [[100.0 * i] for i in range(1, 7)]
+    assert payload["cell_status"] == [["contributed"]] * 6
+
+
+@pytest.mark.unit
+def test_participation_missing_silo_in_completed_round(six_silos, alpha_model):
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="g6", member_node_ids=[f"silo-{i}" for i in range(1, 7)])
+    )
+    rnd = _round("g6", min_contributions=2)
+    for i in range(1, 6):
+        _contribute(rnd.round_id, f"silo-{i}", 100)
+    training_round_service.aggregate_round(rnd.round_id)
+
+    payload = visualization_service.heatmap_participation().payload
+
+    assert _cells(payload, "silo-6") == [(None, "missing")]
+    assert _cells(payload, "silo-5") == [(100.0, "contributed")]
+
+
+@pytest.mark.unit
+def test_participation_via_aggregator(six_silos, alpha_model):
+    """집계자 silo-2가 클러스터 멤버 2곳 중 silo-3만 대리 제출 → silo-4는 missing"""
+    _two_tier(["silo-3", "silo-4"])
+    rnd = _round("root", min_contributions=2)
+    _contribute(rnd.round_id, "silo-1", 500)
+    _contribute(rnd.round_id, "silo-2", 1100, aggregated_from=["silo-3"])
+    training_round_service.aggregate_round(rnd.round_id)
+
+    payload = visualization_service.heatmap_participation().payload
+
+    # 행 = 스냅샷(silo-1, silo-2) + 집계자 silo-2의 클러스터 멤버(silo-3, silo-4)
+    assert payload["row_labels"] == ["silo-1", "silo-2", "silo-3", "silo-4"]
+    assert _cells(payload, "silo-2") == [(1100.0, "contributed")]
+    assert _cells(payload, "silo-3") == [(None, "via_aggregator")]
+    assert _cells(payload, "silo-4") == [(None, "missing")]
+
+
+@pytest.mark.unit
+def test_participation_open_round_pending_and_column_order(six_silos, alpha_model):
+    """완료 라운드(g-a) → 진행 중 라운드(g-b) 순으로 열이 놓이고, 멤버 아닌 칸은 not_member"""
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="g-a", member_node_ids=["silo-1", "silo-2"])
+    )
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="g-b", member_node_ids=["silo-2", "silo-3"])
+    )
+    with patch.object(
+        training_round_service, "_now_iso", return_value="2026-10-06T03:29:13+00:00"
+    ):
+        old = _round("g-a")
+    _contribute(old.round_id, "silo-1", 500)
+    training_round_service.aggregate_round(old.round_id)
+    with patch.object(
+        training_round_service, "_now_iso", return_value="2026-10-06T03:34:13+00:00"
+    ):
+        new = _round("g-b")
+    _contribute(new.round_id, "silo-2", 600)
+
+    payload = visualization_service.heatmap_participation().payload
+
+    assert payload["col_labels"] == [old.round_id[:8], new.round_id[:8]]
+    assert [m["status"] for m in payload["col_meta"]] == ["completed", "open"]
+    assert payload["row_labels"] == ["silo-1", "silo-2", "silo-3"]
+    assert _cells(payload, "silo-1") == [(500.0, "contributed"), (None, "not_member")]
+    assert _cells(payload, "silo-2") == [(None, "missing"), (600.0, "contributed")]
+    assert _cells(payload, "silo-3") == [(None, "not_member"), (None, "pending")]
+
+    # group_id 필터 + limit(최근 라운드부터 고름)
+    only_a = visualization_service.heatmap_participation(group_id="g-a").payload
+    assert only_a["col_labels"] == [old.round_id[:8]]
+    latest = visualization_service.heatmap_participation(limit=1).payload
+    assert latest["col_labels"] == [new.round_id[:8]]
+
+
+@pytest.mark.unit
+def test_participation_open_round_cluster_member_pending(six_silos, alpha_model):
+    """진행 중 라운드에서 아직 대리 제출되지 않은 클러스터 멤버는 pending"""
+    _two_tier(["silo-3"])
+    _round("root")
+
+    payload = visualization_service.heatmap_participation().payload
+
+    assert payload["row_labels"] == ["silo-1", "silo-2", "silo-3"]
+    assert payload["cell_status"] == [["pending"], ["pending"], ["pending"]]
+    assert payload["matrix"] == [[None], [None], [None]]
+
+
+@pytest.mark.unit
+def test_participation_legacy_round_falls_back_to_current_group(six_silos, alpha_model):
+    """member_snapshot 없는 옛 라운드는 현재 그룹 멤버를 행으로 쓴다"""
+    silo_group_service.create_group(
+        SiloGroupRequest(group_id="g1", member_node_ids=["silo-1", "silo-2"])
+    )
+    rnd = _round("g1")
+    rounds = load_training_rounds()
+    legacy = dict(rounds[rnd.round_id])
+    legacy.pop("member_snapshot", None)
+    rounds[rnd.round_id] = legacy
+    save_training_rounds(rounds)
+
+    payload = visualization_service.heatmap_participation().payload
+
+    assert payload["row_labels"] == ["silo-1", "silo-2"]
+
+
+@pytest.mark.unit
+def test_participation_no_rounds_returns_empty(six_silos):
+    payload = visualization_service.heatmap_participation().payload
+
+    assert payload == {
+        "row_labels": [],
+        "col_labels": [],
+        "col_meta": [],
+        "matrix": [],
+        "cell_status": [],
+    }

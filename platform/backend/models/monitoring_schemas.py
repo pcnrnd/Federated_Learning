@@ -65,6 +65,15 @@ class BaselineRequest(BaseModel):
     bin_counts: list[int]
 
 
+class BaselineSummary(BaseModel):
+    """등록된 베이스라인 목록 항목 (분포 값 제외)"""
+
+    model_name: str
+    version: str
+    feature: str
+    bin_count: int
+
+
 class DriftReport(BaseModel):
     model_name: str
     version: str
