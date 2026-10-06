@@ -38,6 +38,7 @@
 | GET | `/api/monitoring/metrics` | 필터링 조회 |
 | GET | `/api/monitoring/summary` | accuracy/latency/throughput 집계 |
 | POST | `/api/monitoring/baselines` | 드리프트 기준 분포 등록 |
+| GET | `/api/monitoring/baselines` | 기준 분포 목록 (`model_name`·`version` 선택 필터, 분포 값 제외) |
 | POST | `/api/monitoring/drift` | PSI 평가 + 자동 알림/재교육 트리거 |
 | POST | `/api/monitoring/rules` | 알림 규칙 upsert |
 | GET | `/api/monitoring/rules` | 규칙 목록 |
@@ -143,13 +144,35 @@
 
 | Method | Path | 설명 |
 |---|---|---|
-| GET | `/api/visualizations` | 5종 차트 카탈로그 |
+| GET | `/api/visualizations` | 차트 카탈로그 (유형 5종, 엔드포인트 7개) |
 | GET | `/api/visualizations/timeseries` | 메트릭 시계열 |
 | GET | `/api/visualizations/histogram` | 분포 히스토그램 |
 | GET | `/api/visualizations/silo-bar/resource` | 사일로별 리소스 |
 | GET | `/api/visualizations/silo-bar/round` | 라운드 기여 |
 | GET | `/api/visualizations/heatmap` | 사일로 × 메트릭 격자 |
-| GET | `/api/visualizations/topology` | 그룹/배포 토폴로지 |
+| GET | `/api/visualizations/heatmap/participation` | 사일로 × 라운드 참여 매트릭스 (`group_id` 선택, `limit` 1~100·기본 20) |
+| GET | `/api/visualizations/topology` | 그룹/집계자/배포 토폴로지 |
+
+### 참여 매트릭스 (`/heatmap/participation`)
+
+최근 `limit`개 라운드를 오래된 → 최근 순으로 열에 놓는다. 라운드가 없으면 빈 배열.
+`payload`는 `HeatmapData`에 `col_meta`(라운드 id·상태·생성 시각·그룹)와 `cell_status`를 더한 형태다.
+
+| `cell_status` | 의미 | `matrix` 값 |
+|---|---|---|
+| `contributed` | 라운드에 직접 기여 | `sample_count` (집계자는 자신 + 하위 합계) |
+| `via_aggregator` | 다른 사일로 기여의 `aggregated_from`에 포함 | `null` |
+| `missing` | `completed`·`failed` 라운드의 멤버인데 기여 없음 | `null` |
+| `pending` | `open`·`aggregating` 라운드의 멤버, 아직 기여 없음 | `null` |
+| `not_member` | 그 라운드의 멤버 아님 | `null` |
+
+판정 순서는 위 표 순서다. 라운드 멤버 = `member_snapshot`(없으면 현재 그룹 멤버) ∪ 스냅샷 안 집계자가 맡은 클러스터 멤버 ∪ 실제 `aggregated_from`.
+클러스터 멤버는 라운드 시점 기록이 없어 **현재 그룹 설정으로 추정**한다.
+
+### 토폴로지 (`/topology`)
+
+간선 `kind`: `group`(그룹 → 멤버), `aggregation`(집계자 → 클러스터 멤버, `metadata.group_id`), `deployment`(실행 중 배포 → 사일로).
+노드 `role`: `central`, `client`, `aggregator`(엣지 클러스터 집계자), `group`, `deployment`.
 
 ## 대시보드 통합 (P2)
 

@@ -135,10 +135,15 @@
 
 **5종 차트**:
 1. timeseries — 메트릭 추이 (사일로별 시리즈)
-2. histogram — 분포 (드리프트 베이스라인)
+2. histogram — 분포 (드리프트 베이스라인, 목록은 `GET /api/monitoring/baselines`)
 3. silo_bar — 사일로 간 비교 (리소스/라운드 기여)
-4. heatmap — 사일로 × 메트릭 격자
-5. topology — 그룹/배포/노드 그래프 + over_budget 플래그
+4. heatmap — 사일로 × 메트릭 격자, 사일로 × 라운드 참여 매트릭스(`/heatmap/participation`)
+5. topology — 그룹/집계자/배포/노드 그래프 + over_budget 플래그
+
+참여 매트릭스는 라운드의 `member_snapshot`·기여 기록·`aggregated_from`으로 칸 상태
+(`contributed`·`via_aggregator`·`missing`·`pending`·`not_member`)를 판정한다. 클러스터 멤버는
+라운드 시점 기록이 없어 현재 그룹 설정으로 추정한다. 토폴로지는 `aggregator_node_id`가 있는
+그룹마다 집계자 → 멤버 `aggregation` 간선을 두고 집계자 노드 `role`을 `aggregator`로 표시한다.
 
 **Notion 공인인증 KPI 충족**:
 - 시각화 5종 ✅
