@@ -13,6 +13,7 @@ import { LogsView } from '@/views/LogsView'
 import { ModelsView } from '@/views/ModelsView'
 import { NodesView } from '@/views/NodesView'
 import { SilosView } from '@/views/SilosView'
+import { VisualizationView } from '@/views/VisualizationView'
 import type { TabId } from '@/types/simulation'
 import type { ReactNode } from 'react'
 
@@ -23,6 +24,7 @@ const VIEW_REGISTRY: Record<TabId, ReactNode> = {
   data: <DataView />,
   models: <ModelsView />,
   analytics: <AnalyticsView />,
+  visualization: <VisualizationView />,
   logs: <LogsView />,
 }
 

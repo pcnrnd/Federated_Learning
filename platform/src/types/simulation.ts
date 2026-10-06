@@ -19,6 +19,7 @@ export type TabId =
   | 'data'
   | 'models'
   | 'analytics'
+  | 'visualization'
   | 'logs'
 
 export type ModelStatus = 'deployed' | 'experimental' | 'archived'

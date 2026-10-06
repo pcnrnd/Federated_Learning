@@ -148,3 +148,82 @@ export interface CleaningJobApi {
   dataset_label: string
   updated_at: string
 }
+
+// --- 시각화 5종 (/api/visualizations · 기준 분포 목록) -------------------------
+// 응답 형식 정본: review-system queues/federated-viz-5-screens-plan-20261006.md §응답 형식
+
+export type ChartType = 'timeseries' | 'histogram' | 'silo_bar' | 'heatmap' | 'topology'
+
+export interface ChartEnvelope<P> {
+  chart_type: ChartType
+  title: string
+  x_axis: string
+  y_axis: string
+  payload: P
+}
+
+export interface TimeSeriesPayload {
+  /** silo_id → 시간순 포인트 */
+  series: Record<string, Array<{ timestamp: string; value: number }>>
+}
+
+export interface HistogramPayload {
+  bin_edges: number[]
+  bin_counts: number[]
+}
+
+export interface SiloBarPayload {
+  items: Array<{ silo_id: string; value: number }>
+}
+
+export type ParticipationStatus =
+  | 'contributed'
+  | 'via_aggregator'
+  | 'missing'
+  | 'pending'
+  | 'not_member'
+
+export interface ParticipationRoundMeta {
+  round_id: string
+  status: TrainingRoundSummary['status']
+  created_at: string
+  group_id: string
+}
+
+export interface ParticipationPayload {
+  row_labels: string[]
+  col_labels: string[]
+  col_meta: ParticipationRoundMeta[]
+  /** contributed 칸만 표본수, 나머지는 null */
+  matrix: Array<Array<number | null>>
+  cell_status: ParticipationStatus[][]
+}
+
+export type TopologyRole = 'central' | 'client' | 'aggregator' | 'group' | 'deployment'
+
+export interface TopologyNodeApi {
+  id: string
+  label: string
+  role: TopologyRole
+  group: string | null
+  over_budget: boolean | null
+}
+
+export interface TopologyEdgeApi {
+  source: string
+  target: string
+  kind: 'group' | 'deployment' | 'aggregation'
+  metadata: Record<string, unknown>
+}
+
+export interface TopologyPayload {
+  nodes: TopologyNodeApi[]
+  edges: TopologyEdgeApi[]
+}
+
+export interface BaselineEntryApi {
+  model_name: string
+  version: string
+  feature: string
+  bin_count: number
+}

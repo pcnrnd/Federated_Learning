@@ -232,6 +232,11 @@ export const TAB_META: Record<TabId, { title: string; desc: string; icon: string
     desc: '다수의 학습 연합 라운드에 따른 손실값 감소 수렴 추이 및 글로벌 모델 정확도의 진화를 심도 있게 추적합니다.',
     icon: 'fa-chart-line',
   },
+  visualization: {
+    title: '데이터 시각화',
+    desc: '사일로별 성능 추이, 라운드 참여, 사일로 비교, 연합 토폴로지, 기준 분포를 서버 실측 데이터로 한 화면에서 확인합니다.',
+    icon: 'fa-chart-column',
+  },
   logs: {
     title: '실시간 시스템 로그',
     desc: '중앙 오케스트레이터의 동적 지휘 및 전송 채널 패킷 통신 내역을 전수 모니터링합니다.',

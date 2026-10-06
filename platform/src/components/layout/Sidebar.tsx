@@ -10,6 +10,7 @@ const TAB_ORDER: TabId[] = [
   'data',
   'models',
   'analytics',
+  'visualization',
   'logs',
 ]
 

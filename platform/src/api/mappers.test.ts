@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
 import {
+  baselineKey,
+  compareSiloId,
+  mapHistogram,
+  mapParticipation,
+  mapSiloBar,
+  mapTimeseriesToLines,
   mapApiDeployments,
   mapCleaningJobs,
   mapMetricsToChartPoints,
@@ -11,6 +17,7 @@ import {
   siloIdToNumber,
 } from '@/api/mappers'
 import type {
+  ParticipationPayload,
   CleaningJobApi,
   DeploymentEntryApi,
   MetricSample,
@@ -261,5 +268,153 @@ describe('mapMetricsToMonitorPoints', () => {
       { round: 0, throughput: 51.3, latency: 130.5, drift: 0 },
       { round: 1, throughput: 0, latency: 128.1, drift: 0 },
     ])
+  })
+})
+
+// --- 시각화 5종 ----------------------------------------------------------------
+
+describe('compareSiloId', () => {
+  test('orders silo-2 before silo-10', () => {
+    expect(['silo-10', 'silo-2', 'silo-1'].sort(compareSiloId)).toEqual([
+      'silo-1',
+      'silo-2',
+      'silo-10',
+    ])
+  })
+})
+
+describe('mapTimeseriesToLines', () => {
+  test('aligns silos on a shared time axis with null gaps and scale', () => {
+    // Arrange: silo-1은 두 시점, silo-2는 두 번째 시점만 보냄 (0~1 정확도)
+    const payload = {
+      series: {
+        'silo-2': [{ timestamp: '2026-10-06T03:00:10Z', value: 0.9 }],
+        'silo-1': [
+          { timestamp: '2026-10-06T03:00:00Z', value: 0.5 },
+          { timestamp: '2026-10-06T03:00:10Z', value: 0.61234 },
+        ],
+      },
+    }
+
+    // Act
+    const lines = mapTimeseriesToLines(payload, 100)
+
+    // Assert
+    expect(lines.labels).toEqual(['03:00:00', '03:00:10'])
+    expect(lines.series).toEqual([
+      { siloId: 'silo-1', values: [50, 61.23] },
+      { siloId: 'silo-2', values: [null, 90] },
+    ])
+  })
+
+  test('returns empty axes for empty series', () => {
+    expect(mapTimeseriesToLines({ series: {} })).toEqual({ labels: [], series: [] })
+  })
+})
+
+describe('mapParticipation', () => {
+  // 승인된 응답 형식 ① 예시 그대로
+  const payload: ParticipationPayload = {
+    row_labels: ['silo-1', 'silo-2', 'silo-3'],
+    col_labels: ['3f2a9c1e', '7d4e5f6a'],
+    col_meta: [
+      {
+        round_id: '3f2a9c1e-0000',
+        status: 'completed',
+        created_at: '2026-10-06T03:29:13+00:00',
+        group_id: 'demo-six-silos',
+      },
+      {
+        round_id: '7d4e5f6a-0000',
+        status: 'open',
+        created_at: '2026-10-06T03:34:13+00:00',
+        group_id: 'demo-six-silos',
+      },
+    ],
+    matrix: [
+      [500, null],
+      [1100, 600],
+      [null, null],
+    ],
+    cell_status: [
+      ['contributed', 'pending'],
+      ['contributed', 'contributed'],
+      ['via_aggregator', 'pending'],
+    ],
+  }
+
+  test('maps cells with status, value and intensity relative to the max', () => {
+    const grid = mapParticipation(payload)
+
+    expect(grid.rows.map((r) => r.siloId)).toEqual(['silo-1', 'silo-2', 'silo-3'])
+    expect(grid.rows[0].cells[0]).toEqual({ status: 'contributed', value: 500, intensity: 500 / 1100 })
+    expect(grid.rows[1].cells[0].intensity).toBe(1)
+    expect(grid.rows[2].cells[0]).toEqual({ status: 'via_aggregator', value: null, intensity: 0 })
+    expect(grid.rows[0].cells[1]).toEqual({ status: 'pending', value: null, intensity: 0 })
+  })
+
+  test('summarizes each round column (participated / members)', () => {
+    const [first, second] = mapParticipation(payload).columns
+
+    expect(first).toEqual({
+      roundId: '3f2a9c1e-0000',
+      label: '3f2a9c1e',
+      status: 'completed',
+      createdAt: '2026-10-06T03:29:13+00:00',
+      participated: 3,
+      members: 3,
+    })
+    expect(second.status).toBe('open')
+    expect(second.participated).toBe(1)
+  })
+
+  test('treats missing status cells as not_member and ignores values of non-contributed cells', () => {
+    const grid = mapParticipation({
+      ...payload,
+      matrix: [[500, 999]],
+      cell_status: [['contributed']],
+      row_labels: ['silo-1'],
+    })
+
+    expect(grid.rows[0].cells[1]).toEqual({ status: 'not_member', value: null, intensity: 0 })
+    expect(grid.columns[1].members).toBe(0)
+  })
+
+  test('returns empty grid for no rounds', () => {
+    const grid = mapParticipation({
+      row_labels: [],
+      col_labels: [],
+      col_meta: [],
+      matrix: [],
+      cell_status: [],
+    })
+    expect(grid).toEqual({ columns: [], rows: [] })
+  })
+})
+
+describe('mapSiloBar', () => {
+  test('sorts by silo id and rounds values', () => {
+    const bar = mapSiloBar({
+      items: [
+        { silo_id: 'silo-10', value: 12.345 },
+        { silo_id: 'silo-2', value: 80 },
+      ],
+    })
+    expect(bar).toEqual({ labels: ['silo-2', 'silo-10'], values: [80, 12.35] })
+  })
+})
+
+describe('mapHistogram', () => {
+  test('labels each bin by its edges', () => {
+    const hist = mapHistogram({ bin_edges: [0, 10.5, 21.333], bin_counts: [3, 5] })
+    expect(hist).toEqual({ labels: ['0–10.5', '10.5–21.33'], values: [3, 5] })
+  })
+})
+
+describe('baselineKey', () => {
+  test('matches the server storage key shape', () => {
+    expect(
+      baselineKey({ model_name: 'demo-alpha', version: '1.0.0', feature: 'age', bin_count: 5 }),
+    ).toBe('demo-alpha::1.0.0::age')
   })
 })

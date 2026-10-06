@@ -1,11 +1,18 @@
 import type {
+  BaselineEntryApi,
   CleaningJobApi,
   DeploymentEntryApi,
   DeploymentStatusApi,
+  HistogramPayload,
   MetricSample,
   ModelEntryApi,
+  ParticipationPayload,
+  ParticipationStatus,
   ResourceLimit,
   ResourceUsageSummary,
+  SiloBarPayload,
+  TimeSeriesPayload,
+  TrainingRoundSummary,
 } from '@/api/client'
 import type { SiloDataFields } from '@/store/useDataStore'
 import type {
@@ -202,4 +209,124 @@ export function mapMetricsToMonitorPoints(
     latency: Math.round((ms[i] ?? 0) * 10) / 10,
     drift: 0, // 드리프트 조회는 P0 범위 밖
   }))
+}
+
+// --- 시각화 5종 (/api/visualizations) ----------------------------------------
+
+/** silo-2가 silo-10보다 앞서도록 숫자 인식 정렬 */
+export function compareSiloId(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true })
+}
+
+const round2 = (v: number): number => Math.round(v * 100) / 100
+
+export interface SiloSeries {
+  siloId: string
+  values: Array<number | null>
+}
+
+export interface LineChartInput {
+  /** 공통 시간축 라벨 (HH:MM:SS) */
+  labels: string[]
+  series: SiloSeries[]
+}
+
+/**
+ * 사일로별 시계열 → 공통 시간축 정렬.
+ * 사일로가 보내지 않은 시점은 null — 차트가 spanGaps로 이어 그린다.
+ * `scale`은 표시 단위 변환용 (accuracy 0~1 → % 는 100).
+ */
+export function mapTimeseriesToLines(payload: TimeSeriesPayload, scale = 1): LineChartInput {
+  const siloIds = Object.keys(payload.series).sort(compareSiloId)
+  const timestamps = [
+    ...new Set(siloIds.flatMap((id) => payload.series[id].map((p) => p.timestamp))),
+  ].sort()
+  const column = new Map(timestamps.map((ts, i) => [ts, i]))
+  const series = siloIds.map((siloId) => {
+    const values: Array<number | null> = timestamps.map(() => null)
+    for (const p of payload.series[siloId]) {
+      const i = column.get(p.timestamp)
+      if (i !== undefined) values[i] = round2(p.value * scale)
+    }
+    return { siloId, values }
+  })
+  return { labels: timestamps.map((ts) => ts.slice(11, 19)), series }
+}
+
+export interface ParticipationCell {
+  status: ParticipationStatus
+  /** contributed 칸의 표본수. 그 밖의 상태는 null */
+  value: number | null
+  /** 0~1 — 격자 안 최대 표본수 대비 비율 (칸 농도) */
+  intensity: number
+}
+
+export interface ParticipationColumn {
+  roundId: string
+  label: string
+  status: TrainingRoundSummary['status'] | null
+  createdAt: string
+  /** 직접 제출 + 집계자 경유 */
+  participated: number
+  /** 그 라운드의 멤버 수 */
+  members: number
+}
+
+export interface ParticipationGrid {
+  columns: ParticipationColumn[]
+  rows: Array<{ siloId: string; cells: ParticipationCell[] }>
+}
+
+export function mapParticipation(payload: ParticipationPayload): ParticipationGrid {
+  const max = payload.matrix
+    .flat()
+    .reduce<number>((m, v) => (typeof v === 'number' && v > m ? v : m), 0)
+  const rows = payload.row_labels.map((siloId, r) => ({
+    siloId,
+    cells: payload.col_labels.map((_, c): ParticipationCell => {
+      const status = payload.cell_status[r]?.[c] ?? 'not_member'
+      const value = status === 'contributed' ? (payload.matrix[r]?.[c] ?? null) : null
+      return { status, value, intensity: value !== null && max > 0 ? value / max : 0 }
+    }),
+  }))
+  const columns = payload.col_labels.map((label, c): ParticipationColumn => {
+    const meta = payload.col_meta[c]
+    const statuses = rows.map((row) => row.cells[c].status)
+    return {
+      roundId: meta?.round_id ?? label,
+      label,
+      status: meta?.status ?? null,
+      createdAt: meta?.created_at ?? '',
+      participated: statuses.filter((s) => s === 'contributed' || s === 'via_aggregator').length,
+      members: statuses.filter((s) => s !== 'not_member').length,
+    }
+  })
+  return { columns, rows }
+}
+
+export interface BarChartInput {
+  labels: string[]
+  values: number[]
+}
+
+export function mapSiloBar(payload: SiloBarPayload): BarChartInput {
+  const items = [...payload.items].sort((a, b) => compareSiloId(a.silo_id, b.silo_id))
+  return { labels: items.map((i) => i.silo_id), values: items.map((i) => round2(i.value)) }
+}
+
+/** 구간 경계 [0, 10, 20] + 개수 [3, 5] → 라벨 ["0–10", "10–20"] */
+export function mapHistogram(payload: HistogramPayload): BarChartInput {
+  const edge = (i: number): string => {
+    const v = payload.bin_edges[i]
+    return v === undefined ? '' : String(round2(v))
+  }
+  return {
+    labels: payload.bin_counts.map((_, i) => `${edge(i)}–${edge(i + 1)}`),
+    values: [...payload.bin_counts],
+  }
+}
+
+/** 기준 분포 식별자 — 서버 저장 키(`model::version::feature`)와 같은 모양 */
+export function baselineKey(b: BaselineEntryApi): string {
+  return `${b.model_name}::${b.version}::${b.feature}`
 }
