@@ -285,3 +285,75 @@ def test_sqlite_failure_falls_back_to_memory(monkeypatch, tmp_path):
     latest = resource_service.latest_sample("silo-1")
     assert latest is not None and latest.cpu_pct == 42.0
     assert resource_service.list_samples("silo-1")[1] == 1
+
+
+@pytest.mark.unit
+def test_sqlite_insert_failure_does_not_hide_newer_memory_sample(monkeypatch):
+    from storage.settings import get_sqlite_path
+    from storage.sqlite_store import connect
+
+    # Arrange: CPU 10%는 DB에 기록된 뒤 INSERT만 실패하게 만든다(SELECT는 정상)
+    monkeypatch.setenv("FED_STORAGE", "sqlite")
+    resource_service.set_limit(ResourceLimit(silo_id="silo-1", cpu_pct_max=80.0))
+    resource_service.ingest_sample(_sample("silo-1", cpu=10.0, ts="2026-05-14T00:00:00Z"))
+    with connect(get_sqlite_path()) as conn:
+        conn.execute(
+            "CREATE TRIGGER block_insert BEFORE INSERT ON resource_samples "
+            "BEGIN SELECT RAISE(ABORT, 'insert blocked'); END"
+        )
+
+    # Act: 기록이 실패하는 동안 최신 관측(CPU 95%)과 새 사일로가 들어온다
+    resource_service.ingest_sample(_sample("silo-1", cpu=95.0, ts="2026-05-14T00:01:00Z"))
+    resource_service.ingest_sample(_sample("silo-2", cpu=20.0, ts="2026-05-14T00:01:00Z"))
+
+    # Assert: DB의 과거 10%가 메모리의 최신 95%를 가리지 않는다
+    latest = resource_service.latest_sample("silo-1")
+    assert latest is not None and latest.cpu_pct == 95.0
+    assert resource_service.is_silo_available("silo-1") is False
+    items, total = resource_service.list_samples("silo-1")
+    assert total == 2
+    assert [s.cpu_pct for s in items] == [10.0, 95.0]
+    summary = {s.silo_id: s for s in resource_service.usage_summary()}
+    assert sorted(summary) == ["silo-1", "silo-2"]
+    assert (summary["silo-1"].cpu_pct, summary["silo-1"].over_budget) == (95.0, True)
+
+
+@pytest.mark.unit
+def test_concurrent_ingest_keeps_observation_order_in_sqlite(monkeypatch):
+    import threading
+
+    # Arrange: A(10%)의 DB 기록을 지연시킨다
+    monkeypatch.setenv("FED_STORAGE", "sqlite")
+    resource_service.set_limit(ResourceLimit(silo_id="silo-1", cpu_pct_max=80.0))
+    old = _sample("silo-1", cpu=10.0, ts="2026-05-14T00:00:00Z")
+    new = _sample("silo-1", cpu=95.0, ts="2026-05-14T00:01:00Z")
+    real_persist = resource_service._persist_sqlite
+    old_in_persist, release_old = threading.Event(), threading.Event()
+
+    def slow_persist(sample: ResourceSample) -> None:
+        if sample is old:
+            old_in_persist.set()
+            release_old.wait(timeout=5)
+        real_persist(sample)
+
+    monkeypatch.setattr(resource_service, "_persist_sqlite", slow_persist)
+
+    # Act: A의 DB 기록이 멈춘 사이 B(95%)를 수집하고, 그 뒤 A 기록을 끝낸다
+    ta = threading.Thread(target=resource_service.ingest_sample, args=(old,))
+    ta.start()
+    assert old_in_persist.wait(timeout=5)
+    tb = threading.Thread(target=resource_service.ingest_sample, args=(new,))
+    tb.start()
+    tb.join(timeout=0.5)  # 수정 전에는 이 사이에 B가 DB 기록까지 끝낸다
+    release_old.set()
+    ta.join(timeout=5)
+    tb.join(timeout=5)
+
+    # Assert: 지금도, 재시작(메모리 비움) 뒤 DB에서 복원해도 B가 최신이다
+    assert resource_service.latest_sample("silo-1").cpu_pct == 95.0
+    assert resource_service.is_silo_available("silo-1") is False
+    resource_service.clear_samples()
+    latest = resource_service.latest_sample("silo-1")
+    assert latest is not None and latest.cpu_pct == 95.0
+    assert resource_service.is_silo_available("silo-1") is False
+    assert resource_service.list_samples("silo-1")[1] == 2

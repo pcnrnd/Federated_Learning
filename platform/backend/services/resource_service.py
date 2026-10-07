@@ -6,8 +6,10 @@
   * 임계값 초과 시 ResourceAlert + 감사 로그 발행
   * Batch Scheduler가 호출하는 `is_silo_available` 자원 게이트 헬퍼
 
-샘플은 기본적으로 휘발성(인메모리)이다. FED_STORAGE=sqlite 이면 메트릭 저장소(metric_store)와 같은
-규칙으로 SQLite `resource_samples`에도 기록하고 조회해 재시작 후에도 남는다(사일로당 최근 500개).
+샘플은 기본적으로 휘발성(인메모리)이다. FED_STORAGE=sqlite 이면 SQLite `resource_samples`에도
+수집 순서대로 기록하고, 프로세스가 처음 보는 사일로는 그 기록으로 메모리 창을 채워 재시작 후에도
+남는다(사일로당 최근 500개). 최신 관측의 기준은 메모리 창이다 — 기록에 실패한 샘플이 있어도
+과거 DB 행이 더 새 관측을 가리지 않는다.
 장기 보관은 Prometheus 등 외부 도구에 위임한다.
 """
 from __future__ import annotations
@@ -156,17 +158,17 @@ def _persist_sqlite(sample: ResourceSample) -> None:
         logger.warning("리소스 샘플 SQLite 영속 실패: %s", exc)
 
 
-def _query_sqlite(where: str, params: tuple[object, ...], order: str = "ASC") -> list[ResourceSample]:
-    """SQLite에서 샘플을 삽입 순서로 읽는다. sqlite 모드가 아니거나 실패하면 빈 목록(호출자가 메모리 사용).
+def _query_sqlite(where: str, params: tuple[object, ...]) -> list[ResourceSample]:
+    """SQLite에서 샘플을 삽입 순서로 읽는다. sqlite 모드가 아니거나 실패하면 빈 목록.
 
-    where·order는 이 모듈의 고정 문자열만 받는다 — 값은 params로 바인딩.
+    where는 이 모듈의 고정 문자열만 받는다 — 값은 params로 바인딩.
     """
     if get_backend() != "sqlite":
         return []
     try:
         from storage.sqlite_store import connect
 
-        sql = f"SELECT {_SAMPLE_COLUMNS} FROM resource_samples WHERE {where} ORDER BY id {order}"
+        sql = f"SELECT {_SAMPLE_COLUMNS} FROM resource_samples WHERE {where} ORDER BY id ASC"
         with connect(get_sqlite_path()) as conn:
             rows = conn.execute(sql, params).fetchall()
         return [ResourceSample(**dict(r)) for r in rows]
@@ -175,24 +177,35 @@ def _query_sqlite(where: str, params: tuple[object, ...], order: str = "ASC") ->
         return []
 
 
+def _bucket_locked(silo_id: str) -> deque[ResourceSample] | None:
+    """사일로의 메모리 창. 이 프로세스가 처음 보는 사일로면 SQLite 기록(재시작 전 샘플)으로 채운다.
+
+    _lock을 잡은 채 호출한다.
+    """
+    bucket = _samples.get(silo_id)
+    if bucket is None:
+        persisted = _query_sqlite("silo_id = ?", (silo_id,))
+        if persisted:
+            bucket = _samples[silo_id] = deque(persisted, maxlen=_MAX_SAMPLES_PER_SILO)
+    return bucket
+
+
 def ingest_sample(sample: ResourceSample) -> dict[str, list[str]]:
     """리소스 샘플을 저장하고 임계값 평가 → 발화된 알림 id 반환"""
     with _lock:
+        _bucket_locked(sample.silo_id)
         _samples[sample.silo_id].append(sample)
         triggered = _check_against_limit(sample.silo_id, sample)
-    _persist_sqlite(sample)
+        # ponytail: SQLite 기록도 잠금 안에서 해 DB 순서를 수집 순서와 맞춘다(수집이 직렬화된다).
+        # 수집량이 병목이 되면 사일로별 잠금으로 나눈다.
+        _persist_sqlite(sample)
     return {"alerts": [a.alert_id for a in triggered]}
 
 
 def latest_sample(silo_id: str) -> ResourceSample | None:
-    persisted = _query_sqlite("silo_id = ?", (silo_id,), "DESC LIMIT 1")
-    if persisted:
-        return persisted[0]
     with _lock:
-        bucket = _samples.get(silo_id)
-        if not bucket:
-            return None
-        return bucket[-1]
+        bucket = _bucket_locked(silo_id)
+        return bucket[-1] if bucket else None
 
 
 def list_samples(
@@ -203,13 +216,11 @@ def list_samples(
     offset: int = 0,
 ) -> tuple[list[ResourceSample], int]:
     """사일로 리소스 샘플을 시간 범위·페이지네이션으로 조회한다."""
-    items = _query_sqlite("silo_id = ?", (silo_id,))
-    if not items:
-        with _lock:
-            bucket = _samples.get(silo_id)
-            if not bucket:
-                return [], 0
-            items = list(bucket)
+    with _lock:
+        bucket = _bucket_locked(silo_id)
+        if not bucket:
+            return [], 0
+        items = list(bucket)
     items.sort(key=lambda s: s.timestamp)
     if start_time:
         items = [s for s in items if s.timestamp >= start_time]
@@ -292,12 +303,12 @@ def group_has_pressure(member_silo_ids: list[str]) -> bool:
 
 def usage_summary() -> list[ResourceUsageSummary]:
     summaries: list[ResourceUsageSummary] = []
-    # 사일로마다 가장 최근 1건 — 그 사일로 목록만 쓴다
+    # 이 프로세스가 본 사일로 + 재시작 전 SQLite에만 남은 사일로
     persisted = _query_sqlite(
         "id IN (SELECT MAX(id) FROM resource_samples GROUP BY silo_id)", ()
     )
     with _lock:
-        active_silos = [s.silo_id for s in persisted] or list(_samples.keys())
+        active_silos = set(_samples) | {s.silo_id for s in persisted}
     for silo_id in active_silos:
         sample = latest_sample(silo_id)
         if sample is None:

@@ -109,7 +109,8 @@ import 대상: `models`, `deployments`, `silo_groups`, `training_rounds`, `contr
   `contributions.yaml`의 같은 라운드 기여와 **병합**된다(silo_id 충돌 시 SQLite 우선, 파일 mtime 기준 1회 파싱·캐시).
   새 기여는 SQLite에만 쓰인다 — YAML 기여가 있는 라운드에 SQLite 기여가 추가돼도 양쪽이 모두 보인다.
 메트릭 시계열은 기본적으로 인메모리(`metric_store`)이며, DB 테이블은 마이그레이션 시 선택적 스냅샷용이다.
-자원 샘플(`resource_service`)도 기본은 인메모리이고, `FED_STORAGE=sqlite`이면 `resource_samples` 테이블에도 기록·조회해 재시작 후에도 남는다(사일로당 최근 500개).
+자원 샘플(`resource_service`)도 기본은 인메모리이고, `FED_STORAGE=sqlite`이면 `resource_samples` 테이블에도 수집 순서대로 기록해 재시작 후 처음 조회할 때 그 기록으로 복원한다(사일로당 최근 500개).
+최신 값·자원 게이트의 기준은 메모리 창이라, SQLite 기록이 실패해도 과거 행이 더 새 샘플을 가리지 않는다.
 
 ## 환경 변수
 
