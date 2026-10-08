@@ -323,6 +323,9 @@ class SiloClient:
             {"silo_id": self.silo_id, "hashed_keys": list(hashed_keys)},
         )
 
+    def get_alignment(self, alignment_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/alignment-jobs/{alignment_id}")
+
     def get_alignment_intersection(self, alignment_id: str) -> dict[str, Any]:
         """교집합 다이제스트 — 다른 사일로가 아직 제출 전이면 SiloClientError(409)."""
         return self._request(

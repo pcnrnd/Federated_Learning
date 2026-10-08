@@ -148,7 +148,7 @@ def main():
         # 재실행 대비 — 이전 실행이 남긴 학습 데몬만 정리한다. 수집기(monitor)는 entrypoint가
         # 자동 기동·감시하므로 건드리지 않는다. 워커는 마운트로 이미 최신이다(복사 단계 없음).
         wsl_run(["docker", "exec", silo, "sh", "-c",
-                 "pkill -f 'silo_worker.py train-loop' || true"], timeout=60)
+                 "pkill -f '[s]ilo_worker.py train-loop' || true"], timeout=60)
         r = wsl_run(["docker", "exec", silo, "test", "-f", WORKER], timeout=60)
         if r.returncode != 0:
             raise SystemExit(f"E2E FAIL: {silo}에 {WORKER} 없음 (compose 마운트 확인)")
@@ -164,8 +164,9 @@ def main():
 
     log("[1b] 리소스 monitor 확인 — entrypoint 자동 기동분이 없을 때만 직접 기동 (5초 주기)")
     for silo in SILOS:
+        # [s] — 패턴이 이 조회를 실행하는 sh 자신의 명령줄과 맞지 않게 한다
         running = wsl_run(["docker", "exec", silo, "sh", "-c",
-                           "pgrep -f 'silo_worker.py monitor' >/dev/null"], timeout=60)
+                           "pgrep -f '[s]ilo_worker.py monitor' >/dev/null"], timeout=60)
         if running.returncode == 0:
             continue
         silo_daemon(silo, ["monitor", "--central", CENTRAL_IN_NET, "--silo-id", silo,
@@ -294,7 +295,7 @@ def main():
     log(f"[6] 사후 검증 — monitor 데몬 {len(SILOS)}개 생존 + 리소스 최신성")
     for silo in SILOS:
         r = wsl_run(["docker", "exec", silo, "sh", "-c",
-                     "pgrep -f 'silo_worker.py monitor' >/dev/null"], timeout=60)
+                     "pgrep -f '[s]ilo_worker.py monitor' >/dev/null"], timeout=60)
         if r.returncode != 0:
             dump_silo_log(silo, "monitor.log")
             raise SystemExit(f"E2E FAIL: {silo} monitor 데몬 사망 (장기 실행 중 종료)")

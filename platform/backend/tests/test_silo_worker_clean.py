@@ -340,3 +340,100 @@ def test_clean_failure_marks_shard_failed_on_server(tmp_path, monkeypatch):
     job = cleaning_job_service.get_job("j1")
     assert job.shards[0].status == "failed" and job.status == "failed"
     assert "공통 스키마" in job.shards[0].error
+
+
+# ---------- align 재개 (R-F1 D6) ----------
+
+
+class _ResumeClient(_AlignClient):
+    def __init__(self, submitted_count=None) -> None:
+        super().__init__()
+        self.submitted_count = submitted_count
+
+    def submit_alignment_keys(self, alignment_id, hashed_keys):
+        from silo_sdk.client import SiloClientError
+
+        self.submitted = list(hashed_keys)
+        raise SiloClientError(409, "이미 제출함")
+
+    def get_alignment(self, alignment_id):
+        count = self.submitted_count if self.submitted_count is not None else len(self.submitted)
+        return {"participants": [{"silo_id": "silo-4", "submitted": count}]}
+
+
+@pytest.mark.unit
+def test_align_rerun_resumes_after_duplicate_submit(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
+    client = _ResumeClient()
+    _install(monkeypatch, client)
+
+    silo_worker.run_align(_align_args(tmp_path))
+
+    assert client.align_report["matched"] == 5
+    events = [json.loads(x) for x in capsys.readouterr().out.strip().splitlines()]
+    assert events[0]["event"] == "already_submitted"
+
+
+@pytest.mark.unit
+def test_align_rerun_with_different_submission_stops(tmp_path, monkeypatch):
+    monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
+    _install(monkeypatch, _ResumeClient(submitted_count=3))
+
+    with pytest.raises(SystemExit, match="다릅니다"):
+        silo_worker.run_align(_align_args(tmp_path))
+
+
+@pytest.mark.unit
+def test_align_timeout_then_rerun_completes_against_real_service(tmp_path, monkeypatch):
+    """대기 한계 초과 → 상대 사일로 제출 → 같은 명령 재실행이 교집합·정렬·보고까지 끝난다."""
+    from fastapi import HTTPException
+
+    from models.alignment_schemas import AlignmentJobCreate, AlignmentReport, AlignmentSubmit
+    from services import alignment_service
+    from silo_sdk.client import SiloClientError
+
+    def call(fn, *a):
+        try:
+            return fn(*a).model_dump()
+        except HTTPException as exc:
+            raise SiloClientError(exc.status_code, str(exc.detail)) from exc
+
+    class _ServiceClient:
+        def __init__(self, silo_id):
+            self.silo_id = silo_id
+
+        def fetch_cleaning_recipe(self, name, version):
+            return ALIGN_RECIPE
+
+        def submit_alignment_keys(self, alignment_id, hashed_keys):
+            return call(alignment_service.submit_hashes, alignment_id,
+                        AlignmentSubmit(silo_id=self.silo_id, hashed_keys=hashed_keys))
+
+        def get_alignment_intersection(self, alignment_id):
+            return call(alignment_service.get_intersection, alignment_id, self.silo_id)
+
+        def get_alignment(self, alignment_id):
+            return call(alignment_service.get_alignment, alignment_id)
+
+        def report_alignment(self, alignment_id, matched, excluded, order_digest):
+            return call(alignment_service.report_alignment, alignment_id, AlignmentReport(
+                silo_id=self.silo_id, matched=matched, excluded=excluded,
+                order_digest=order_digest))
+
+    monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
+    monkeypatch.setattr(silo_worker, "SiloClient", lambda _c, silo_id, **_k: _ServiceClient(silo_id))
+    alignment_service.create_alignment(AlignmentJobCreate(alignment_id="a1",
+                                                          silo_ids=["silo-4", "silo-5"]))
+    args4 = _align_args(tmp_path / "4")
+    args4.wait = 0.0
+
+    with pytest.raises(SystemExit, match="다시 실행"):
+        silo_worker.run_align(args4)
+    args5 = _align_args(tmp_path / "5")
+    args5.silo_id = "silo-5"
+    silo_worker.run_align(args5)
+    silo_worker.run_align(args4)  # 재실행 — 409 중복 제출에서 멈추지 않고 이어서 진행
+
+    job = alignment_service.get_alignment("a1")
+    assert job.order_consistent is True
+    assert all(p.matched == job.intersection_size > 0 for p in job.participants)

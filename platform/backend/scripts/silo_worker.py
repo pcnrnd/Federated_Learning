@@ -209,9 +209,38 @@ def _wait_intersection(client: SiloClient, alignment_id: str, wait: float,
         try:
             return list(client.get_alignment_intersection(alignment_id)["hashed_keys"])
         except SiloClientError as exc:
-            if exc.status != 409 or time.monotonic() > deadline:
+            if exc.status != 409:
                 raise
+            if time.monotonic() > deadline:
+                raise SystemExit(
+                    "align 대기 한계 초과 — 다른 사일로가 제출한 뒤 같은 명령으로 다시 실행하면 "
+                    "이어서 진행합니다"
+                ) from exc
         time.sleep(poll_interval)
+
+
+def _submit_or_resume(client: SiloClient, alignment_id: str, silo_id: str,
+                      digests: list[str]) -> None:
+    """다이제스트 제출. 이미 제출했으면(409) 같은 제출인지 확인하고 이어서 진행한다.
+
+    대기 한계 초과·응답 유실 뒤 재실행이 중복 제출 409에서 멈추지 않게 한다. 정제는
+    결정적이라 재실행해도 같은 다이제스트가 나온다 — 건수가 다르면 중단한다.
+    """
+    try:
+        client.submit_alignment_keys(alignment_id, digests)
+        return
+    except SiloClientError as exc:
+        if exc.status != 409:
+            raise
+        job = client.get_alignment(alignment_id)
+        mine = next((p for p in job.get("participants", []) if p.get("silo_id") == silo_id), {})
+        if mine.get("submitted") != len(digests):
+            raise SystemExit(
+                f"align 중단: 이미 제출한 다이제스트 수({mine.get('submitted')})가 "
+                f"지금({len(digests)})과 다릅니다"
+            ) from exc
+    print(json.dumps({"silo_id": silo_id, "event": "already_submitted",
+                      "submitted": len(digests)}, ensure_ascii=False))
 
 
 def run_align(args: argparse.Namespace) -> None:
@@ -226,7 +255,7 @@ def run_align(args: argparse.Namespace) -> None:
     key_column = (recipe.get("mapping") or {}).get("key", "id")
 
     digests = hash_ids((row[key_column] for row in cleaned), key)
-    client.submit_alignment_keys(args.alignment_id, list(digests))  # 다이제스트만 — 원본 id ❌
+    _submit_or_resume(client, args.alignment_id, args.silo_id, list(digests))  # 다이제스트만
     intersection = _wait_intersection(client, args.alignment_id, args.wait, args.poll_interval)
     aligned, report = align_rows(cleaned, key_column, intersection, key)
     client.report_alignment(args.alignment_id, report["matched"], report["excluded"],

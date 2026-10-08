@@ -60,3 +60,17 @@ def test_e2e_drivers_use_the_mounted_worker(name):
     assert "docker cp" not in text
     assert "/tmp/silo_worker.py" not in text
     assert WORKER in text
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", ["e2e_phase1.py", "e2e_phase2.py"])
+def test_process_match_patterns_do_not_match_the_calling_shell(name):
+    """`sh -c "pgrep -f 'silo_worker.py monitor'"` 은 sh 자신의 명령줄과 맞아 늘 0이다(R-F1 D5).
+
+    패턴 첫 글자를 [s] 처럼 감싸면 정규식은 같은 프로세스를 찾되 sh 명령줄과는 맞지 않는다.
+    """
+    import re
+
+    text = (SCRIPTS / name).read_text(encoding="utf-8")
+    patterns = re.findall(r"p(?:grep|kill) -f '([^']*)'", text)
+    assert all(p.startswith("[") for p in patterns), patterns
