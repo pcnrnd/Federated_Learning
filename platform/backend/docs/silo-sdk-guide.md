@@ -200,6 +200,10 @@ asyncio.run(main())
 | `validate_schema` | (`source` 선택) | 존재·형식·유한·범위 위반 행 제외, 사유별 집계. 유효 행 0이면 정제 실패 |
 | `union_sources` | `sources`, `into` | 수평 결합 — 행 결합 + 원천 간·안 중복 제거 |
 | `join_sources` | `left`, `right`, `into` | 수직 결합 — 키 inner join, 제외 수 기록 |
+| `parse_records` | `source`, `into` | 교차 — JSON 기록(속성 코드·값·단위·시각)을 공통 컬럼 행으로 변환, 변환 실패 사유별 집계 |
+| `reconcile` | `target`, `sources`, `columns`, `into` | 교차 충돌 해소 — 우선 원천(`priority`) → 최신 시각 → 허용 오차(`tolerance`, 평균) 순, 충돌·규칙별 해소·미해소 수 |
+
+예시 레시피는 `silo_sdk.synthetic.HVC_MAPPING`·`HVC_STEPS`(합성 원천 3유형 → `id, x1, x2, x3, y`).
 
 ## 원시 데이터 절대 금지
 

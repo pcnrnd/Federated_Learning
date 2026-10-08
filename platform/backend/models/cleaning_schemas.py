@@ -31,6 +31,8 @@ StepType = Literal[
     "validate_schema",
     "union_sources",
     "join_sources",
+    "parse_records",
+    "reconcile",
 ]
 # 공통 스키마 지문 = sha256 hex — 원본 값이 실려 오지 않도록 형식을 강제한다
 Fingerprint = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]

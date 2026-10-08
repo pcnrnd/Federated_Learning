@@ -62,10 +62,23 @@ STEP_CATALOG: dict[str, dict[str, Any]] = {
         "needs_mapping": True,
         "description": "수직 결합 — 키 inner join, 제외 수(한쪽에만 있는 키·키 결측) 기록",
     },
+    "parse_records": {
+        "required": ["source", "into"],
+        "needs_mapping": True,
+        "description": "교차 — JSON 기록(속성 코드·값·단위·시각)을 공통 컬럼 행으로, 변환 실패 집계",
+    },
+    "reconcile": {
+        "required": ["target", "sources", "columns", "into"],
+        "needs_mapping": True,
+        "description": "교차 충돌 해소 — 우선 원천 → 최신 시각 → 허용 오차, 충돌·규칙별 해소 수",
+    },
 }
 
-# 매핑표의 원천 이름을 가리키는 파라미터 (단계 → 파라미터 이름)
-_SOURCE_PARAMS: dict[str, str] = {"map_schema": "sources"}
+# 매핑표의 원천을 직접 읽는 단계 → (원천 파라미터, 요구 형식)
+_SOURCE_PARAMS: dict[str, tuple[str, str]] = {
+    "map_schema": ("sources", "table"),
+    "parse_records": ("source", "records"),
+}
 
 
 def validate_step_params(step_type: str, params: dict[str, Any]) -> None:
@@ -78,21 +91,24 @@ def validate_step_params(step_type: str, params: dict[str, Any]) -> None:
 
 
 def validate_mapping_usage(
-    step_type: str, params: dict[str, Any], mapping_sources: set[str] | None
+    step_type: str, params: dict[str, Any], source_formats: dict[str, str] | None
 ) -> None:
-    """다원천 단계가 매핑표를 갖췄는지, 가리키는 원천이 매핑표에 있는지 검사.
+    """다원천 단계가 매핑표를 갖췄는지, 가리키는 원천이 매핑표에 있고 형식이 맞는지 검사.
 
-    mapping_sources: 매핑표의 원천 이름 집합 (매핑표가 없으면 None)
+    source_formats: 매핑표의 원천 이름 → 형식(table|records) (매핑표가 없으면 None)
     """
     if not STEP_CATALOG[step_type].get("needs_mapping"):
         return
-    if mapping_sources is None:
+    if source_formats is None:
         raise ValueError(f"'{step_type}' 단계에는 레시피 매핑표(mapping)가 필요합니다")
-    param = _SOURCE_PARAMS.get(step_type)
-    if param is None:
+    if step_type not in _SOURCE_PARAMS:
         return
+    param, fmt = _SOURCE_PARAMS[step_type]
     value = params[param]
     names = value if isinstance(value, list) else [value]
-    unknown = [n for n in names if n not in mapping_sources]
+    unknown = [n for n in names if n not in source_formats]
     if unknown:
         raise ValueError(f"'{step_type}': 매핑표에 없는 원천 {unknown}")
+    wrong = [n for n in names if source_formats[n] != fmt]
+    if wrong:
+        raise ValueError(f"'{step_type}': {fmt} 형식이 아닌 원천 {wrong}")

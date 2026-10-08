@@ -13,7 +13,7 @@
 미등록 코드·같은 엔터티의 충돌 기록을 의도적으로 섞는다. 참 모델은 기존 학습 데이터와 같다:
     y = 2·x1 − 3·x2 + 0.5·x3 + 4 + 잡음
 
-`HVC_MAPPING` 은 이 원천을 공통 스키마로 정제하는 레시피의 매핑표다.
+`HVC_MAPPING`·`HVC_STEPS` 는 이 원천을 공통 스키마로 정제하는 레시피의 매핑표·단계다.
 원천 파일은 사일로 밖으로 나가지 않는다 — 중앙에는 레시피만 있고 결과는 통계로만 보고한다.
 """
 from __future__ import annotations
@@ -77,6 +77,20 @@ HVC_MAPPING: dict[str, Any] = {
     },
     "codes": {"level": dict(X3_LEVELS), "attr": {"A1": "x1", "A2": "x2"}},
 }
+
+# 수평(기간 표 결합) → 수직(엔터티 표 키 결합) → 교차(JSON 기록 변환·충돌 해소) → 정합성 검사
+HVC_STEPS: list[dict[str, Any]] = [
+    {"type": "map_schema", "params": {"sources": ["period_a", "period_b", "entity"]}},
+    {"type": "union_sources",
+     "params": {"sources": ["period_a", "period_b"], "keys": ["id"], "into": "periods"}},
+    {"type": "join_sources",
+     "params": {"left": "periods", "right": "entity", "keys": ["id"], "into": "base"}},
+    {"type": "parse_records", "params": {"source": "records", "into": "facts"}},
+    {"type": "reconcile",
+     "params": {"target": "base", "sources": ["facts"], "columns": ["x1", "x2"],
+                "priority": ["base", "facts"], "tolerance": 0.05, "into": "merged"}},
+    {"type": "validate_schema", "params": {}},
+]
 
 
 def seed_of(silo_id: str) -> int:

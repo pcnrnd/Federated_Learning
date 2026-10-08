@@ -161,3 +161,40 @@ def test_server_step_catalog_matches_sdk_steps():
     from silo_sdk.cleaning import SUPPORTED_STEPS
 
     assert set(STEP_CATALOG) == set(SUPPORTED_STEPS) == set(get_args(StepType))
+
+
+# ---------- 교차 단계·전체 레시피 등록 (F5) ----------
+
+
+@pytest.mark.unit
+def test_full_hvc_recipe_registers_on_server():
+    from silo_sdk import synthetic
+
+    recipe = cleaning_recipe_service.register_recipe(
+        CleaningRecipeRequest(name="silo-hvc", version="1.0.0", steps=synthetic.HVC_STEPS,
+                              mapping=synthetic.HVC_MAPPING)
+    )
+
+    assert [s.type for s in recipe.steps] == [s["type"] for s in synthetic.HVC_STEPS]
+    assert recipe.mapping.sources["records"].format == "records"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "step",
+    [
+        CleaningStep(type="parse_records", params={"source": "period_a", "into": "f"}),
+        CleaningStep(type="map_schema", params={"sources": ["records"]}),
+    ],
+    ids=["records-step-on-table", "table-step-on-records"],
+)
+def test_source_format_must_match_step(step):
+    from silo_sdk import synthetic
+
+    with pytest.raises(HTTPException) as exc:
+        cleaning_recipe_service.register_recipe(
+            CleaningRecipeRequest(name="bad", version="1.0.0", steps=[step],
+                                  mapping=synthetic.HVC_MAPPING)
+        )
+    assert exc.value.status_code == 400
+    assert "형식" in exc.value.detail

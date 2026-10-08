@@ -19,6 +19,7 @@ import csv
 import hashlib
 import json
 import math
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -309,4 +310,154 @@ def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]
     counters["join_sources.matched"] = len(joined)
     counters["join_sources"] = sum(v for k, v in counters.items() if ".excluded." in k)
     tables[params["into"]] = joined
+    return counters
+
+
+# ---------- 교차: JSON 기록 변환 · 충돌 해소 ----------
+
+_SAME_EPS = 1e-6  # 단위 변환 반올림 오차는 같은 값으로 본다
+
+
+def parse_records(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
+    """JSON 기록(엔터티·속성 코드·값·단위·시각) → 공통 컬럼 1개짜리 행.
+
+    속성 코드는 매핑표 코드표로, 단위는 단위표로 변환한다(map_schema와 같은 map_value).
+    변환에 실패한 기록은 버리고 사유별로 센다. 행에는 `_source`(=into)·`_observed_at`.
+    """
+    source, into = params["source"], params["into"]
+    spec = source_spec(mapping, source)
+    if spec.get("format") != "records":
+        raise CleaningError(f"원천 '{source}'은 기록 형식이 아닙니다 — map_schema를 쓰세요")
+    key = mapping["key"]
+    key_field = next((raw for raw, col in spec["columns"].items() if col == key), None)
+    if key_field is None:
+        raise CleaningError(f"원천 '{source}': 키 '{key}'에 대응하는 필드가 매핑표에 없습니다")
+    attr_codes = mapping.get("codes", {}).get(spec.get("attribute_codes") or "", None)
+    records = require_table(tables, source)
+    counters: Counters = {"parse_records.in": len(records)}
+    rows: list[Row] = []
+
+    def fail(reason: str) -> None:
+        _bump(counters, "parse_records.conversion_failed")
+        _bump(counters, f"parse_records.conversion_failed.{reason}")
+
+    for record in records:
+        if not isinstance(record, dict):
+            fail("bad_record")
+            continue
+        entity, failure = map_value(record.get(key_field), key, mapping)
+        if entity is None:
+            fail(failure or "missing_key")
+            continue
+        attr = record.get(spec["attribute_field"])
+        col = attr_codes.get(attr) if attr_codes is not None else attr
+        if col not in mapping["common_schema"] or col == key:
+            fail("unknown_code")
+            continue
+        unit = record.get(spec["unit_field"]) if spec.get("unit_field") else None
+        value, failure = map_value(record.get(spec["value_field"]), col, mapping,
+                                   unit=None if _is_blank(unit) else str(unit))
+        if value is None:
+            fail(failure or "missing_value")
+            continue
+        observed = record.get(spec["time_field"]) if spec.get("time_field") else None
+        rows.append({key: entity, col: value, "_source": into, "_observed_at": observed})
+    tables[into] = rows
+    counters["parse_records"] = counters["parse_records.out"] = len(rows)
+    return counters
+
+
+def _same(values: list[Any]) -> bool:
+    first = values[0]
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        return all(abs(v - first) <= _SAME_EPS for v in values)
+    return all(v == first for v in values)
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _resolve(
+    cands: list[tuple[Any, int, datetime | None]], tolerance: float
+) -> tuple[Any, str | None]:
+    """후보 (값, 우선순위, 시각) → (값, 해소 규칙). 규칙은 우선 원천 → 최신 시각 → 허용 오차.
+
+    값이 모두 같으면 규칙 None(충돌 아님). 해소하지 못하면 (None, "unresolved").
+    """
+    if _same([v for v, _, _ in cands]):
+        return cands[0][0], None
+    best = min(rank for _, rank, _ in cands)
+    if any(rank != best for _, rank, _ in cands):
+        cands = [c for c in cands if c[1] == best]
+        if _same([v for v, _, _ in cands]):
+            return cands[0][0], "priority"
+    times = [t for _, _, t in cands if t is not None]
+    if len(set(times)) > 1 or (times and len(times) < len(cands)):
+        latest = max(times)
+        cands = [c for c in cands if c[2] == latest]
+        if _same([v for v, _, _ in cands]):
+            return cands[0][0], "latest"
+    values = [v for v, _, _ in cands]
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        if max(values) - min(values) <= tolerance:
+            return sum(values) / len(values), "tolerance"
+    return None, "unresolved"
+
+
+def reconcile(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
+    """같은 엔터티·속성의 값이 원천마다 다르면 규칙으로 하나를 고른다 (교차 충돌 해소).
+
+    대상 표(target)의 행마다 params.columns 의 후보 = 대상 값 + 다른 원천(sources) 행의 값.
+    규칙 순서: 우선 원천(params.priority 앞쪽) → 최신 시각(`_observed_at`) →
+    허용 오차(params.tolerance 안이면 평균). 해소하지 못하면 결측(None)으로 두어
+    validate_schema가 제외한다. 대상 표에 없는 엔터티의 기록은 orphans로 센다.
+    """
+    key = mapping["key"]
+    target_name = params["target"]
+    target = require_table(tables, target_name)
+    columns = params["columns"]
+    priority = list(params.get("priority") or [target_name])
+    tolerance = float(params.get("tolerance", 0.0))
+
+    def rank(name: str) -> int:
+        return priority.index(name) if name in priority else len(priority)
+
+    target_keys = {row.get(key) for row in target}
+    extra: dict[tuple[Any, str], list[tuple[Any, int, datetime | None]]] = {}
+    counters: Counters = {"reconcile.orphans": 0}
+    for source in params["sources"]:
+        for row in require_table(tables, source):
+            if row.get(key) not in target_keys:
+                counters["reconcile.orphans"] += 1
+                continue
+            for col in columns:
+                if row.get(col) is not None:
+                    extra.setdefault((row[key], col), []).append(
+                        (row[col], rank(source), _parse_time(row.get("_observed_at")))
+                    )
+    out: list[Row] = []
+    for row in target:
+        new = dict(row)
+        for col in columns:
+            cands = [(row[col], rank(target_name), None)] if row.get(col) is not None else []
+            cands += extra.get((row.get(key), col), [])
+            if not cands:
+                new[col] = None  # 어느 원천에도 값이 없다 → 결측
+                continue
+            new[col], rule = _resolve(cands, tolerance)
+            if rule:
+                _bump(counters, "reconcile.conflicts")
+                _bump(counters, "reconcile.unresolved" if rule == "unresolved"
+                      else f"reconcile.resolved.{rule}")
+        out.append(new)
+    tables[params["into"]] = out
+    counters["reconcile"] = counters.get("reconcile.conflicts", 0)
+    counters.setdefault("reconcile.conflicts", 0)
+    counters["reconcile.out"] = len(out)
     return counters

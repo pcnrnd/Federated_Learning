@@ -46,11 +46,15 @@ def get_recipe(name: str, version: str) -> CleaningRecipe:
 
 def register_recipe(request: CleaningRecipeRequest) -> CleaningRecipe:
     # step 파라미터·매핑표 참조 사전 검증
-    mapping_sources = set(request.mapping.sources) if request.mapping else None
+    source_formats = (
+        {name: src.format for name, src in request.mapping.sources.items()}
+        if request.mapping
+        else None
+    )
     for step in request.steps:
         try:
             validate_step_params(step.type, step.params)
-            validate_mapping_usage(step.type, step.params, mapping_sources)
+            validate_mapping_usage(step.type, step.params, source_formats)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
