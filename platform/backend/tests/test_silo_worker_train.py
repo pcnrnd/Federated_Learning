@@ -217,3 +217,54 @@ def test_train_loop_uses_recipe_of_round_linked_cleaning_job(tmp_path, monkeypat
     assert by_round["r1"]["rows_after_cleaning"] == by_round["r1"]["sample_count"]
     assert "rows_after_cleaning" not in by_round["r2"]  # 연결 없는 라운드는 기존 동작
     assert by_round["r2"]["sample_count"] == len(silo_worker._local_train_rows("silo-3"))
+
+
+@pytest.mark.unit
+def test_train_loop_survives_transient_error_fetching_linked_job(tmp_path, monkeypatch, capsys):
+    from silo_sdk.client import SiloClientError
+
+    rounds = [{"round_id": "r1", "model_name": "m", "version": "1", "contributors": [],
+               "cleaning_job_id": "c1"}]
+
+    class _Flaky(_TrainClient):
+        def get_cleaning_job(self, job_id):
+            raise SiloClientError(503, "busy")
+
+    client = _Flaky(rounds)
+    _install(monkeypatch, client)
+    monkeypatch.setattr(silo_worker.time, "sleep", lambda _s: None)
+
+    silo_worker.run_train_loop(_args(tmp_path, recipe_name=None, recipe_version=None, model="m",
+                                     max_rounds=1, poll_interval=0, max_idle=0.05))
+
+    events = [json.loads(x).get("event") for x in capsys.readouterr().out.strip().splitlines()]
+    assert "transient_error" in events and events[-1] == "idle_timeout"
+    assert client.pushes == []
+
+
+@pytest.mark.unit
+def test_train_loop_stops_on_missing_linked_job(tmp_path, monkeypatch):
+    from silo_sdk.client import SiloClientError
+
+    rounds = [{"round_id": "r1", "model_name": "m", "version": "1", "contributors": [],
+               "cleaning_job_id": "ghost"}]
+
+    class _Missing(_TrainClient):
+        def get_cleaning_job(self, job_id):
+            raise SiloClientError(404, "없음")
+
+    _install(monkeypatch, _Missing(rounds))
+    monkeypatch.setattr(silo_worker.time, "sleep", lambda _s: None)
+
+    with pytest.raises(SiloClientError):
+        silo_worker.run_train_loop(_args(tmp_path, recipe_name=None, recipe_version=None,
+                                         model="m", max_rounds=1, poll_interval=0, max_idle=1))
+
+
+@pytest.mark.unit
+def test_edge_stats_ignore_children_with_null_values():
+    child = {"silo_id": "s", "sample_count": 1, "parameters": [0.0],
+             "rows_before_cleaning": None, "rows_after_cleaning": 1, "train_rmse": 0.1}
+    own = {"rows_before_cleaning": 2, "rows_after_cleaning": 1, "train_rmse": 0.1}
+
+    assert silo_worker._edge_cleaning_stats(own, 1, [child]) == {}

@@ -41,7 +41,7 @@ import sys
 import time
 
 from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
-from silo_sdk.alignment import align_rows, hash_ids, load_align_key
+from silo_sdk.alignment import align_rows, hash_ids, load_align_key, order_digest
 from silo_sdk.client import SiloClientError
 from silo_sdk.edge import combine
 from silo_sdk.integration import load_sources, schema_fingerprint
@@ -221,11 +221,13 @@ def _wait_intersection(client: SiloClient, alignment_id: str, wait: float,
 
 def _submit_or_resume(client: SiloClient, alignment_id: str, silo_id: str,
                       digests: list[str]) -> None:
-    """다이제스트 제출. 이미 제출했으면(409) 같은 제출인지 확인하고 이어서 진행한다.
+    """다이제스트 제출. 이미 제출했으면(409) 같은 집합인지 확인하고 이어서 진행한다.
 
-    대기 한계 초과·응답 유실 뒤 재실행이 중복 제출 409에서 멈추지 않게 한다. 정제는
-    결정적이라 재실행해도 같은 다이제스트가 나온다 — 건수가 다르면 중단한다.
+    대기 한계 초과·응답 유실 뒤 재실행이 중복 제출 409에서 멈추지 않게 한다. 서버에 남은
+    제출 집합 지문과 지금 집합의 지문이 같을 때만 이어 간다 — 그 사이 원천·키·레시피가 바뀌어
+    다른 집합이 되면(건수가 같아도) 교집합 기준과 정렬 대상이 어긋나므로 중단한다.
     """
+    current = order_digest(sorted(set(digests)))
     try:
         client.submit_alignment_keys(alignment_id, digests)
         return
@@ -234,10 +236,11 @@ def _submit_or_resume(client: SiloClient, alignment_id: str, silo_id: str,
             raise
         job = client.get_alignment(alignment_id)
         mine = next((p for p in job.get("participants", []) if p.get("silo_id") == silo_id), {})
-        if mine.get("submitted") != len(digests):
+        if mine.get("submitted_digest") != current:
             raise SystemExit(
-                f"align 중단: 이미 제출한 다이제스트 수({mine.get('submitted')})가 "
-                f"지금({len(digests)})과 다릅니다"
+                f"align 중단: 이미 제출한 다이제스트 집합(건수 {mine.get('submitted')})이 "
+                f"지금 집합(건수 {len(set(digests))})과 다릅니다 — 원천·키·레시피가 바뀌었으면 "
+                "새 정렬 작업으로 다시 하세요"
             ) from exc
     print(json.dumps({"silo_id": silo_id, "event": "already_submitted",
                       "submitted": len(digests)}, ensure_ascii=False))
@@ -494,7 +497,15 @@ def run_train_loop(args: argparse.Namespace) -> None:
             round_id = entry["round_id"]
             if round_id in contributed_rounds or args.silo_id in entry.get("contributors", []):
                 continue
-            round_rows, round_stats = inputs_for(entry)
+            try:
+                round_rows, round_stats = inputs_for(entry)
+            except Exception as exc:  # noqa: BLE001 — 일시 오류만 재폴링, 나머지는 그대로 던진다
+                if not _is_transient(exc):
+                    raise  # 연결된 정제 작업이 없음(404) 등 — 설정 오류는 드러낸다
+                print(json.dumps({"silo_id": args.silo_id, "event": "transient_error",
+                                  "round_id": round_id, "error": str(exc)[:200]},
+                                 ensure_ascii=False), flush=True)
+                break
             result = train_ridge(round_rows, FEATURES, "y", l2=1e-6)
             try:
                 client.push_parameters(round_id, result.sample_count, result.parameters,
@@ -611,7 +622,7 @@ def _edge_cleaning_stats(own: dict, own_samples: int, children: list[dict]) -> d
 
     행 수는 합, 학습 RMSE는 표본수 가중 합성 sqrt(Σ nᵢ·rmseᵢ² / Σ nᵢ).
     """
-    if not own or not all(all(k in c for k in _STAT_KEYS) for c in children):
+    if not own or not all(all(c.get(k) is not None for k in _STAT_KEYS) for c in children):
         return {}
     parts = [(own_samples, own)] + [(int(c["sample_count"]), c) for c in children]
     total = sum(n for n, _ in parts)

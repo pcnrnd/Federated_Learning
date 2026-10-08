@@ -151,3 +151,47 @@ def test_server_rejects_units_on_non_numeric_columns():
         CleaningMapping(key="id", common_schema={"id": {"type": "str"}},
                         sources={"a": {"columns": {"k": "id"}, "units": {"id": "x"}}},
                         units={"id": {"x": {"scale": 2}}})
+
+
+# ---------- 재검증 전 자체 점검 보완 ----------
+
+
+@pytest.mark.unit
+def test_join_counts_duplicate_right_keys():
+    mapping = {"key": "id", "common_schema": {"id": {"type": "str"}, "x": {"type": "float"}},
+               "sources": {"l": {"columns": {"k": "id"}}, "r": {"columns": {"k": "id", "v": "x"}}}}
+    steps = [{"type": "map_schema", "params": {"sources": ["l", "r"]}},
+             {"type": "join_sources", "params": {"left": "l", "right": "r", "into": "j"}},
+             {"type": "validate_schema", "params": {}}]
+    tables = {"l": [{"k": "E1"}], "r": [{"k": "E1", "v": "1"}, {"k": "E1", "v": "2"}]}
+
+    cleaned, counters = apply_recipe(tables, steps, mapping=mapping)
+
+    assert cleaned == [{"id": "E1", "x": 1.0}]
+    assert counters["join_sources.excluded.right_duplicate"] == 1
+
+
+@pytest.mark.unit
+def test_reconcile_treats_float_noise_on_large_values_as_same():
+    mapping = {"key": "id", "common_schema": {"id": {"type": "str"}, "x": {"type": "float"}},
+               "sources": {"t": {"columns": {"k": "id", "v": "x"}},
+                           "s": {"columns": {"k": "id", "v": "x"}}}}
+    steps = [{"type": "map_schema", "params": {"sources": ["t", "s"]}},
+             {"type": "reconcile", "params": {"target": "t", "sources": ["s"], "columns": ["x"],
+                                              "into": "m"}}]
+    tables = {"t": [{"k": "E1", "v": "1000000000000.0"}],
+              "s": [{"k": "E1", "v": "1000000000000.0001"}]}
+
+    _, counters = apply_recipe(tables, steps, mapping=mapping)
+
+    assert counters["reconcile.conflicts"] == 0
+
+
+@pytest.mark.unit
+def test_load_sources_strips_utf8_bom(tmp_path):
+    from silo_sdk.integration import load_sources
+
+    path = tmp_path / "t.csv"
+    path.write_bytes("\ufeffeid,x3_level\nE1,L0\n".encode("utf-8"))
+
+    assert load_sources({"t": path})["t"] == [{"eid": "E1", "x3_level": "L0"}]

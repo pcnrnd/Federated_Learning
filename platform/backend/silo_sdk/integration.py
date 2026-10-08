@@ -44,7 +44,7 @@ def load_sources(paths: dict[str, Path]) -> Tables:
                 raise CleaningError(f"원천 '{name}': JSON 최상위가 목록이 아닙니다")
             tables[name] = data
         else:
-            with path.open(encoding="utf-8", newline="") as f:
+            with path.open(encoding="utf-8-sig", newline="") as f:  # BOM이 있어도 첫 컬럼명 유지
                 tables[name] = list(csv.DictReader(f))
     return tables
 
@@ -307,7 +307,8 @@ def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]
     """사일로 안 수직 결합 — 키 inner join. 결과는 params.into 표.
 
     왼쪽 값이 우선이고, 왼쪽에 없거나 결측인 컬럼만 오른쪽 값으로 채운다. 오른쪽에 같은 키가
-    여러 번 있으면 첫 행을 쓴다. 제외 수를 사유(left_only·right_only·missing_key)별로 센다.
+    여러 번 있으면 첫 행을 쓰고 나머지를 right_duplicate로 센다. 제외 수를 사유
+    (left_only·right_only·right_duplicate·missing_key)별로 센다.
     """
     keys = params.get("keys") or [mapping["key"]]
     left = require_table(tables, params["left"])
@@ -319,7 +320,10 @@ def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]
         if any(_is_blank(v) for v in key):
             _bump(counters, "join_sources.excluded.missing_key")
             continue
-        index.setdefault(key, row)
+        if key in index:
+            _bump(counters, "join_sources.excluded.right_duplicate")
+            continue
+        index[key] = row
     joined: list[Row] = []
     used: set[tuple] = set()
     for row in left:
@@ -346,7 +350,8 @@ def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]
 
 # ---------- 교차: JSON 기록 변환 · 충돌 해소 ----------
 
-_SAME_EPS = 1e-6  # 단위 변환 반올림 오차는 같은 값으로 본다
+# 단위 변환 반올림 오차는 같은 값으로 본다 — 작은 값은 절대 1e-6, 큰 값은 상대 1e-12
+_SAME_ABS, _SAME_REL = 1e-6, 1e-12
 
 
 def parse_records(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
@@ -407,7 +412,7 @@ def parse_records(tables: Tables, params: dict[str, Any], mapping: dict[str, Any
 def _same(values: list[Any]) -> bool:
     first = values[0]
     if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
-        return all(abs(v - first) <= _SAME_EPS for v in values)
+        return all(math.isclose(v, first, rel_tol=_SAME_REL, abs_tol=_SAME_ABS) for v in values)
     return all(v == first for v in values)
 
 

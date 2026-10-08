@@ -60,6 +60,12 @@ def test_submit_rules_and_intersection():
 
     _submit("silo-5", [H[5], H[2], H[1], H[4]])
     job = alignment_service.get_alignment("a1")
+    from silo_sdk.alignment import order_digest
+
+    assert {p.silo_id: p.submitted_digest for p in job.participants} == {
+        "silo-4": order_digest(sorted([H[0], H[1], H[2], H[3]])),
+        "silo-5": order_digest(sorted([H[1], H[2], H[4], H[5]])),
+    }
     assert job.status == "ready"
     assert job.intersection_size == 2
     assert {p.silo_id: p.submitted for p in job.participants} == {"silo-4": 4, "silo-5": 4}

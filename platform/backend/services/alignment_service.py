@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from datetime import datetime, timezone
@@ -98,7 +99,11 @@ def submit_hashes(alignment_id: str, submit: AlignmentSubmit) -> AlignmentJob:
         entry["hashes"][submit.silo_id] = hashes
         participants = list(job.participants)
         participants[idx] = participants[idx].model_copy(
-            update={"submitted": len(hashes), "submitted_at": _now_iso()}
+            update={
+                "submitted": len(hashes),
+                "submitted_digest": hashlib.sha256("\n".join(hashes).encode("utf-8")).hexdigest(),
+                "submitted_at": _now_iso(),
+            }
         )
         update: dict[str, Any] = {"participants": participants, "updated_at": _now_iso()}
         if len(entry["hashes"]) == len(job.silo_ids):

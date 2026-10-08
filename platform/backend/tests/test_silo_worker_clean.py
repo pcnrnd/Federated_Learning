@@ -346,9 +346,11 @@ def test_clean_failure_marks_shard_failed_on_server(tmp_path, monkeypatch):
 
 
 class _ResumeClient(_AlignClient):
-    def __init__(self, submitted_count=None) -> None:
+    """이미 제출한 상태(409)를 흉내 낸다. server_keys = 서버에 남아 있는 이전 제출."""
+
+    def __init__(self, server_keys=None) -> None:
         super().__init__()
-        self.submitted_count = submitted_count
+        self.server_keys = server_keys
 
     def submit_alignment_keys(self, alignment_id, hashed_keys):
         from silo_sdk.client import SiloClientError
@@ -357,8 +359,11 @@ class _ResumeClient(_AlignClient):
         raise SiloClientError(409, "이미 제출함")
 
     def get_alignment(self, alignment_id):
-        count = self.submitted_count if self.submitted_count is not None else len(self.submitted)
-        return {"participants": [{"silo_id": "silo-4", "submitted": count}]}
+        from silo_sdk.alignment import order_digest
+
+        keys = sorted(set(self.server_keys if self.server_keys is not None else self.submitted))
+        return {"participants": [{"silo_id": "silo-4", "submitted": len(keys),
+                                  "submitted_digest": order_digest(keys)}]}
 
 
 @pytest.mark.unit
@@ -375,20 +380,64 @@ def test_align_rerun_resumes_after_duplicate_submit(tmp_path, monkeypatch, capsy
 
 
 @pytest.mark.unit
-def test_align_rerun_with_different_submission_stops(tmp_path, monkeypatch):
+@pytest.mark.parametrize("server_keys", [
+    ["a" * 64, "b" * 64, "c" * 64],  # 건수가 다름
+    None,  # 아래에서 같은 건수·다른 집합으로 바꾼다
+], ids=["different-count", "same-count-different-set"])
+def test_align_rerun_with_different_submission_stops(tmp_path, monkeypatch, server_keys):
     monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
-    _install(monkeypatch, _ResumeClient(submitted_count=3))
+    if server_keys is None:  # 지금 제출할 다이제스트와 건수는 같고 하나만 다른 집합
+        from silo_sdk.alignment import hash_ids
+
+        rows = silo_worker.clean_local("silo-4", str(tmp_path), ALIGN_RECIPE)[1]
+        mine = sorted(hash_ids((r["id"] for r in rows), b"silo-shared-align-key-for-tests"))
+        server_keys = mine[1:] + ["f" * 64]
+        assert len(server_keys) == len(mine) and set(server_keys) != set(mine)
+    client = _ResumeClient(server_keys=server_keys)
+    _install(monkeypatch, client)
 
     with pytest.raises(SystemExit, match="다릅니다"):
         silo_worker.run_align(_align_args(tmp_path))
+    assert client.align_report == {}  # 보고·정렬 파일까지 가지 않는다
+    assert not (tmp_path / "aligned-a1.csv").exists()
 
 
 @pytest.mark.unit
-def test_align_timeout_then_rerun_completes_against_real_service(tmp_path, monkeypatch):
-    """대기 한계 초과 → 상대 사일로 제출 → 같은 명령 재실행이 교집합·정렬·보고까지 끝난다."""
+def test_align_rerun_after_local_data_changed_stops_against_real_service(tmp_path, monkeypatch):
+    """N1 — 대기 초과 뒤 로컬 원천이 바뀐 채 재실행하면 이전 제출과 다른 집합이므로 중단한다."""
+    from silo_sdk import synthetic
+
+    monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
+    _service_clients(monkeypatch)
+    from models.alignment_schemas import AlignmentJobCreate
+    from services import alignment_service
+
+    alignment_service.create_alignment(AlignmentJobCreate(alignment_id="a1",
+                                                          silo_ids=["silo-4", "silo-5"]))
+    args4 = _align_args(tmp_path / "4")
+    args4.wait = 0.0
+    with pytest.raises(SystemExit, match="다시 실행"):
+        silo_worker.run_align(args4)
+    args5 = _align_args(tmp_path / "5")
+    args5.silo_id = "silo-5"
+    silo_worker.run_align(args5)
+
+    # silo-4 원천을 silo-5 것으로 바꿔 놓는다 (같은 레시피, 다른 엔터티 집합)
+    synthetic.write_sources("silo-5", tmp_path / "4")
+    with pytest.raises(SystemExit, match="다릅니다"):
+        silo_worker.run_align(args4)
+
+    job = alignment_service.get_alignment("a1")
+    silo4 = next(p for p in job.participants if p.silo_id == "silo-4")
+    assert silo4.matched is None and job.order_consistent is None
+    assert not (tmp_path / "4" / "aligned-a1.csv").exists()
+
+
+def _service_clients(monkeypatch) -> None:
+    """워커의 SiloClient를 실제 정렬 서비스에 바로 잇는다 (HTTP 대신 함수 호출)."""
     from fastapi import HTTPException
 
-    from models.alignment_schemas import AlignmentJobCreate, AlignmentReport, AlignmentSubmit
+    from models.alignment_schemas import AlignmentReport, AlignmentSubmit
     from services import alignment_service
     from silo_sdk.client import SiloClientError
 
@@ -420,8 +469,17 @@ def test_align_timeout_then_rerun_completes_against_real_service(tmp_path, monke
                 silo_id=self.silo_id, matched=matched, excluded=excluded,
                 order_digest=order_digest))
 
-    monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
     monkeypatch.setattr(silo_worker, "SiloClient", lambda _c, silo_id, **_k: _ServiceClient(silo_id))
+
+
+@pytest.mark.unit
+def test_align_timeout_then_rerun_completes_against_real_service(tmp_path, monkeypatch):
+    """대기 한계 초과 → 상대 사일로 제출 → 같은 명령 재실행이 교집합·정렬·보고까지 끝난다."""
+    from models.alignment_schemas import AlignmentJobCreate
+    from services import alignment_service
+
+    monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
+    _service_clients(monkeypatch)
     alignment_service.create_alignment(AlignmentJobCreate(alignment_id="a1",
                                                           silo_ids=["silo-4", "silo-5"]))
     args4 = _align_args(tmp_path / "4")

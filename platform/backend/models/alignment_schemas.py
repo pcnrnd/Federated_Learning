@@ -45,6 +45,9 @@ class AlignmentReport(BaseModel):
 class AlignmentParticipant(BaseModel):
     silo_id: str
     submitted: int | None = None  # 보낸 다이제스트 수 (None = 아직)
+    # 보낸 다이제스트 집합의 지문 — 정렬한 다이제스트를 줄바꿈으로 이은 문자열의 sha256.
+    # 사일로가 재실행할 때 이전 제출과 같은 집합인지 확인한다 (건수만으로는 못 가린다).
+    submitted_digest: str | None = None
     submitted_at: str | None = None
     matched: int | None = None
     excluded: int | None = None

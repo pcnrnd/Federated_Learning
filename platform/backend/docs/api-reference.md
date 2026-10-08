@@ -162,7 +162,7 @@
 |---|---|---|
 | GET | `/api/alignment-jobs` | 모든 정렬 작업 |
 | POST | `/api/alignment-jobs` | 새 작업 (`alignment_id`, 참여 `silo_ids` 2곳 이상) |
-| GET | `/api/alignment-jobs/{id}` | 상태(waiting/ready)·사일로별 제출·남은·제외 수·교집합 크기·순서 일치 |
+| GET | `/api/alignment-jobs/{id}` | 상태(waiting/ready)·사일로별 제출 수·제출 집합 지문(`submitted_digest`)·남은·제외 수·교집합 크기·순서 일치 |
 | POST | `/api/alignment-jobs/{id}/submit` | 사일로의 HMAC-SHA256 다이제스트 목록 (64자 hex만, 사일로당 1회) |
 | GET | `/api/alignment-jobs/{id}/intersection?silo_id=` | 교집합 다이제스트(정렬) — 참여자만, 모두 제출 전 409 |
 | POST | `/api/alignment-jobs/{id}/report` | 정렬 결과 통계(`matched`·`excluded`·`order_digest`) |

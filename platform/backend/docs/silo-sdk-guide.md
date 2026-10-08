@@ -128,6 +128,10 @@ aligned, report = align_rows(cleaned, "id", intersection, key)  # 교집합만, 
 client.report_alignment("a1", report["matched"], report["excluded"], report["order_digest"])
 ```
 
+워커 `align`을 다시 실행하면(대기 한계 초과·응답 유실 뒤) 서버에 남은 내 제출 집합 지문
+(`submitted_digest` = 정렬한 다이제스트를 줄바꿈으로 이은 sha256)과 지금 집합이 같을 때만 이어 간다.
+원천·키·레시피가 바뀌어 집합이 달라졌으면 건수가 같아도 중단한다 — 새 정렬 작업으로 다시 한다.
+
 한계(이번 구현의 보안 수준):
 
 - 키를 사일로끼리 공유한다. 키를 가진 사일로는 다른 사일로의 다이제스트를 추측 가능한 id
