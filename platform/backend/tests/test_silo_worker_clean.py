@@ -191,3 +191,57 @@ def test_align_requires_silo_key_before_any_request(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="FED_ALIGN_KEY"):
         silo_worker.run_align(_align_args(tmp_path))
     assert client.submitted == []
+
+
+# ---------- 작업 번호 없이 배정 샤드 처리 (F7) ----------
+
+
+class _AutoClient(_CleanClient):
+    def __init__(self, shards: list[dict]) -> None:
+        super().__init__({"steps": [{"type": "dedupe", "params": {"keys": ["id"]}}]})
+        self.shards = shards
+        self.fetched: list[tuple] = []
+
+    def list_assigned_shards(self, status="pending"):
+        assert status == "pending"
+        return self.shards
+
+    def fetch_cleaning_recipe(self, name, version):
+        self.fetched.append((name, version))
+        return self.recipe
+
+
+@pytest.mark.unit
+def test_clean_without_job_id_processes_assigned_pending_shards(tmp_path, monkeypatch, capsys):
+    shards = [{"job_id": "c1", "shard_index": 0, "recipe_name": "r", "recipe_version": "1.0.0"},
+              {"job_id": "c2", "shard_index": 3, "recipe_name": "r", "recipe_version": "2.0.0"}]
+    client = _AutoClient(shards)
+    _install(monkeypatch, client)
+
+    silo_worker.run_clean(_args(tmp_path, job_id=None, shard_index=None, recipe_name=None,
+                                recipe_version=None))
+
+    assert client.started == [("c1", 0), ("c2", 3)]
+    assert [(r["job_id"], r["shard_index"]) for r in client.reports] == [("c1", 0), ("c2", 3)]
+    assert client.fetched == [("r", "1.0.0"), ("r", "2.0.0")]
+    lines = [json.loads(x) for x in capsys.readouterr().out.strip().splitlines()]
+    assert [x["job_id"] for x in lines] == ["c1", "c2"]
+
+
+@pytest.mark.unit
+def test_clean_without_job_id_and_no_shards_exits_quietly(tmp_path, monkeypatch, capsys):
+    client = _AutoClient([])
+    _install(monkeypatch, client)
+
+    silo_worker.run_clean(_args(tmp_path, job_id=None, shard_index=None, recipe_name=None,
+                                recipe_version=None))
+
+    assert client.reports == []
+    assert json.loads(capsys.readouterr().out)["event"] == "no_assigned_shards"
+
+
+@pytest.mark.unit
+def test_clean_with_partial_job_arguments_is_rejected(tmp_path, monkeypatch):
+    _install(monkeypatch, _AutoClient([]))
+    with pytest.raises(SystemExit, match="함께"):
+        silo_worker.run_clean(_args(tmp_path, shard_index=None))

@@ -120,17 +120,17 @@ def clean_local(
     return len(rows), cleaned, counters
 
 
-def run_clean(args: argparse.Namespace) -> None:
-    client = SiloClient(args.central, args.silo_id)
-    recipe = client.fetch_cleaning_recipe(args.recipe_name, args.recipe_version)
-    client.start_cleaning_shard(args.job_id, args.shard_index)
+def _clean_shard(client: SiloClient, args: argparse.Namespace, job_id: str, shard_index: int,
+                 recipe_name: str, recipe_version: str) -> None:
+    recipe = client.fetch_cleaning_recipe(recipe_name, recipe_version)
+    client.start_cleaning_shard(job_id, shard_index)
 
     rows_in, cleaned, counters = clean_local(
         args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
     )
     job = client.report_cleaning_shard(
-        args.job_id,
-        args.shard_index,
+        job_id,
+        shard_index,
         rows_in=rows_in,
         rows_out=len(cleaned),
         step_counters=counters,
@@ -140,6 +140,8 @@ def run_clean(args: argparse.Namespace) -> None:
         json.dumps(
             {
                 "silo_id": args.silo_id,
+                "job_id": job_id,
+                "shard_index": shard_index,
                 "rows_in": rows_in,
                 "rows_out": len(cleaned),
                 "counters": counters,
@@ -148,6 +150,28 @@ def run_clean(args: argparse.Namespace) -> None:
             ensure_ascii=False,
         )
     )
+
+
+def run_clean(args: argparse.Namespace) -> None:
+    """작업 번호를 주면 그 샤드를, 모두 생략하면 내게 배정된 대기 샤드를 차례로 처리한다."""
+    client = SiloClient(args.central, args.silo_id)
+    given = (args.job_id, args.shard_index, args.recipe_name, args.recipe_version)
+    if all(v is not None for v in given):
+        _clean_shard(client, args, *given)
+        return
+    if any(v is not None for v in given):
+        raise SystemExit(
+            "--job-id·--shard-index·--recipe-name·--recipe-version은 함께 지정하거나 "
+            "모두 생략해야 합니다 (생략 = 배정된 대기 샤드 처리)"
+        )
+    shards = client.list_assigned_shards(status="pending")
+    if not shards:
+        print(json.dumps({"silo_id": args.silo_id, "event": "no_assigned_shards"},
+                         ensure_ascii=False))
+        return
+    for shard in shards:
+        _clean_shard(client, args, shard["job_id"], int(shard["shard_index"]),
+                     shard["recipe_name"], shard["recipe_version"])
 
 
 # ---------- 사일로 간 수직 정렬 ----------
@@ -365,6 +389,25 @@ def run_train_loop(args: argparse.Namespace) -> None:
     """
     client = SiloClient(args.central, args.silo_id)
     rows, stats = _training_rows(args, client)
+    explicit = bool(getattr(args, "recipe_name", None))
+    linked: dict[str, tuple[list[dict], dict]] = {}
+
+    def inputs_for(entry: dict) -> tuple[list[dict], dict]:
+        """라운드에 정제 작업이 연결돼 있으면(레시피 미지정 시) 그 레시피로 정제한 행."""
+        job_ref = None if explicit else entry.get("cleaning_job_id")
+        if not job_ref:
+            return rows, stats
+        if job_ref not in linked:
+            job = client.get_cleaning_job(job_ref)
+            recipe = client.fetch_cleaning_recipe(job["recipe_name"], job["recipe_version"])
+            rows_in, cleaned, _ = clean_local(
+                args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
+            )
+            linked[job_ref] = (
+                cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
+            )
+        return linked[job_ref]
+
     contributed_rounds: set[str] = set()
     idle_deadline = time.monotonic() + args.max_idle
     while len(contributed_rounds) < args.max_rounds:
@@ -398,10 +441,11 @@ def run_train_loop(args: argparse.Namespace) -> None:
             round_id = entry["round_id"]
             if round_id in contributed_rounds or args.silo_id in entry.get("contributors", []):
                 continue
-            result = train_ridge(rows, FEATURES, "y", l2=1e-6)
+            round_rows, round_stats = inputs_for(entry)
+            result = train_ridge(round_rows, FEATURES, "y", l2=1e-6)
             try:
                 client.push_parameters(round_id, result.sample_count, result.parameters,
-                                       **_with_rmse(stats, rows, result.parameters))
+                                       **_with_rmse(round_stats, round_rows, result.parameters))
             except (TimeoutError, OSError) as exc:
                 # push 자체가 타임아웃 — 성공했는지 불명이므로 세지 않고 재폴링
                 # (중복 push는 서버가 409로 걸러준다)
@@ -441,7 +485,7 @@ def run_train_loop(args: argparse.Namespace) -> None:
                     entry["model_name"],
                     entry["version"],
                     "accuracy",
-                    _local_accuracy(rows, result.parameters),
+                    _local_accuracy(round_rows, result.parameters),
                 )
             except (TimeoutError, OSError, SiloClientError):
                 pass  # 지표 push는 best-effort — 기여 진행을 막지 않는다
@@ -588,10 +632,11 @@ def main(argv: list[str]) -> None:
     clean = sub.add_parser("clean", help="정제 샤드 처리")
     clean.add_argument("--central", required=True)
     clean.add_argument("--silo-id", required=True)
-    clean.add_argument("--job-id", required=True)
-    clean.add_argument("--shard-index", type=int, required=True)
-    clean.add_argument("--recipe-name", required=True)
-    clean.add_argument("--recipe-version", required=True)
+    # 넷 다 생략하면 내게 배정된 대기 샤드를 서버에서 찾아 처리한다
+    clean.add_argument("--job-id")
+    clean.add_argument("--shard-index", type=int)
+    clean.add_argument("--recipe-name")
+    clean.add_argument("--recipe-version")
     clean.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
     clean.set_defaults(func=run_clean)
 

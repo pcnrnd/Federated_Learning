@@ -188,3 +188,32 @@ def test_client_payload_adds_cleaning_stats_only_when_given(monkeypatch):
     assert set(sent[0]) == {"round_id", "silo_id", "sample_count", "parameters", "checksum",
                             "aggregated_from"}
     assert sent[1]["rows_before_cleaning"] == 20 and sent[1]["train_rmse"] == 0.1
+
+
+@pytest.mark.unit
+def test_train_loop_uses_recipe_of_round_linked_cleaning_job(tmp_path, monkeypatch):
+    rounds = [
+        {"round_id": "r1", "model_name": "m", "version": "1", "contributors": [],
+         "cleaning_job_id": "c1"},
+        {"round_id": "r2", "model_name": "m", "version": "1", "contributors": []},
+    ]
+
+    class _LinkedClient(_TrainClient):
+        jobs_fetched: list[str] = []
+
+        def get_cleaning_job(self, job_id):
+            self.jobs_fetched.append(job_id)
+            return {"job_id": job_id, "recipe_name": "silo-hvc", "recipe_version": "1.0.0"}
+
+    client = _LinkedClient(rounds)
+    _install(monkeypatch, client)
+    monkeypatch.setattr(silo_worker.time, "sleep", lambda _s: None)
+
+    silo_worker.run_train_loop(_args(tmp_path, recipe_name=None, recipe_version=None, model="m",
+                                     max_rounds=2, poll_interval=0, max_idle=5.0))
+
+    by_round = {p["round_id"]: p for p in client.pushes}
+    assert client.jobs_fetched == ["c1"]
+    assert by_round["r1"]["rows_after_cleaning"] == by_round["r1"]["sample_count"]
+    assert "rows_after_cleaning" not in by_round["r2"]  # 연결 없는 라운드는 기존 동작
+    assert by_round["r2"]["sample_count"] == len(silo_worker._local_train_rows("silo-3"))

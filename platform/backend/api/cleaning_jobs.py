@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from models.cleaning_schemas import (
+    AssignedShard,
     CleaningJob,
     CleaningJobCreate,
     SchemaConsistency,
@@ -13,6 +14,16 @@ from models.cleaning_schemas import (
 from services import cleaning_job_service
 
 router = APIRouter(prefix="/api/cleaning-jobs", tags=["cleaning-jobs"])
+shards_router = APIRouter(prefix="/api/cleaning-shards", tags=["cleaning-jobs"])
+
+
+@shards_router.get("", response_model=list[AssignedShard])
+def list_assigned_shards_endpoint(
+    silo_id: str = Query(..., description="배정받은 사일로"),
+    status: str | None = Query(default=None, description="샤드 상태 (예: pending)"),
+) -> list[AssignedShard]:
+    """사일로에 배정된 샤드 — 작업 번호를 몰라도 자기 대기 샤드를 찾는다"""
+    return cleaning_job_service.list_assigned_shards(silo_id, status=status)
 
 
 class ShardStartRequest(BaseModel):

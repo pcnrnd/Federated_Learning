@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from config.cleaning_manager import load_jobs, save_jobs
 from models.cleaning_schemas import (
+    AssignedShard,
     CleaningJob,
     CleaningJobCreate,
     SchemaConsistency,
@@ -237,3 +238,26 @@ def schema_consistency(job_id: str) -> SchemaConsistency:
         groups=groups,
         missing=missing,
     )
+
+
+def list_assigned_shards(silo_id: str, status: str | None = None) -> list[AssignedShard]:
+    """사일로에 배정된 샤드 (오래된 잡 먼저). status로 샤드 상태를 거른다."""
+    out: list[AssignedShard] = []
+    for job in sorted(list_jobs(), key=lambda j: j.created_at):
+        for shard in job.shards:
+            if shard.silo_id != silo_id or (status and shard.status != status):
+                continue
+            out.append(
+                AssignedShard(
+                    job_id=job.job_id,
+                    shard_index=shard.shard_index,
+                    silo_id=silo_id,
+                    status=shard.status,
+                    recipe_name=job.recipe_name,
+                    recipe_version=job.recipe_version,
+                    dataset_label=job.dataset_label,
+                    job_status=job.status,
+                    created_at=job.created_at,
+                )
+            )
+    return out

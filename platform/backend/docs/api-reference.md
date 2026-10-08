@@ -77,6 +77,10 @@
 `train_rmse` — 사일로가 레시피로 정제한 로컬 데이터로 학습했을 때의 행 수와 학습 오차다.
 라운드의 `cleaning_stats`(사일로별)와 기여 목록에 기록된다. 생략하면 기존과 같다.
 
+라운드·잡 생성 시 `cleaning_job_id`(선택, 없는 작업이면 404)로 학습 입력을 만든 정제 작업을
+기록한다. 잡이 여는 라운드에 그대로 이어지고, 사일로 `train-loop`는 레시피를 따로 주지 않으면
+라운드에 연결된 정제 작업의 레시피로 로컬 원천을 정제해 학습한다.
+
 ## Batch 잡 (P1)
 
 | Method | Path | 설명 |
@@ -146,6 +150,7 @@
 | POST | `/api/cleaning-jobs/{id}/shards/{shard_index}/start` | 샤드 처리 시작 |
 | POST | `/api/cleaning-jobs/{id}/shards/{shard_index}/report` | 샤드 결과 보고 (`schema_fingerprint` 선택) |
 | GET | `/api/cleaning-jobs/{id}/schema-consistency` | 사일로 간 공통 스키마 지문 일치 판정 |
+| GET | `/api/cleaning-shards?silo_id=&status=` | 사일로에 배정된 샤드 (작업 번호 없이 대기 샤드 찾기) |
 
 레시피의 `mapping`(매핑표)은 다원천 단계(`map_schema`·`union_sources`·`join_sources` 등)에
 필요하다 — 공통 스키마(형식·허용 범위), 원천별 컬럼 대응, 단위 배율·오프셋, 코드표.

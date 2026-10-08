@@ -56,6 +56,9 @@ class TrainingRoundCreate(BaseModel):
     group_id: str
     min_contributions: int = Field(default=2, ge=1, description="집계 시작 최소 기여수")
     notes: str = ""
+    cleaning_job_id: str | None = Field(
+        default=None, description="학습 입력을 만든 정제 작업 — 사일로가 그 레시피로 정제해 학습"
+    )
 
 
 class ParameterContribution(BaseModel):
@@ -129,6 +132,7 @@ class TrainingRound(BaseModel):
     cluster_snapshot: dict[str, list[str]] | None = None
     # 사일로별 정제 통계 — 정제 전후 행 수·학습 오차 (레시피로 정제해 학습한 기여만)
     cleaning_stats: dict[str, dict[str, float | int]] = Field(default_factory=dict)
+    cleaning_job_id: str | None = None  # 학습 입력을 만든 정제 작업 (None = 연결 없음)
 
 
 class AggregateResult(BaseModel):
@@ -160,6 +164,9 @@ class TrainingJobRequest(BaseModel):
     min_contributions: int = Field(default=2, ge=1)
     max_rounds: int = Field(default=10, ge=1, le=10_000)
     notes: str = ""
+    cleaning_job_id: str | None = Field(
+        default=None, description="정제 작업 — 이 잡이 여는 라운드에 그대로 기록된다"
+    )
 
 
 class TrainingJob(BaseModel):
@@ -180,3 +187,4 @@ class TrainingJob(BaseModel):
     updated_at: str
     notes: str = ""
     error: str | None = None
+    cleaning_job_id: str | None = None

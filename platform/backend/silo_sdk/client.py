@@ -261,6 +261,16 @@ class SiloClient:
     def fetch_cleaning_recipe(self, name: str, version: str) -> dict[str, Any]:
         return self._request("GET", f"/api/cleaning-recipes/{name}/{version}")
 
+    def list_assigned_shards(self, status: str | None = "pending") -> list[Any]:
+        """내게 배정된 정제 샤드 (기본: 대기 중) — 작업 번호 없이 할 일을 찾는다."""
+        result = self._request(
+            "GET", "/api/cleaning-shards" + _query(silo_id=self.silo_id, status=status)
+        )
+        return result if isinstance(result, list) else []
+
+    def get_cleaning_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/cleaning-jobs/{job_id}")
+
     def start_cleaning_shard(self, job_id: str, shard_index: int) -> dict[str, Any]:
         return self._request(
             "POST",

@@ -46,6 +46,7 @@ async def api_key_middleware(request: Request, call_next):
 
 app.include_router(cleaning_recipes.router)
 app.include_router(cleaning_jobs.router)
+app.include_router(cleaning_jobs.shards_router)
 app.include_router(alignment_jobs.router)
 app.include_router(silo_groups.router)
 

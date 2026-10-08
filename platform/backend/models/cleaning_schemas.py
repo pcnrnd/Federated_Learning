@@ -213,3 +213,17 @@ class SchemaConsistency(BaseModel):
     fingerprints: dict[str, str | None]
     groups: dict[str, list[str]]
     missing: list[str]
+
+
+class AssignedShard(BaseModel):
+    """사일로에 배정된 정제 샤드 — 사일로가 작업 번호 없이 자기 일을 찾는다"""
+
+    job_id: str
+    shard_index: int
+    silo_id: str
+    status: ShardStatus
+    recipe_name: str
+    recipe_version: str
+    dataset_label: str
+    job_status: JobStatus
+    created_at: str
