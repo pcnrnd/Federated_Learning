@@ -77,12 +77,18 @@ def test_submit_rules_and_intersection():
     assert exc.value.status_code == 403
 
 
+def _order(keys):
+    from silo_sdk.alignment import order_digest
+
+    return order_digest(sorted(keys))
+
+
 @pytest.mark.unit
 def test_reports_decide_order_consistency():
     _create()
     _submit("silo-4", H[:3])
     _submit("silo-5", H[1:4])
-    digest = "d" * 64
+    digest = _order([H[1], H[2]])  # 서버 교집합(정렬) 순서 지문
 
     alignment_service.report_alignment(
         "a1", AlignmentReport(silo_id="silo-4", matched=2, excluded=1, order_digest=digest))
@@ -95,16 +101,24 @@ def test_reports_decide_order_consistency():
 
 
 @pytest.mark.unit
-def test_report_with_different_order_is_inconsistent():
+@pytest.mark.parametrize("report, reason", [
+    ({"matched": 1, "excluded": 2}, "교집합"),  # 남은 수 ≠ 교집합 크기
+    ({"matched": 2, "excluded": 999}, "제출"),  # 남은 수 + 제외 수 ≠ 제출 수 (R-F2 D2)
+    ({"matched": 2, "excluded": 1, "submitted": 5}, "제출"),
+    ({"matched": 2, "excluded": 1, "order_digest": "f" * 64}, "순서"),  # 서버 교집합 순서와 다름
+])
+def test_report_must_match_server_record(report, reason):
     _create()
     _submit("silo-4", H[:3])
     _submit("silo-5", H[1:4])
-    alignment_service.report_alignment(
-        "a1", AlignmentReport(silo_id="silo-4", matched=2, excluded=1, order_digest="d" * 64))
-    job = alignment_service.report_alignment(
-        "a1", AlignmentReport(silo_id="silo-5", matched=2, excluded=1, order_digest="e" * 64))
+    body = {"silo_id": "silo-4", "order_digest": _order([H[1], H[2]]), **report}
 
-    assert job.order_consistent is False
+    with pytest.raises(HTTPException) as exc:
+        alignment_service.report_alignment("a1", AlignmentReport(**body))
+
+    assert exc.value.status_code == 422 and reason in exc.value.detail
+    silo4 = alignment_service.get_alignment("a1").participants[0]
+    assert silo4.matched is None and silo4.excluded is None  # 기록하지 않는다
 
 
 def _clean_ids(silo_id: str, tmp_path) -> list[dict]:

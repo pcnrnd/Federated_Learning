@@ -101,7 +101,7 @@ def submit_hashes(alignment_id: str, submit: AlignmentSubmit) -> AlignmentJob:
         participants[idx] = participants[idx].model_copy(
             update={
                 "submitted": len(hashes),
-                "submitted_digest": hashlib.sha256("\n".join(hashes).encode("utf-8")).hexdigest(),
+                "submitted_digest": _digest_lines(hashes),
                 "submitted_at": _now_iso(),
             }
         )
@@ -126,6 +126,31 @@ def get_intersection(alignment_id: str, silo_id: str) -> AlignmentIntersection:
     return AlignmentIntersection(alignment_id=alignment_id, hashed_keys=list(entry["intersection"]))
 
 
+def _digest_lines(keys: list[str]) -> str:
+    return hashlib.sha256("\n".join(keys).encode("utf-8")).hexdigest()
+
+
+def _check_report(job: AlignmentJob, mine: AlignmentParticipant, report: AlignmentReport,
+                  intersection: list[str]) -> None:
+    """보고가 서버 기록과 맞는지 — 맞지 않으면 422 (잘못된 보고를 성공으로 판정하지 않는다).
+
+    남은 수 = 교집합 크기, 남은 수 + 제외 수 = 제출 수, 순서 지문 = 서버 교집합(정렬) 지문.
+    """
+    problems = []
+    if report.matched != job.intersection_size:
+        problems.append(f"남은 수 {report.matched} ≠ 교집합 크기 {job.intersection_size}")
+    if report.matched + report.excluded != mine.submitted:
+        problems.append(
+            f"남은 수+제외 수 {report.matched + report.excluded} ≠ 제출 수 {mine.submitted}"
+        )
+    if report.submitted is not None and report.submitted != mine.submitted:
+        problems.append(f"보고한 제출 수 {report.submitted} ≠ 서버 제출 수 {mine.submitted}")
+    if report.order_digest != _digest_lines(intersection):
+        problems.append("순서 지문이 서버 교집합 순서와 다릅니다")
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
+
+
 def report_alignment(alignment_id: str, report: AlignmentReport) -> AlignmentJob:
     with _lock:
         entry = _load_entry(alignment_id)
@@ -133,6 +158,7 @@ def report_alignment(alignment_id: str, report: AlignmentReport) -> AlignmentJob
         idx = _participant(job, report.silo_id)
         if job.status != "ready":
             raise HTTPException(status_code=409, detail="교집합이 정해지기 전에는 보고할 수 없습니다")
+        _check_report(job, job.participants[idx], report, entry["intersection"])
         participants = list(job.participants)
         participants[idx] = participants[idx].model_copy(
             update={
@@ -141,14 +167,9 @@ def report_alignment(alignment_id: str, report: AlignmentReport) -> AlignmentJob
                 "order_digest": report.order_digest,
             }
         )
+        # 보고는 서버 기록과 맞을 때만 저장되므로 모두 보고하면 순서가 일치한다
         reported = [p for p in participants if p.order_digest is not None]
-        consistent: bool | None = None
-        if len({p.order_digest for p in reported}) > 1 or any(
-            p.matched != job.intersection_size for p in reported
-        ):
-            consistent = False
-        elif len(reported) == len(participants):
-            consistent = True
+        consistent: bool | None = True if len(reported) == len(participants) else None
         updated = job.model_copy(
             update={"participants": participants, "order_consistent": consistent,
                     "updated_at": _now_iso()}

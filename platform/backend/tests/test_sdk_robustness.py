@@ -282,3 +282,61 @@ def test_integer_tolerance_resolution_stays_an_exact_integer():
 
     assert rows[0]["x1"] == 9007199254740994 and type(rows[0]["x1"]) is int
     assert counters["reconcile.resolved.tolerance"] == 1
+
+
+# ---------- 대상 표의 관측 시각 (R-F2 D1) ----------
+
+TIMED = {
+    "key": "id",
+    "common_schema": {"id": {"type": "str"}, "x1": {"type": "int"}},
+    "sources": {
+        "ra": {"format": "records", "columns": {"eid": "id"}, "attribute_field": "attr",
+               "value_field": "value", "time_field": "at"},
+        "rb": {"format": "records", "columns": {"eid": "id"}, "attribute_field": "attr",
+               "value_field": "value", "time_field": "at"},
+    },
+}
+
+
+def _timed(target_at, older_at):
+    steps = [
+        {"type": "parse_records", "params": {"source": "ra", "into": "target"}},
+        {"type": "parse_records", "params": {"source": "rb", "into": "older"}},
+        {"type": "reconcile", "params": {"target": "target", "sources": ["older"],
+                                         "columns": ["x1"], "priority": ["preferred"],
+                                         "into": "m"}},
+        {"type": "validate_schema", "params": {}},
+    ]
+    tables = {"ra": [{"eid": "E1", "attr": "x1", "value": 20, "at": target_at}],
+              "rb": [{"eid": "E1", "attr": "x1", "value": 10, "at": older_at}]}
+    return apply_recipe(tables, steps, mapping=TIMED)
+
+
+@pytest.mark.unit
+def test_reconcile_uses_target_observation_time():
+    rows, counters = _timed("2026-10-08T00:00:00Z", "2026-10-01T00:00:00Z")
+
+    assert rows == [{"id": "E1", "x1": 20}]  # 대상 값이 더 최신
+    assert counters["reconcile.resolved.latest"] == 1
+
+
+@pytest.mark.unit
+def test_reconcile_picks_newer_source_over_older_target():
+    rows, counters = _timed("2026-10-01T00:00:00Z", "2026-10-08T00:00:00Z")
+
+    assert rows == [{"id": "E1", "x1": 10}]
+    assert counters["reconcile.resolved.latest"] == 1
+
+
+@pytest.mark.unit
+def test_reconcile_output_drops_row_level_time():
+    steps = [{"type": "parse_records", "params": {"source": "ra", "into": "target"}},
+             {"type": "parse_records", "params": {"source": "rb", "into": "older"}},
+             {"type": "reconcile", "params": {"target": "target", "sources": ["older"],
+                                              "columns": ["x1"], "into": "m"}}]
+    tables = {"ra": [{"eid": "E1", "attr": "x1", "value": 20, "at": "2026-10-08T00:00:00Z"}],
+              "rb": [{"eid": "E1", "attr": "x1", "value": 10, "at": "2026-10-09T00:00:00Z"}]}
+
+    rows, _ = apply_recipe(tables, steps, mapping=TIMED)
+
+    assert "_observed_at" not in rows[0]  # 열마다 출처·시각이 달라 행 단위 시각은 남기지 않는다

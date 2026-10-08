@@ -472,9 +472,11 @@ def reconcile(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -
     """같은 엔터티·속성의 값이 원천마다 다르면 규칙으로 하나를 고른다 (교차 충돌 해소).
 
     대상 표(target)의 행마다 params.columns 의 후보 = 대상 값 + 다른 원천(sources) 행의 값.
+    후보의 시각은 대상·다른 원천 모두 그 행의 `_observed_at` 이다(없으면 시각 없음).
     규칙 순서: 우선 원천(params.priority 앞쪽) → 최신 시각(`_observed_at`) →
     허용 오차(params.tolerance 안이면 평균). 해소하지 못하면 결측(None)으로 두어
     validate_schema가 제외한다. 대상 표에 없는 엔터티의 기록은 orphans로 센다.
+    결과 행은 열마다 출처·시각이 다를 수 있어 행 단위 `_observed_at` 을 남기지 않는다.
     """
     key = mapping["key"]
     target_name = params["target"]
@@ -501,9 +503,10 @@ def reconcile(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -
                     )
     out: list[Row] = []
     for row in target:
-        new = dict(row)
+        new = {k: v for k, v in row.items() if k != "_observed_at"}
+        own_time = _parse_time(row.get("_observed_at"))
         for col in columns:
-            cands = [(row[col], rank(target_name), None)] if row.get(col) is not None else []
+            cands = [(row[col], rank(target_name), own_time)] if row.get(col) is not None else []
             cands += extra.get((row.get(key), col), [])
             if not cands:
                 new[col] = None  # 어느 원천에도 값이 없다 → 결측
