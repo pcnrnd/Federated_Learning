@@ -21,6 +21,7 @@ import json
 import math
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -350,8 +351,9 @@ def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]
 
 # ---------- 교차: JSON 기록 변환 · 충돌 해소 ----------
 
-# 단위 변환 반올림 오차는 같은 값으로 본다 — 작은 값은 절대 1e-6, 큰 값은 상대 1e-12
-_SAME_ABS, _SAME_REL = 1e-6, 1e-12
+# float 후보의 같은 값 판정 — 단위 변환 반올림 잡음만 허용한다: 절대 1e-6 또는 4 ulp 중 큰 쪽.
+# 정수 후보는 정확히 비교한다(큰 정수에 상대 오차를 쓰면 서로 다른 값이 같아진다).
+_SAME_ABS, _SAME_ULPS = 1e-6, 4
 
 
 def parse_records(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
@@ -409,11 +411,22 @@ def parse_records(tables: Tables, params: dict[str, Any], mapping: dict[str, Any
     return counters
 
 
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _same(values: list[Any]) -> bool:
     first = values[0]
-    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
-        return all(math.isclose(v, first, rel_tol=_SAME_REL, abs_tol=_SAME_ABS) for v in values)
-    return all(v == first for v in values)
+    if all(_is_int(v) for v in values) or not all(_is_number(v) for v in values):
+        return all(v == first for v in values)  # 정수·문자열 등은 정확히
+    return all(
+        abs(v - first) <= max(_SAME_ABS, _SAME_ULPS * math.ulp(max(abs(v), abs(first))))
+        for v in values
+    )
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -448,9 +461,10 @@ def _resolve(
         if _same([v for v, _, _ in cands]):
             return cands[0][0], "latest"
     values = [v for v, _, _ in cands]
-    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
-        if max(values) - min(values) <= tolerance:
-            return sum(values) / len(values), "tolerance"
+    if all(_is_number(v) for v in values) and max(values) - min(values) <= tolerance:
+        if all(_is_int(v) for v in values):  # 정수 평균은 정확한 반올림 정수로 (형식 유지)
+            return round(Fraction(sum(values), len(values))), "tolerance"
+        return sum(values) / len(values), "tolerance"
     return None, "unresolved"
 
 

@@ -195,3 +195,90 @@ def test_load_sources_strips_utf8_bom(tmp_path):
     path.write_bytes("\ufeffeid,x3_level\nE1,L0\n".encode("utf-8"))
 
     assert load_sources({"t": path})["t"] == [{"eid": "E1", "x3_level": "L0"}]
+
+
+# ---------- 정수 후보의 동일 판정 (R-F1 N2) ----------
+
+INT_RECON = {
+    "key": "id",
+    "common_schema": {"id": {"type": "str"}, "x1": {"type": "int"}, "f": {"type": "float"}},
+    "sources": {
+        "t": {"columns": {"k": "id", "v": "x1", "w": "f"}},
+        "r": {"format": "records", "columns": {"eid": "id"}, "attribute_field": "attr",
+              "value_field": "value", "time_field": "at"},
+    },
+}
+
+
+def _recon(t_rows, records, priority=("facts", "t"), tolerance=0.0, column="x1"):
+    steps = [
+        {"type": "map_schema", "params": {"sources": ["t"]}},
+        {"type": "parse_records", "params": {"source": "r", "into": "facts"}},
+        {"type": "reconcile", "params": {"target": "t", "sources": ["facts"], "columns": [column],
+                                         "priority": list(priority), "tolerance": tolerance,
+                                         "into": "m"}},
+    ]
+    return apply_recipe({"t": t_rows, "r": records}, steps, mapping=INT_RECON)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("a, b", [
+    ("1000000000000", "1000000000001"),
+    ("9007199254740992", "9007199254740993"),
+])
+def test_distinct_large_integers_conflict_and_follow_priority(a, b):
+    rows, counters = _recon([{"k": "E1", "v": a, "w": "0"}],
+                            [{"eid": "E1", "attr": "x1", "value": b, "at": "2026-09-15T00:00:00Z"}])
+
+    assert rows[0]["x1"] == int(b)  # 우선 원천(facts) 값
+    assert counters["reconcile.conflicts"] == 1
+    assert counters["reconcile.resolved.priority"] == 1
+
+
+@pytest.mark.unit
+def test_equal_large_integers_are_not_a_conflict():
+    rows, counters = _recon([{"k": "E1", "v": "9007199254740993", "w": "0"}],
+                            [{"eid": "E1", "attr": "x1", "value": "9007199254740993"}])
+
+    assert rows[0]["x1"] == 9007199254740993
+    assert counters["reconcile.conflicts"] == 0
+
+
+@pytest.mark.unit
+def test_large_integer_latest_and_unresolved_paths():
+    records = [
+        {"eid": "E1", "attr": "x1", "value": "9007199254740992", "at": "2026-09-01T00:00:00Z"},
+        {"eid": "E1", "attr": "x1", "value": "9007199254740993", "at": "2026-09-15T00:00:00Z"},
+        {"eid": "E2", "attr": "x1", "value": "9007199254740992", "at": "2026-09-15T00:00:00Z"},
+        {"eid": "E2", "attr": "x1", "value": "9007199254740993", "at": "2026-09-15T00:00:00Z"},
+    ]
+    rows, counters = _recon([{"k": "E1", "v": "", "w": "0"}, {"k": "E2", "v": "", "w": "0"}],
+                            records)
+    by_id = {r["id"]: r["x1"] for r in rows}
+
+    assert by_id == {"E1": 9007199254740993, "E2": None}
+    assert counters["reconcile.resolved.latest"] == 1
+    assert counters["reconcile.unresolved"] == 1
+
+
+@pytest.mark.unit
+def test_float_same_check_allows_rounding_noise_only():
+    noise, _ = _recon([{"k": "E1", "v": "1", "w": "1000000000000.0"}],
+                      [{"eid": "E1", "attr": "f", "value": "1000000000000.0001"}], column="f")
+    distinct, counters = _recon([{"k": "E1", "v": "1", "w": "1000000000000.0"}],
+                                [{"eid": "E1", "attr": "f", "value": "1000000000001.0"}],
+                                column="f")
+
+    assert noise[0]["f"] == 1000000000000.0
+    assert distinct[0]["f"] == 1000000000001.0  # 실제로 다른 값 → 우선 원천
+    assert counters["reconcile.conflicts"] == 1
+
+
+@pytest.mark.unit
+def test_integer_tolerance_resolution_stays_an_exact_integer():
+    records = [{"eid": "E1", "attr": "x1", "value": "9007199254740993"},
+               {"eid": "E1", "attr": "x1", "value": "9007199254740995"}]
+    rows, counters = _recon([{"k": "E1", "v": "", "w": "0"}], records, tolerance=2)
+
+    assert rows[0]["x1"] == 9007199254740994 and type(rows[0]["x1"]) is int
+    assert counters["reconcile.resolved.tolerance"] == 1
