@@ -19,7 +19,8 @@ import csv
 import hashlib
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -75,8 +76,28 @@ def _is_blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and value.strip() == "")
 
 
+_SCALARS = (str, int, float, bool)  # 목록·사전 같은 값은 어떤 공통 형식으로도 바꾸지 않는다
+
+
+def _to_int(value: Any) -> tuple[bool, Any]:
+    """float을 거치지 않는 정수 변환 — 2**53을 넘는 정수도 값이 바뀌지 않는다."""
+    if isinstance(value, int):
+        return True, value
+    try:
+        dec = Decimal(str(value).strip())
+    except InvalidOperation:
+        return False, value
+    if not dec.is_finite() or dec != dec.to_integral_value():
+        return False, value
+    return True, int(dec)
+
+
 def cast_value(value: Any, type_name: str) -> tuple[bool, Any]:
-    """공통 스키마 형식으로 변환. (성공 여부, 값) — float은 유한값만 성공."""
+    """공통 스키마 형식으로 변환. (성공 여부, 값) — float은 유한값만, int는 정확한 정수만."""
+    if type_name not in ("str", "int", "float", "bool"):
+        raise CleaningError(f"지원하지 않는 공통 스키마 형식: {type_name}")
+    if not isinstance(value, _SCALARS):
+        return False, value
     try:
         if type_name == "str":
             return True, str(value).strip()
@@ -86,23 +107,29 @@ def cast_value(value: Any, type_name: str) -> tuple[bool, Any]:
             out = float(value)
             return math.isfinite(out), out
         if type_name == "int":
-            as_float = float(value)
-            if not as_float.is_integer():
-                return False, value
-            return True, int(as_float)
-        if type_name == "bool":
-            if isinstance(value, str):
-                return True, value.strip().lower() in {"1", "true", "yes"}
-            return True, bool(value)
+            return _to_int(value)
+        if isinstance(value, str):
+            return True, value.strip().lower() in {"1", "true", "yes"}
+        return True, bool(value)
     except (TypeError, ValueError, OverflowError):
         return False, value
-    raise CleaningError(f"지원하지 않는 공통 스키마 형식: {type_name}")
 
 
-def convert_unit(value: float, column: str, unit: str, mapping: dict[str, Any]) -> float:
-    """단위표로 기준 단위 변환 — 값 × scale + offset. 미등록 단위는 KeyError."""
+def convert_unit(
+    value: int | float, column: str, unit: str, mapping: dict[str, Any]
+) -> tuple[bool, int | float]:
+    """단위표로 기준 단위 변환 — 값 × scale + offset. 미등록 단위는 KeyError.
+
+    정수 컬럼은 Decimal로 정확히 계산해 결과가 정수일 때만 int로 성공한다(아니면 실패).
+    """
     spec = mapping.get("units", {}).get(column, {})[unit]
-    return value * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+    scale, offset = spec.get("scale", 1.0), spec.get("offset", 0.0)
+    if mapping["common_schema"][column]["type"] == "int":
+        result = Decimal(value) * Decimal(str(scale)) + Decimal(str(offset))
+        if result != result.to_integral_value():
+            return False, value
+        return True, int(result)
+    return True, value * float(scale) + float(offset)
 
 
 def map_value(
@@ -119,7 +146,7 @@ def map_value(
     if code_table:
         codes = mapping.get("codes", {}).get(code_table, {})
         key = value.strip() if isinstance(value, str) else value
-        if key not in codes:
+        if not isinstance(key, _SCALARS) or key not in codes:
             return None, "code_unmapped"
         value = codes[key]
     type_name = mapping["common_schema"][column]["type"]
@@ -127,10 +154,14 @@ def map_value(
     if not ok:
         return None, "cast_failed"
     if unit:
+        if type_name not in ("int", "float"):
+            return None, "unknown_unit"  # 단위는 숫자 컬럼에만 (서버 등록 때도 거부)
         try:
-            value = convert_unit(value, column, unit, mapping)
+            ok, value = convert_unit(value, column, unit, mapping)
         except KeyError:
             return None, "unknown_unit"
+        if not ok:
+            return None, "cast_failed"  # 정수 컬럼인데 변환 결과가 정수가 아님
     return value, None
 
 
@@ -350,13 +381,19 @@ def parse_records(tables: Tables, params: dict[str, Any], mapping: dict[str, Any
             fail(failure or "missing_key")
             continue
         attr = record.get(spec["attribute_field"])
+        if not isinstance(attr, str):  # 목록 등 형식이 틀린 속성 코드는 이 기록만 제외
+            fail("unknown_code")
+            continue
         col = attr_codes.get(attr) if attr_codes is not None else attr
         if col not in mapping["common_schema"] or col == key:
             fail("unknown_code")
             continue
         unit = record.get(spec["unit_field"]) if spec.get("unit_field") else None
+        if not (_is_blank(unit) or isinstance(unit, str)):
+            fail("unknown_unit")
+            continue
         value, failure = map_value(record.get(spec["value_field"]), col, mapping,
-                                   unit=None if _is_blank(unit) else str(unit))
+                                   unit=None if _is_blank(unit) else unit)
         if value is None:
             fail(failure or "missing_value")
             continue
@@ -375,12 +412,14 @@ def _same(values: list[Any]) -> bool:
 
 
 def _parse_time(value: Any) -> datetime | None:
+    """ISO 8601 시각 → UTC 기준 datetime. 시간대가 없으면 UTC로 본다(형식이 틀리면 None)."""
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _resolve(

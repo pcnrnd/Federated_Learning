@@ -93,6 +93,8 @@ class CleaningMapping(BaseModel):
         for col in self.units:
             if col not in schema:
                 raise ValueError(f"단위표 컬럼 '{col}'가 공통 스키마에 없습니다")
+            if schema[col].type not in ("int", "float"):
+                raise ValueError(f"단위표 컬럼 '{col}'는 숫자(int·float) 형식이어야 합니다")
         for name, src in self.sources.items():
             for col in src.columns.values():
                 if col not in schema:
