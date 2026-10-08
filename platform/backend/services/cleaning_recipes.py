@@ -41,7 +41,21 @@ STEP_CATALOG: dict[str, dict[str, Any]] = {
         "required": ["column", "pattern"],
         "description": "정규식 매칭되지 않는 행 제거",
     },
+    # ---------- 다원천 단계 — 레시피 매핑표(mapping)가 필요하다 ----------
+    "map_schema": {
+        "required": ["sources"],
+        "needs_mapping": True,
+        "description": "표 원천을 매핑표대로 공통 스키마에 맞춤 (컬럼명·형식·단위·코드)",
+    },
+    "validate_schema": {
+        "required": [],
+        "needs_mapping": True,
+        "description": "공통 스키마(존재·형식·유한·범위) 위반 행 제외, 사유별 집계",
+    },
 }
+
+# 매핑표의 원천 이름을 가리키는 파라미터 (단계 → 파라미터 이름)
+_SOURCE_PARAMS: dict[str, str] = {"map_schema": "sources"}
 
 
 def validate_step_params(step_type: str, params: dict[str, Any]) -> None:
@@ -51,3 +65,24 @@ def validate_step_params(step_type: str, params: dict[str, Any]) -> None:
     missing = [k for k in STEP_CATALOG[step_type]["required"] if k not in params]
     if missing:
         raise ValueError(f"'{step_type}' 누락 필수 파라미터: {missing}")
+
+
+def validate_mapping_usage(
+    step_type: str, params: dict[str, Any], mapping_sources: set[str] | None
+) -> None:
+    """다원천 단계가 매핑표를 갖췄는지, 가리키는 원천이 매핑표에 있는지 검사.
+
+    mapping_sources: 매핑표의 원천 이름 집합 (매핑표가 없으면 None)
+    """
+    if not STEP_CATALOG[step_type].get("needs_mapping"):
+        return
+    if mapping_sources is None:
+        raise ValueError(f"'{step_type}' 단계에는 레시피 매핑표(mapping)가 필요합니다")
+    param = _SOURCE_PARAMS.get(step_type)
+    if param is None:
+        return
+    value = params[param]
+    names = value if isinstance(value, list) else [value]
+    unknown = [n for n in names if n not in mapping_sources]
+    if unknown:
+        raise ValueError(f"'{step_type}': 매핑표에 없는 원천 {unknown}")

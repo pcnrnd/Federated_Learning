@@ -1,6 +1,8 @@
 """사일로 컨테이너 안에서 실행되는 E2E 워커 (표준 라이브러리 + silo_sdk 전용).
 
-정제(clean): 레시피 조회 → 샤드 start → 로컬 더미 데이터에 apply_recipe → 카운터 report.
+정제(clean): 레시피 조회 → 샤드 start → 로컬 데이터에 apply_recipe → 카운터 report.
+  레시피에 매핑표(mapping)가 있으면 로컬 원천 파일(--data-dir, 없으면 합성 생성)을,
+  없으면 기존 더미 단일 표를 정제한다.
 학습(train): 사일로별 non-IID 로컬 데이터 생성 → train_ridge 실학습 → 파라미터 기여 push.
 엣지 집계(train-edge): 자기 실학습 + 하위 파라미터를 combine 해 1건으로 대리 제출 (2단 HFL).
 수집(monitor): /proc 실측 리소스(cpu/mem/disk %)를 주기 push — SPA 사일로 리소스 화면 데이터원.
@@ -30,11 +32,14 @@ import random
 import sys
 import time
 
-from silo_sdk import SiloClient, apply_recipe, train_ridge
+from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
 from silo_sdk.client import SiloClientError
 from silo_sdk.edge import combine
+from silo_sdk.integration import load_sources
 
 FEATURES = ["x1", "x2", "x3"]
+# 사일로 로컬 원천 파일 위치 (컨테이너 안 — 사일로 밖으로 나가지 않는다)
+DEFAULT_DATA_DIR = os.environ.get("FED_SILO_DATA_DIR", "/srv/silo-data")
 
 # 학습 데이터의 참 모델 — 전 사일로 공통 (E2E에서 집계 결과와 대조)
 TRUE_WEIGHTS = [2.0, -3.0, 0.5]
@@ -87,17 +92,37 @@ def _local_train_rows(silo_id: str) -> list[dict]:
     return rows
 
 
+def load_local_sources(silo_id: str, data_dir: str) -> dict[str, list[dict]]:
+    """사일로 로컬 원천 3유형(4파일)을 읽는다 — 파일이 없으면 합성 원천을 먼저 쓴다."""
+    return load_sources(synthetic.ensure_sources(silo_id, data_dir))
+
+
+def clean_local(
+    silo_id: str, data_dir: str, recipe: dict
+) -> tuple[int, list[dict], dict[str, int]]:
+    """레시피를 로컬 데이터에 적용 → (입력 행 수, 정제 행, 카운터). 행은 로컬에서만 쓴다."""
+    if recipe.get("mapping"):
+        tables = load_local_sources(silo_id, data_dir)
+        rows_in = sum(len(rows) for rows in tables.values())
+        cleaned, counters = apply_recipe(tables, recipe["steps"], mapping=recipe["mapping"])
+        return rows_in, cleaned, counters
+    rows = _dirty_rows(silo_id)
+    cleaned, counters = apply_recipe(rows, recipe["steps"])
+    return len(rows), cleaned, counters
+
+
 def run_clean(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
     recipe = client.fetch_cleaning_recipe(args.recipe_name, args.recipe_version)
     client.start_cleaning_shard(args.job_id, args.shard_index)
 
-    rows = _dirty_rows(args.silo_id)
-    cleaned, counters = apply_recipe(rows, recipe["steps"])
+    rows_in, cleaned, counters = clean_local(
+        args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
+    )
     job = client.report_cleaning_shard(
         args.job_id,
         args.shard_index,
-        rows_in=len(rows),
+        rows_in=rows_in,
         rows_out=len(cleaned),
         step_counters=counters,
     )
@@ -105,7 +130,7 @@ def run_clean(args: argparse.Namespace) -> None:
         json.dumps(
             {
                 "silo_id": args.silo_id,
-                "rows_in": len(rows),
+                "rows_in": rows_in,
                 "rows_out": len(cleaned),
                 "counters": counters,
                 "job_status": job["status"],
@@ -445,6 +470,7 @@ def main(argv: list[str]) -> None:
     clean.add_argument("--shard-index", type=int, required=True)
     clean.add_argument("--recipe-name", required=True)
     clean.add_argument("--recipe-version", required=True)
+    clean.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
     clean.set_defaults(func=run_clean)
 
     train = sub.add_parser("train", help="로컬 릿지 학습 + 기여 push")

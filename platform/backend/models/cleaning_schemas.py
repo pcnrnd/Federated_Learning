@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 JobStatus = Literal["pending", "running", "completed", "partial", "failed"]
 ShardStatus = Literal["pending", "running", "completed", "failed"]
@@ -21,7 +21,10 @@ StepType = Literal[
     "trim_whitespace",
     "lowercase",
     "regex_filter",
+    "map_schema",
+    "validate_schema",
 ]
+ColumnType = Literal["str", "int", "float", "bool"]
 
 
 class CleaningStep(BaseModel):
@@ -31,11 +34,77 @@ class CleaningStep(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class ColumnSpec(BaseModel):
+    """공통 스키마 컬럼 — 형식과 선택적 허용 범위 (validate_schema 기준)"""
+
+    type: ColumnType
+    min: float | None = None
+    max: float | None = None
+
+
+class UnitSpec(BaseModel):
+    """단위 변환 — 기준 단위 값 = 원천 값 × scale + offset"""
+
+    scale: float = 1.0
+    offset: float = 0.0
+
+
+class SourceMapping(BaseModel):
+    """원천 하나의 매핑 — 원천 컬럼 → 공통 컬럼, 단위·코드표 지정"""
+
+    format: Literal["table", "records"] = "table"
+    columns: dict[str, str] = Field(..., min_length=1, description="원천 컬럼 → 공통 컬럼")
+    units: dict[str, str] = Field(default_factory=dict, description="공통 컬럼 → 단위 이름")
+    codes: dict[str, str] = Field(default_factory=dict, description="공통 컬럼 → 코드표 이름")
+    # records 형식(JSON 기록) 전용 — 한 기록 = 엔터티·속성 코드·값·단위·관측 시각
+    attribute_field: str | None = None
+    attribute_codes: str | None = Field(default=None, description="속성 코드 → 공통 컬럼 코드표")
+    value_field: str | None = None
+    unit_field: str | None = None
+    time_field: str | None = None
+
+
+class CleaningMapping(BaseModel):
+    """레시피 매핑표 — 컬럼 대응·형 변환·단위 배율/오프셋·코드표 (메타데이터만, 원시 값 없음)"""
+
+    key: str = "id"
+    common_schema: dict[str, ColumnSpec] = Field(..., min_length=1)
+    sources: dict[str, SourceMapping] = Field(default_factory=dict)
+    units: dict[str, dict[str, UnitSpec]] = Field(default_factory=dict)
+    codes: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_references(self) -> CleaningMapping:
+        schema = self.common_schema
+        if self.key not in schema:
+            raise ValueError(f"key '{self.key}'가 공통 스키마에 없습니다")
+        for col in self.units:
+            if col not in schema:
+                raise ValueError(f"단위표 컬럼 '{col}'가 공통 스키마에 없습니다")
+        for name, src in self.sources.items():
+            for col in src.columns.values():
+                if col not in schema:
+                    raise ValueError(f"원천 '{name}': 대응 컬럼 '{col}'가 공통 스키마에 없습니다")
+            for col, unit in src.units.items():
+                if unit not in self.units.get(col, {}):
+                    raise ValueError(f"원천 '{name}': 단위표에 '{col}' 단위 '{unit}'가 없습니다")
+            tables = [*src.codes.values(), *([src.attribute_codes] if src.attribute_codes else [])]
+            for table in tables:
+                if table not in self.codes:
+                    raise ValueError(f"원천 '{name}': 코드표 '{table}'가 없습니다")
+            if src.format == "records" and not (src.attribute_field and src.value_field):
+                raise ValueError(f"원천 '{name}': 기록 형식은 attribute_field·value_field가 필요합니다")
+        return self
+
+
 class CleaningRecipeRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=64)
     version: str = Field(..., description="SemVer (예: 1.0.0)")
     description: str = ""
     steps: list[CleaningStep] = Field(..., min_length=1)
+    mapping: CleaningMapping | None = Field(
+        default=None, description="다원천 단계(map_schema 등)용 매핑표"
+    )
 
     @field_validator("version")
     @classmethod
@@ -52,6 +121,7 @@ class CleaningRecipe(BaseModel):
     description: str
     steps: list[CleaningStep]
     created_at: str
+    mapping: CleaningMapping | None = None
 
 
 class CleaningJobCreate(BaseModel):
