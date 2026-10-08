@@ -35,7 +35,7 @@ import time
 from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
 from silo_sdk.client import SiloClientError
 from silo_sdk.edge import combine
-from silo_sdk.integration import load_sources
+from silo_sdk.integration import load_sources, schema_fingerprint
 
 FEATURES = ["x1", "x2", "x3"]
 # 사일로 로컬 원천 파일 위치 (컨테이너 안 — 사일로 밖으로 나가지 않는다)
@@ -125,6 +125,7 @@ def run_clean(args: argparse.Namespace) -> None:
         rows_in=rows_in,
         rows_out=len(cleaned),
         step_counters=counters,
+        schema_fingerprint=schema_fingerprint(cleaned),
     )
     print(
         json.dumps(

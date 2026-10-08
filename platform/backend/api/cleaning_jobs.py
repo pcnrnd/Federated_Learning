@@ -4,7 +4,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from models.cleaning_schemas import CleaningJob, CleaningJobCreate, ShardReport
+from models.cleaning_schemas import (
+    CleaningJob,
+    CleaningJobCreate,
+    SchemaConsistency,
+    ShardReport,
+)
 from services import cleaning_job_service
 
 router = APIRouter(prefix="/api/cleaning-jobs", tags=["cleaning-jobs"])
@@ -27,6 +32,12 @@ def create_job_endpoint(request: CleaningJobCreate) -> CleaningJob:
 @router.get("/{job_id}", response_model=CleaningJob)
 def get_job_endpoint(job_id: str) -> CleaningJob:
     return cleaning_job_service.get_job(job_id)
+
+
+@router.get("/{job_id}/schema-consistency", response_model=SchemaConsistency)
+def schema_consistency_endpoint(job_id: str) -> SchemaConsistency:
+    """사일로 간 공통 스키마 지문 일치 판정"""
+    return cleaning_job_service.schema_consistency(job_id)
 
 
 @router.post("/{job_id}/shards/{shard_index}/start", response_model=CleaningJob)

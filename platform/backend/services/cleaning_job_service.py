@@ -18,6 +18,7 @@ from config.cleaning_manager import load_jobs, save_jobs
 from models.cleaning_schemas import (
     CleaningJob,
     CleaningJobCreate,
+    SchemaConsistency,
     ShardAssignment,
     ShardReport,
 )
@@ -162,6 +163,7 @@ def report_shard(report: ShardReport) -> CleaningJob:
                 "started_at": shard.started_at or report.started_at,
                 "completed_at": report.completed_at,
                 "error": report.error,
+                "schema_fingerprint": report.schema_fingerprint,
             }
         )
         new_shards = list(job.shards)
@@ -211,3 +213,27 @@ def _maybe_finalize(job: CleaningJob) -> CleaningJob:
         total_out,
     )
     return finalized
+
+
+def schema_consistency(job_id: str) -> SchemaConsistency:
+    """샤드들이 보고한 공통 스키마 지문을 비교한다 (값 없이 스키마 일치만)."""
+    job = get_job(job_id)
+    fingerprints = {s.silo_id: s.schema_fingerprint for s in job.shards}
+    groups: dict[str, list[str]] = {}
+    for silo_id, fp in fingerprints.items():
+        if fp is not None:
+            groups.setdefault(fp, []).append(silo_id)
+    missing = [silo_id for silo_id, fp in fingerprints.items() if fp is None]
+    if len(groups) > 1:
+        consistent: bool | None = False
+    elif groups and not missing:
+        consistent = True
+    else:
+        consistent = None
+    return SchemaConsistency(
+        job_id=job_id,
+        consistent=consistent,
+        fingerprints=fingerprints,
+        groups=groups,
+        missing=missing,
+    )

@@ -151,3 +151,64 @@ def test_load_sources_reads_csv_and_json(tmp_path):
     assert set(tables) == {"period_a", "period_b", "entity", "records"}
     assert all(isinstance(v, str) for v in tables["entity"][0].values())
     assert isinstance(tables["records"][0], dict) and "attr" in tables["records"][0]
+
+
+# ---------- 수평: union_sources · 스키마 지문 (F3) ----------
+
+UNION_MAPPING = {
+    "key": "id",
+    "common_schema": {"id": {"type": "str"}, "x1": {"type": "float"}},
+    "sources": {"p1": {"columns": {"rid": "id", "a": "x1"}},
+                "p2": {"columns": {"entity": "id", "b": "x1"}}},
+}
+UNION_STEPS = [
+    {"type": "map_schema", "params": {"sources": ["p1", "p2"]}},
+    {"type": "union_sources", "params": {"sources": ["p1", "p2"], "into": "all"}},
+    {"type": "validate_schema", "params": {}},
+]
+
+
+@pytest.mark.unit
+def test_union_sources_combines_rows_and_removes_duplicates():
+    tables = {
+        "p1": [{"rid": "E1", "a": "1"}, {"rid": "E2", "a": "2"}, {"rid": "E2", "a": "2"}],
+        "p2": [{"entity": "E2", "b": "2"}, {"entity": "E3", "b": "3"}],
+    }
+
+    cleaned, counters = apply_recipe(tables, UNION_STEPS, mapping=UNION_MAPPING)
+
+    assert [r["id"] for r in cleaned] == ["E1", "E2", "E3"]
+    assert counters["union_sources.in.p1"] == 3
+    assert counters["union_sources.in.p2"] == 2
+    assert counters["union_sources.combined"] == 5
+    assert counters["union_sources.duplicates.within"] == 1
+    assert counters["union_sources.duplicates.cross"] == 1
+    assert counters["union_sources"] == 2
+    assert counters["union_sources.out"] == 3
+
+
+@pytest.mark.unit
+def test_union_sources_keeps_rows_with_missing_key_for_validation():
+    tables = {"p1": [{"rid": "", "a": "1"}, {"rid": "", "a": "2"}], "p2": [{"entity": "E1", "b": "1"}]}
+
+    cleaned, counters = apply_recipe(tables, UNION_STEPS, mapping=UNION_MAPPING)
+
+    assert [r["id"] for r in cleaned] == ["E1"]
+    assert counters["union_sources"] == 0
+    assert counters["validate_schema.excluded.missing"] == 2
+
+
+@pytest.mark.unit
+def test_schema_fingerprint_is_sorted_column_type_sha256():
+    import hashlib
+
+    from silo_sdk.integration import schema_fingerprint
+
+    rows = [{"y": 1.0, "id": "E1", "x1": 2.0, "_source": "p"}]
+    expected = hashlib.sha256("id:str,x1:float,y:float".encode()).hexdigest()
+
+    assert schema_fingerprint(rows) == expected
+    assert schema_fingerprint([{"x1": 3.0, "id": "E2", "y": 0.5}]) == expected
+    assert schema_fingerprint([{"id": "E1", "x1": 2.0}]) != expected  # 컬럼 누락
+    assert schema_fingerprint([{"id": "E1", "x1": "2.0", "y": 1.0}]) != expected  # 형식 다름
+    assert schema_fingerprint([]) is None

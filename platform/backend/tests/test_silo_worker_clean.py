@@ -84,3 +84,30 @@ def test_clean_without_mapping_keeps_legacy_dummy_rows(tmp_path, monkeypatch):
     assert report["rows_in"] == len(silo_worker._dirty_rows("silo-1"))
     assert report["step_counters"] == {"dedupe": 10}
     assert not (tmp_path / "period_a.csv").exists()
+
+
+@pytest.mark.unit
+def test_clean_reports_schema_fingerprint(tmp_path, monkeypatch):
+    from silo_sdk.integration import schema_fingerprint
+
+    recipe = {
+        "steps": [
+            {"type": "map_schema", "params": {"sources": ["period_a", "period_b"]}},
+            {"type": "union_sources",
+             "params": {"sources": ["period_a", "period_b"], "into": "periods"}},
+            {"type": "validate_schema", "params": {}},
+        ],
+        "mapping": {**synthetic.HVC_MAPPING, "common_schema": {
+            k: v for k, v in synthetic.HVC_MAPPING["common_schema"].items()
+            if k in ("id", "x1", "y")}},
+    }
+    client = _CleanClient(recipe)
+    _install(monkeypatch, client)
+
+    silo_worker.run_clean(_args(tmp_path))
+
+    report = client.reports[0]
+    assert report["schema_fingerprint"] == schema_fingerprint(
+        [{"id": "E", "x1": 0.0, "y": 0.0}])
+    assert report["step_counters"]["union_sources.duplicates.cross"] > 0
+    assert report["step_counters"]["union_sources.duplicates.within"] > 0

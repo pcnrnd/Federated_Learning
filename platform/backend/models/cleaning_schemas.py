@@ -6,9 +6,15 @@
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 JobStatus = Literal["pending", "running", "completed", "partial", "failed"]
 ShardStatus = Literal["pending", "running", "completed", "failed"]
@@ -23,7 +29,10 @@ StepType = Literal[
     "regex_filter",
     "map_schema",
     "validate_schema",
+    "union_sources",
 ]
+# 공통 스키마 지문 = sha256 hex — 원본 값이 실려 오지 않도록 형식을 강제한다
+Fingerprint = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 ColumnType = Literal["str", "int", "float", "bool"]
 
 
@@ -153,6 +162,7 @@ class ShardAssignment(BaseModel):
     started_at: str | None = None
     completed_at: str | None = None
     error: str | None = None
+    schema_fingerprint: Fingerprint | None = None
 
 
 class CleaningJob(BaseModel):
@@ -183,3 +193,20 @@ class ShardReport(BaseModel):
     started_at: str
     completed_at: str
     error: str | None = None
+    schema_fingerprint: Fingerprint | None = Field(
+        default=None, description="정제 결과 공통 스키마 지문 (정렬된 컬럼:형식의 sha256)"
+    )
+
+
+class SchemaConsistency(BaseModel):
+    """사일로 간 공통 스키마 지문 비교 결과
+
+    consistent: 모든 샤드 지문이 같으면 True, 서로 다른 지문이 있으면 False,
+    아직 지문을 보고하지 않은 샤드가 있고 불일치도 없으면 None(판정 대기).
+    """
+
+    job_id: str
+    consistent: bool | None
+    fingerprints: dict[str, str | None]
+    groups: dict[str, list[str]]
+    missing: list[str]

@@ -175,10 +175,14 @@ _SINGLE_TABLE_STEPS = {
     "lowercase": lambda rows, p: _lowercase(rows, p["columns"]),
     "regex_filter": lambda rows, p: _regex_filter(rows, p["column"], p["pattern"]),
 }
-_MULTI_SOURCE_STEPS = ("map_schema", "validate_schema")
+# 다원천 단계 — 표 묶음을 제자리 갱신하고 카운터를 돌려준다. `into` 가 있으면 그 표가 현재 표.
+_MULTI_SOURCE_STEPS = {
+    "map_schema": integration.map_schema,
+    "union_sources": integration.union_sources,
+}
 
 # 서버 services.cleaning_recipes.STEP_CATALOG 와 같아야 한다 (테스트로 고정)
-SUPPORTED_STEPS = (*_SINGLE_TABLE_STEPS, *_MULTI_SOURCE_STEPS)
+SUPPORTED_STEPS = (*_SINGLE_TABLE_STEPS, *_MULTI_SOURCE_STEPS, "validate_schema")
 
 
 def _merge(counters: dict[str, int], extra: dict[str, int]) -> None:
@@ -210,9 +214,10 @@ def apply_recipe(
     for step in steps:
         step_type = step["type"]
         params = step.get("params", {})
-        if step_type == "map_schema":
+        if step_type in _MULTI_SOURCE_STEPS:
             mapping = integration.require_mapping(mapping, step_type)
-            _merge(counters, integration.map_schema(tables, params, mapping))
+            _merge(counters, _MULTI_SOURCE_STEPS[step_type](tables, params, mapping))
+            current = params.get("into", current)
             continue
         if step_type == "validate_schema":
             mapping = integration.require_mapping(mapping, step_type)

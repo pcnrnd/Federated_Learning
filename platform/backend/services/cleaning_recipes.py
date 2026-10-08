@@ -52,6 +52,11 @@ STEP_CATALOG: dict[str, dict[str, Any]] = {
         "needs_mapping": True,
         "description": "공통 스키마(존재·형식·유한·범위) 위반 행 제외, 사유별 집계",
     },
+    "union_sources": {
+        "required": ["sources", "into"],
+        "needs_mapping": True,
+        "description": "수평 결합 — 공통 스키마 원천들의 행 결합, 원천 간·안 중복 제거",
+    },
 }
 
 # 매핑표의 원천 이름을 가리키는 파라미터 (단계 → 파라미터 이름)

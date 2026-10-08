@@ -157,3 +157,76 @@ def test_partial_status_when_one_shard_fails():
     assert final.status == "partial"
     assert final.shards[1].status == "failed"
     assert final.shards[1].error == "disk full"
+
+
+# ---------- 스키마 지문 비교 (F3) ----------
+
+FP_A = "a" * 64
+FP_B = "b" * 64
+
+
+def _fp_report(silo_id: str, shard: int, fingerprint: str | None) -> ShardReport:
+    base = _report(silo_id, shard, 10, 8).model_dump()
+    return ShardReport.model_validate({**base, "schema_fingerprint": fingerprint})
+
+
+@pytest.mark.unit
+def test_report_stores_schema_fingerprint():
+    _create_job()
+    job = cleaning_job_service.report_shard(_fp_report("silo-1", 0, FP_A))
+
+    assert job.shards[0].schema_fingerprint == FP_A
+
+
+@pytest.mark.unit
+def test_schema_fingerprint_must_be_sha256_hex():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _fp_report("silo-1", 0, "E00123")  # 원본 값 같은 문자열은 지문이 아니다
+
+
+@pytest.mark.unit
+def test_schema_consistency_matches_identical_fingerprints():
+    _create_job()
+    cleaning_job_service.report_shard(_fp_report("silo-1", 0, FP_A))
+
+    waiting = cleaning_job_service.schema_consistency("j1")
+    assert waiting.consistent is None
+    assert waiting.missing == ["silo-2"]
+
+    cleaning_job_service.report_shard(_fp_report("silo-2", 1, FP_A))
+    result = cleaning_job_service.schema_consistency("j1")
+
+    assert result.consistent is True
+    assert result.groups == {FP_A: ["silo-1", "silo-2"]}
+    assert result.missing == []
+
+
+@pytest.mark.unit
+def test_schema_consistency_flags_mismatch():
+    _create_job()
+    cleaning_job_service.report_shard(_fp_report("silo-1", 0, FP_A))
+    cleaning_job_service.report_shard(_fp_report("silo-2", 1, FP_B))
+
+    result = cleaning_job_service.schema_consistency("j1")
+
+    assert result.consistent is False
+    assert result.groups == {FP_A: ["silo-1"], FP_B: ["silo-2"]}
+    assert result.fingerprints == {"silo-1": FP_A, "silo-2": FP_B}
+
+
+@pytest.mark.unit
+def test_schema_consistency_api(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from cleaning_main import app
+
+    _create_job()
+    cleaning_job_service.report_shard(_fp_report("silo-1", 0, FP_A))
+    cleaning_job_service.report_shard(_fp_report("silo-2", 1, FP_A))
+
+    body = TestClient(app).get("/api/cleaning-jobs/j1/schema-consistency").json()
+
+    assert body["consistent"] is True
+    assert body["fingerprints"] == {"silo-1": FP_A, "silo-2": FP_A}

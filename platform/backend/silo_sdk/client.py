@@ -270,9 +270,13 @@ class SiloClient:
         started_at: str | None = None,
         completed_at: str | None = None,
         error: str | None = None,
+        schema_fingerprint: str | None = None,
     ) -> dict[str, Any]:
-        """정제 샤드 처리 결과 보고 — 통계만, 원시 데이터 없음."""
-        payload = {
+        """정제 샤드 처리 결과 보고 — 통계만, 원시 데이터 없음.
+
+        schema_fingerprint: 정제 결과의 공통 스키마 지문(sha256) — 서버가 사일로 간 일치를 판정.
+        """
+        payload: dict[str, Any] = {
             "job_id": job_id,
             "shard_index": shard_index,
             "silo_id": self.silo_id,
@@ -283,6 +287,8 @@ class SiloClient:
             "completed_at": completed_at or _now_iso(),
             "error": error,
         }
+        if schema_fingerprint is not None:
+            payload["schema_fingerprint"] = schema_fingerprint
         return self._request(
             "POST",
             f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/report",

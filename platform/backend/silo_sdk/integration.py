@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -212,3 +213,59 @@ def validate_schema(rows: list[Row], mapping: dict[str, Any]) -> tuple[list[Row]
             f"(입력 {len(rows)}행, 사유별 제외 {reasons})"
         )
     return kept, counters
+
+
+def union_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
+    """수평 결합 — 공통 스키마에 맞춘 원천들의 행을 이어 붙이고 원천 간·원천 안 중복을 없앤다.
+
+    중복 판정 키는 params.keys(기본 매핑표 key). 키가 비어 있는 행은 중복으로 보지 않고
+    남겨 validate_schema가 결측으로 세게 한다. 결과는 params.into 표.
+    """
+    keys = params.get("keys") or [mapping["key"]]
+    counters: Counters = {}
+    seen: dict[tuple, str] = {}  # 키 → 처음 본 원천
+    combined: list[Row] = []
+    for source in params["sources"]:
+        rows = require_table(tables, source)
+        _bump(counters, f"union_sources.in.{source}", len(rows))
+        for row in rows:
+            key = tuple(row.get(k) for k in keys)
+            if any(_is_blank(v) for v in key):
+                combined.append(row)
+                continue
+            first = seen.get(key)
+            if first is not None:
+                _bump(counters, f"union_sources.duplicates.{'within' if first == source else 'cross'}")
+                continue
+            seen[key] = source
+            combined.append(row)
+    total_in = sum(len(tables[s]) for s in params["sources"])
+    tables[params["into"]] = combined
+    counters["union_sources.combined"] = total_in
+    counters["union_sources"] = total_in - len(combined)
+    counters["union_sources.out"] = len(combined)
+    return counters
+
+
+def schema_fingerprint(rows: list[Row]) -> str | None:
+    """공통 스키마 지문 — 정렬한 `컬럼:형식` 을 쉼표로 이은 문자열의 sha256.
+
+    컬럼은 행들에 실제로 있는 이름(`_` 로 시작하는 내부 필드 제외), 형식은 값의 파이썬
+    형식 이름이다(한 컬럼에 여러 형식이 섞이면 `mixed`). 행이 없으면 None.
+    값은 지문에 들어가지 않는다 — 사일로 간 스키마 일치만 비교할 수 있다.
+    """
+    if not rows:
+        return None
+    types: dict[str, set[str]] = {}
+    for row in rows:
+        for col, value in row.items():
+            if col.startswith("_"):
+                continue
+            names = types.setdefault(col, set())
+            if value is not None:
+                names.add(type(value).__name__)
+    parts = []
+    for col in sorted(types):
+        names = types[col]
+        parts.append(f"{col}:{names.pop() if len(names) == 1 else 'mixed' if names else 'null'}")
+    return hashlib.sha256(",".join(parts).encode("utf-8")).hexdigest()
