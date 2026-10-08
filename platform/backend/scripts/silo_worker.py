@@ -120,14 +120,31 @@ def clean_local(
     return len(rows), cleaned, counters
 
 
+MAX_ERROR_CHARS = 500
+
+
 def _clean_shard(client: SiloClient, args: argparse.Namespace, job_id: str, shard_index: int,
-                 recipe_name: str, recipe_version: str) -> None:
+                 recipe_name: str, recipe_version: str) -> bool:
+    """샤드 1건 정제 → 보고. 시작 뒤 정제가 실패하면 error를 담아 보고하고 False.
+
+    실패를 보고하지 않으면 샤드가 running에 고착돼 잡이 끝나지 않는다. 오류 문구는 예외
+    형식과 메시지(통계·컬럼명)뿐이다 — 원시 행은 담지 않는다.
+    """
     recipe = client.fetch_cleaning_recipe(recipe_name, recipe_version)
     client.start_cleaning_shard(job_id, shard_index)
 
-    rows_in, cleaned, counters = clean_local(
-        args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
-    )
+    try:
+        rows_in, cleaned, counters = clean_local(
+            args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
+        )
+    except Exception as exc:  # noqa: BLE001 — 어떤 실패든 서버에 보고해 샤드를 닫는다
+        error = f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
+        client.report_cleaning_shard(job_id, shard_index, rows_in=0, rows_out=0,
+                                     step_counters={}, error=error)
+        print(json.dumps({"silo_id": args.silo_id, "job_id": job_id,
+                          "shard_index": shard_index, "event": "shard_failed",
+                          "error": error}, ensure_ascii=False))
+        return False
     job = client.report_cleaning_shard(
         job_id,
         shard_index,
@@ -150,6 +167,7 @@ def _clean_shard(client: SiloClient, args: argparse.Namespace, job_id: str, shar
             ensure_ascii=False,
         )
     )
+    return True
 
 
 def run_clean(args: argparse.Namespace) -> None:
@@ -157,7 +175,8 @@ def run_clean(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
     given = (args.job_id, args.shard_index, args.recipe_name, args.recipe_version)
     if all(v is not None for v in given):
-        _clean_shard(client, args, *given)
+        if not _clean_shard(client, args, *given):
+            raise SystemExit("정제 실패 샤드 1건 (오류를 서버에 보고함)")
         return
     if any(v is not None for v in given):
         raise SystemExit(
@@ -169,9 +188,14 @@ def run_clean(args: argparse.Namespace) -> None:
         print(json.dumps({"silo_id": args.silo_id, "event": "no_assigned_shards"},
                          ensure_ascii=False))
         return
-    for shard in shards:
-        _clean_shard(client, args, shard["job_id"], int(shard["shard_index"]),
-                     shard["recipe_name"], shard["recipe_version"])
+    failed = [
+        shard["job_id"]
+        for shard in shards
+        if not _clean_shard(client, args, shard["job_id"], int(shard["shard_index"]),
+                            shard["recipe_name"], shard["recipe_version"])
+    ]
+    if failed:
+        raise SystemExit(f"정제 실패 샤드 {len(failed)}건 {failed} (오류를 서버에 보고함)")
 
 
 # ---------- 사일로 간 수직 정렬 ----------

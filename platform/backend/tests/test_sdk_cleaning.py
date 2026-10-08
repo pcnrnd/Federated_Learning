@@ -87,3 +87,41 @@ def test_apply_recipe_cast_to_int():
     assert cleaned[1]["age"] == "abc"  # 변환 실패는 원본 유지
     assert cleaned[2]["age"] == 45
     assert counters["cast"] == 2
+
+
+# ---------- normalize 결측·비숫자 처리 (F8) ----------
+
+
+@pytest.mark.unit
+def test_normalize_zscore_ignores_none_and_non_numeric():
+    rows = [{"v": 1}, {"v": 3}, {"v": None}, {"v": "abc"}, {}]
+    steps = [{"type": "normalize", "params": {"column": "v"}}]
+
+    cleaned, counters = apply_recipe(rows, steps)
+
+    # 통계는 숫자 값(1, 3)만으로 — 평균 2, 표준편차 1
+    assert [r.get("v") for r in cleaned] == [-1.0, 1.0, None, "abc", None]
+    assert "v" not in cleaned[4]
+    assert counters["normalize"] == 2
+
+
+@pytest.mark.unit
+def test_normalize_minmax_ignores_none_and_non_numeric():
+    rows = [{"v": "10"}, {"v": 20.0}, {"v": None}, {"v": True}, {"v": float("nan")}]
+    steps = [{"type": "normalize", "params": {"column": "v", "method": "minmax"}}]
+
+    cleaned, counters = apply_recipe(rows, steps)
+
+    assert [r["v"] for r in cleaned[:4]] == [0.0, 1.0, None, True]
+    assert cleaned[4]["v"] != cleaned[4]["v"]  # NaN 그대로
+    assert counters["normalize"] == 2
+
+
+@pytest.mark.unit
+def test_normalize_without_numeric_values_is_noop():
+    rows = [{"v": None}, {"v": "x"}]
+
+    cleaned, counters = apply_recipe(rows, [{"type": "normalize", "params": {"column": "v"}}])
+
+    assert cleaned == rows
+    assert counters["normalize"] == 0

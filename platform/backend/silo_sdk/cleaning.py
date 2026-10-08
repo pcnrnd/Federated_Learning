@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -97,26 +98,38 @@ def _cast(rows: list[Row], column: str, to: str) -> tuple[list[Row], int]:
     return out, affected
 
 
+def _numeric(value: Any) -> float | None:
+    """정규화 대상 숫자 — None·bool·비숫자·NaN/Inf는 None (정규화하지 않고 그대로 둔다)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def _normalize(rows: list[Row], column: str, method: str = "zscore") -> tuple[list[Row], int]:
-    values: list[float] = []
-    for r in rows:
-        v = r.get(column)
-        try:
-            values.append(float(v))
-        except (TypeError, ValueError):
-            values.append(0.0)
+    """숫자 값만으로 통계를 내 정규화한다. 결측·비숫자 행은 값을 그대로 둔다.
+
+    (이전에는 비숫자를 0으로 넣어 통계를 왜곡하고, 변환 단계에서 None·비숫자에 예외가 났다.)
+    """
+    numbers = [_numeric(r.get(column)) for r in rows]
+    values = [v for v in numbers if v is not None]
     if not values:
         return rows, 0
     if method == "minmax":
         lo, hi = min(values), max(values)
-        rng = hi - lo or 1.0
-        out = [{**r, column: (float(r.get(column, 0)) - lo) / rng} for r in rows]
+        offset, scale = lo, (hi - lo) or 1.0
     else:  # zscore
         mean = sum(values) / len(values)
         var = sum((x - mean) ** 2 for x in values) / len(values) or 1.0
-        std = var ** 0.5
-        out = [{**r, column: (float(r.get(column, 0)) - mean) / std} for r in rows]
-    return out, len(rows)
+        offset, scale = mean, var ** 0.5
+    out = [
+        r if v is None else {**r, column: (v - offset) / scale}
+        for r, v in zip(rows, numbers)
+    ]
+    return out, len(values)
 
 
 def _trim_whitespace(rows: list[Row], columns: list[str]) -> tuple[list[Row], int]:

@@ -245,3 +245,98 @@ def test_clean_with_partial_job_arguments_is_rejected(tmp_path, monkeypatch):
     _install(monkeypatch, _AutoClient([]))
     with pytest.raises(SystemExit, match="함께"):
         silo_worker.run_clean(_args(tmp_path, shard_index=None))
+
+
+# ---------- 정제 실패 보고 (F8) ----------
+
+
+@pytest.mark.unit
+def test_clean_failure_is_reported_instead_of_leaving_shard_running(tmp_path, monkeypatch):
+    recipe = {"steps": synthetic.HVC_STEPS, "mapping": synthetic.HVC_MAPPING}
+    client = _CleanClient(recipe)
+    _install(monkeypatch, client)
+    (tmp_path / "records.json").parent.mkdir(exist_ok=True)
+    synthetic.write_sources("silo-1", tmp_path)
+    (tmp_path / "records.json").write_text("[]", encoding="utf-8")  # 교차 원천이 비면 정제 실패
+
+    with pytest.raises(SystemExit, match="1건"):
+        silo_worker.run_clean(_args(tmp_path))
+
+    assert client.started == [("j1", 0)]
+    report = client.reports[0]
+    assert report["rows_in"] == report["rows_out"] == 0
+    assert "CleaningError" in report["error"] and "공통 스키마" in report["error"]
+
+
+@pytest.mark.unit
+def test_clean_failure_in_one_assigned_shard_still_processes_the_rest(tmp_path, monkeypatch):
+    shards = [{"job_id": "bad", "shard_index": 0, "recipe_name": "r", "recipe_version": "1"},
+              {"job_id": "ok", "shard_index": 1, "recipe_name": "r", "recipe_version": "1"}]
+    client = _AutoClient(shards)
+    _install(monkeypatch, client)
+    real = silo_worker.clean_local
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise KeyError("columns")
+        return real(*a, **k)
+
+    monkeypatch.setattr(silo_worker, "clean_local", flaky)
+
+    with pytest.raises(SystemExit):
+        silo_worker.run_clean(_args(tmp_path, job_id=None, shard_index=None, recipe_name=None,
+                                    recipe_version=None))
+
+    assert [(r["job_id"], bool(r.get("error"))) for r in client.reports] == [
+        ("bad", True), ("ok", False)]
+
+
+@pytest.mark.unit
+def test_clean_failure_marks_shard_failed_on_server(tmp_path, monkeypatch):
+    """실제 서버 서비스와 연결 — 오류 보고 후 샤드가 running에 고착되지 않는다."""
+    from config.server_manager import save_servers
+    from models.cleaning_schemas import (
+        CleaningJobCreate,
+        CleaningRecipeRequest,
+        ShardReport,
+    )
+    from models.federated_schemas import SiloGroupRequest
+    from services import cleaning_job_service, cleaning_recipe_service, silo_group_service
+
+    save_servers({"silo-1": {"base_url": "tcp://x:1", "label": "silo-1", "type": "remote",
+                             "role": "client", "tls": False}})
+    silo_group_service.create_group(SiloGroupRequest(group_id="g", member_node_ids=["silo-1"]))
+    cleaning_recipe_service.register_recipe(CleaningRecipeRequest(
+        name="silo-hvc", version="1.0.0", steps=synthetic.HVC_STEPS,
+        mapping=synthetic.HVC_MAPPING))
+    cleaning_job_service.create_job(CleaningJobCreate(
+        job_id="j1", recipe_name="silo-hvc", recipe_version="1.0.0", group_id="g",
+        dataset_label="sources"))
+
+    class _ServiceClient:
+        def fetch_cleaning_recipe(self, name, version):
+            return cleaning_recipe_service.get_recipe(name, version).model_dump()
+
+        def start_cleaning_shard(self, job_id, shard_index):
+            return cleaning_job_service.start_shard(job_id, shard_index, "silo-1").model_dump()
+
+        def report_cleaning_shard(self, job_id, shard_index, rows_in, rows_out, step_counters,
+                                  **kw):
+            report = ShardReport(job_id=job_id, shard_index=shard_index, silo_id="silo-1",
+                                 rows_in=rows_in, rows_out=rows_out,
+                                 step_counters=step_counters, started_at="t", completed_at="t",
+                                 **kw)
+            return cleaning_job_service.report_shard(report).model_dump()
+
+    monkeypatch.setattr(silo_worker, "SiloClient", lambda *_a, **_k: _ServiceClient())
+    synthetic.write_sources("silo-1", tmp_path)
+    (tmp_path / "entity.csv").write_text("eid,x3_level\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit):
+        silo_worker.run_clean(_args(tmp_path, recipe_name="silo-hvc"))
+
+    job = cleaning_job_service.get_job("j1")
+    assert job.shards[0].status == "failed" and job.status == "failed"
+    assert "공통 스키마" in job.shards[0].error
