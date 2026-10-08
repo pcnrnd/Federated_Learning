@@ -199,3 +199,21 @@ def test_server_code_never_reads_the_silo_align_key():
     server_files += [backend / "main.py", backend / "cleaning_main.py"]
     assert server_files
     assert not [p.name for p in server_files if "FED_ALIGN_KEY" in p.read_text(encoding="utf-8")]
+
+
+@pytest.mark.unit
+def test_consistency_rechecks_reports_stored_before_validation():
+    """R-F2 N2 — 이전 버전이 저장한 잘못된 보고가 남아 있으면 새 정상 보고가 와도 일치가 아니다."""
+    from config import cleaning_manager
+
+    _create()
+    _submit("silo-4", H[:2])
+    _submit("silo-5", H[1:3])
+    raw = cleaning_manager.load_alignments()
+    raw["a1"]["job"]["participants"][0].update(matched=1, excluded=1, order_digest="f" * 64)
+    cleaning_manager.save_alignments(raw)  # 검증 도입 전 저장된 보고(순서 지문 틀림)
+
+    job = alignment_service.report_alignment("a1", AlignmentReport(
+        silo_id="silo-5", matched=1, excluded=1, order_digest=_order([H[1]])))
+
+    assert job.order_consistent is False

@@ -130,23 +130,29 @@ def _digest_lines(keys: list[str]) -> str:
     return hashlib.sha256("\n".join(keys).encode("utf-8")).hexdigest()
 
 
+def _report_problems(job: AlignmentJob, submitted: int | None, matched: int | None,
+                     excluded: int | None, order_digest: str | None,
+                     intersection: list[str]) -> list[str]:
+    problems = []
+    if matched != job.intersection_size:
+        problems.append(f"남은 수 {matched} ≠ 교집합 크기 {job.intersection_size}")
+    if (matched or 0) + (excluded or 0) != submitted:
+        problems.append(f"남은 수+제외 수 {(matched or 0) + (excluded or 0)} ≠ 제출 수 {submitted}")
+    if order_digest != _digest_lines(intersection):
+        problems.append("순서 지문이 서버 교집합 순서와 다릅니다")
+    return problems
+
+
 def _check_report(job: AlignmentJob, mine: AlignmentParticipant, report: AlignmentReport,
                   intersection: list[str]) -> None:
     """보고가 서버 기록과 맞는지 — 맞지 않으면 422 (잘못된 보고를 성공으로 판정하지 않는다).
 
     남은 수 = 교집합 크기, 남은 수 + 제외 수 = 제출 수, 순서 지문 = 서버 교집합(정렬) 지문.
     """
-    problems = []
-    if report.matched != job.intersection_size:
-        problems.append(f"남은 수 {report.matched} ≠ 교집합 크기 {job.intersection_size}")
-    if report.matched + report.excluded != mine.submitted:
-        problems.append(
-            f"남은 수+제외 수 {report.matched + report.excluded} ≠ 제출 수 {mine.submitted}"
-        )
+    problems = _report_problems(job, mine.submitted, report.matched, report.excluded,
+                                report.order_digest, intersection)
     if report.submitted is not None and report.submitted != mine.submitted:
         problems.append(f"보고한 제출 수 {report.submitted} ≠ 서버 제출 수 {mine.submitted}")
-    if report.order_digest != _digest_lines(intersection):
-        problems.append("순서 지문이 서버 교집합 순서와 다릅니다")
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
 
@@ -167,9 +173,18 @@ def report_alignment(alignment_id: str, report: AlignmentReport) -> AlignmentJob
                 "order_digest": report.order_digest,
             }
         )
-        # 보고는 서버 기록과 맞을 때만 저장되므로 모두 보고하면 순서가 일치한다
+        # 판정은 저장된 모든 보고를 서버 기록과 다시 대조한다 — 검증 도입 전 저장된 보고가
+        # 남아 있을 수 있어 새 보고만 믿지 않는다. 틀린 보고가 하나라도 있으면 False.
         reported = [p for p in participants if p.order_digest is not None]
-        consistent: bool | None = True if len(reported) == len(participants) else None
+        invalid = [p for p in reported if _report_problems(
+            job, p.submitted, p.matched, p.excluded, p.order_digest, entry["intersection"])]
+        consistent: bool | None
+        if invalid:
+            consistent = False
+        elif len(reported) == len(participants):
+            consistent = True
+        else:
+            consistent = None
         updated = job.model_copy(
             update={"participants": participants, "order_consistent": consistent,
                     "updated_at": _now_iso()}

@@ -340,3 +340,82 @@ def test_reconcile_output_drops_row_level_time():
     rows, _ = apply_recipe(tables, steps, mapping=TIMED)
 
     assert "_observed_at" not in rows[0]  # 열마다 출처·시각이 달라 행 단위 시각은 남기지 않는다
+
+
+# ---------- 열 단위 관측 시각 보존 (R-F2 N1) ----------
+
+CHAIN = {
+    "key": "id",
+    "common_schema": {"id": {"type": "str"}, "x1": {"type": "int"}, "x2": {"type": "int"}},
+    "sources": {n: {"format": "records", "columns": {"entity": "id"}, "attribute_field": "attr",
+                    "value_field": "value", "time_field": "at"} for n in ("r1", "r2", "rold")},
+}
+NEW, OLD = "2026-10-08T00:00:00Z", "2026-10-01T00:00:00Z"
+
+
+def _chain(steps_tail, r1_at=NEW, r2_at=NEW):
+    tables = {
+        "r1": [{"entity": "A", "attr": "x1", "value": 20, "at": r1_at}],
+        "r2": [{"entity": "A", "attr": "x2", "value": 30, "at": r2_at}],
+        "rold": [{"entity": "A", "attr": "x1", "value": 10, "at": OLD},
+                 {"entity": "A", "attr": "x2", "value": 10, "at": OLD}],
+    }
+    steps = [
+        {"type": "parse_records", "params": {"source": "r1", "into": "t1"}},
+        {"type": "parse_records", "params": {"source": "r2", "into": "t2"}},
+        {"type": "parse_records", "params": {"source": "rold", "into": "older"}},
+        {"type": "join_sources", "params": {"left": "t1", "right": "t2", "into": "target"}},
+        *steps_tail,
+        {"type": "validate_schema", "params": {}},
+    ]
+    return apply_recipe(tables, steps, mapping=CHAIN)
+
+
+def _rec(target, col, into):
+    return {"type": "reconcile", "params": {"target": target, "sources": ["older"],
+                                            "columns": [col], "priority": ["r1"],
+                                            "into": into}}
+
+
+@pytest.mark.unit
+def test_chained_reconcile_keeps_per_column_times():
+    rows, counters = _chain([_rec("target", "x1", "m"), _rec("m", "x2", "out")])
+
+    assert rows == [{"id": "A", "x1": 20, "x2": 30}]  # 두 열 모두 최신 값
+    assert counters["reconcile.resolved.latest"] == 2
+
+
+@pytest.mark.unit
+def test_single_and_chained_reconcile_agree():
+    single, _ = _chain([{"type": "reconcile", "params": {
+        "target": "target", "sources": ["older"], "columns": ["x1", "x2"],
+        "priority": ["r1"], "into": "out"}}])
+    chained, _ = _chain([_rec("target", "x1", "m"), _rec("m", "x2", "out")])
+
+    assert single == chained == [{"id": "A", "x1": 20, "x2": 30}]
+
+
+@pytest.mark.unit
+def test_join_attributes_right_values_to_right_times():
+    """오른쪽 표에서 채운 열은 오른쪽 시각을 가진다 — x2가 오래됐으면 보조 원천의 x2가 이긴다."""
+    rows, _ = _chain([_rec("target", "x2", "out")], r2_at="2026-09-01T00:00:00Z")
+
+    # t2의 x2(30)는 09-01, older의 x2(10)는 10-01 → older가 최신
+    assert rows == [{"id": "A", "x1": 20, "x2": 10}]
+
+
+@pytest.mark.unit
+def test_reconciled_column_takes_chosen_candidate_time(tmp_path):
+    from silo_sdk.integration import _time_of
+
+    steps = [
+        {"type": "parse_records", "params": {"source": "r1", "into": "t1"}},
+        {"type": "parse_records", "params": {"source": "rold", "into": "older"}},
+        {"type": "reconcile", "params": {"target": "t1", "sources": ["older"], "columns": ["x1"],
+                                         "priority": ["r1"], "into": "m"}},
+    ]
+    tables = {"r1": [{"entity": "A", "attr": "x1", "value": 20, "at": OLD}],
+              "rold": [{"entity": "A", "attr": "x1", "value": 10, "at": NEW}]}
+    rows, _ = apply_recipe(tables, steps, mapping=CHAIN)
+
+    assert rows[0]["x1"] == 10 and _time_of(rows[0], "x1") == NEW

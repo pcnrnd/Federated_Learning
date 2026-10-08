@@ -304,12 +304,32 @@ def schema_fingerprint(rows: list[Row]) -> str | None:
     return hashlib.sha256(",".join(parts).encode("utf-8")).hexdigest()
 
 
+# 관측 시각: parse_records 행은 행 단위 `_observed_at`, 결합·충돌 해소를 거친 행은 열마다 출처가
+# 다를 수 있어 열 단위 `_observed_at_by`({열: 시각})로 들고 다닌다. 열 단위가 있으면 그것을 쓴다.
+_TIME, _TIMES = "_observed_at", "_observed_at_by"
+
+
+def _time_of(row: Row, col: str) -> Any:
+    """그 행에서 열 값의 관측 시각(원문). 없으면 None."""
+    by = row.get(_TIMES)
+    if isinstance(by, dict) and col in by:
+        return by[col]
+    return row.get(_TIME)
+
+
+def _times_by(row: Row) -> dict[str, Any]:
+    """행의 데이터 열마다 관측 시각 — 열 단위가 없으면 행 단위 시각을 펼친다."""
+    return {col: _time_of(row, col) for col in row
+            if not col.startswith("_") and _time_of(row, col) is not None}
+
+
 def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
     """사일로 안 수직 결합 — 키 inner join. 결과는 params.into 표.
 
     왼쪽 값이 우선이고, 왼쪽에 없거나 결측인 컬럼만 오른쪽 값으로 채운다. 오른쪽에 같은 키가
     여러 번 있으면 첫 행을 쓰고 나머지를 right_duplicate로 센다. 제외 수를 사유
-    (left_only·right_only·right_duplicate·missing_key)별로 센다.
+    (left_only·right_only·right_duplicate·missing_key)별로 센다. 관측 시각은 열마다 그 값을
+    준 쪽의 시각을 `_observed_at_by` 로 남긴다.
     """
     keys = params.get("keys") or [mapping["key"]]
     left = require_table(tables, params["left"])
@@ -337,10 +357,17 @@ def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]
             _bump(counters, "join_sources.excluded.left_only")
             continue
         used.add(key)
-        merged = dict(row)
+        merged = {k: v for k, v in row.items() if k not in (_TIME, _TIMES)}
+        times = _times_by(row)
         for col, value in match.items():
+            if col.startswith("_") and col != "_source":
+                continue
             if merged.get(col) is None:
                 merged[col] = value
+                if _time_of(match, col) is not None:
+                    times[col] = _time_of(match, col)
+        if times:
+            merged[_TIMES] = times
         joined.append(merged)
     counters["join_sources.excluded.right_only"] = len(set(index) - used)
     counters["join_sources.matched"] = len(joined)
@@ -440,43 +467,52 @@ def _parse_time(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _resolve(
-    cands: list[tuple[Any, int, datetime | None]], tolerance: float
-) -> tuple[Any, str | None]:
-    """후보 (값, 우선순위, 시각) → (값, 해소 규칙). 규칙은 우선 원천 → 최신 시각 → 허용 오차.
+Candidate = tuple[Any, int, "datetime | None", Any]  # (값, 우선순위, 시각, 시각 원문)
 
-    값이 모두 같으면 규칙 None(충돌 아님). 해소하지 못하면 (None, "unresolved").
+
+def _latest_raw(cands: list[Candidate]) -> Any:
+    """후보 가운데 가장 최근 관측 시각(원문) — 시각이 하나도 없으면 None."""
+    timed = [c for c in cands if c[2] is not None]
+    return max(timed, key=lambda c: c[2])[3] if timed else None
+
+
+def _resolve(cands: list[Candidate], tolerance: float) -> tuple[Any, str | None, Any]:
+    """후보 → (값, 해소 규칙, 그 값의 관측 시각). 규칙은 우선 원천 → 최신 시각 → 허용 오차.
+
+    값이 모두 같으면 규칙 None(충돌 아님). 해소하지 못하면 (None, "unresolved", None).
     """
-    if _same([v for v, _, _ in cands]):
-        return cands[0][0], None
-    best = min(rank for _, rank, _ in cands)
-    if any(rank != best for _, rank, _ in cands):
+    if _same([c[0] for c in cands]):
+        return cands[0][0], None, _latest_raw(cands)
+    best = min(c[1] for c in cands)
+    if any(c[1] != best for c in cands):
         cands = [c for c in cands if c[1] == best]
-        if _same([v for v, _, _ in cands]):
-            return cands[0][0], "priority"
-    times = [t for _, _, t in cands if t is not None]
+        if _same([c[0] for c in cands]):
+            return cands[0][0], "priority", _latest_raw(cands)
+    times = [c[2] for c in cands if c[2] is not None]
     if len(set(times)) > 1 or (times and len(times) < len(cands)):
         latest = max(times)
         cands = [c for c in cands if c[2] == latest]
-        if _same([v for v, _, _ in cands]):
-            return cands[0][0], "latest"
-    values = [v for v, _, _ in cands]
+        if _same([c[0] for c in cands]):
+            return cands[0][0], "latest", cands[0][3]
+    values = [c[0] for c in cands]
     if all(_is_number(v) for v in values) and max(values) - min(values) <= tolerance:
         if all(_is_int(v) for v in values):  # 정수 평균은 정확한 반올림 정수로 (형식 유지)
-            return round(Fraction(sum(values), len(values))), "tolerance"
-        return sum(values) / len(values), "tolerance"
-    return None, "unresolved"
+            return round(Fraction(sum(values), len(values))), "tolerance", _latest_raw(cands)
+        return sum(values) / len(values), "tolerance", _latest_raw(cands)
+    return None, "unresolved", None
 
 
 def reconcile(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
     """같은 엔터티·속성의 값이 원천마다 다르면 규칙으로 하나를 고른다 (교차 충돌 해소).
 
     대상 표(target)의 행마다 params.columns 의 후보 = 대상 값 + 다른 원천(sources) 행의 값.
-    후보의 시각은 대상·다른 원천 모두 그 행의 `_observed_at` 이다(없으면 시각 없음).
+    후보의 시각은 대상·다른 원천 모두 그 행에서 그 열의 관측 시각이다(열 단위
+    `_observed_at_by`, 없으면 행 단위 `_observed_at`, 둘 다 없으면 시각 없음).
     규칙 순서: 우선 원천(params.priority 앞쪽) → 최신 시각(`_observed_at`) →
     허용 오차(params.tolerance 안이면 평균). 해소하지 못하면 결측(None)으로 두어
     validate_schema가 제외한다. 대상 표에 없는 엔터티의 기록은 orphans로 센다.
-    결과 행은 열마다 출처·시각이 다를 수 있어 행 단위 `_observed_at` 을 남기지 않는다.
+    결과 행은 열마다 고른 값의 시각을 `_observed_at_by` 로 남겨, 다음 reconcile이 처리하지
+    않은 열의 시각까지 그대로 쓸 수 있게 한다(행 단위 `_observed_at` 은 남기지 않는다).
     """
     key = mapping["key"]
     target_name = params["target"]
@@ -489,7 +525,7 @@ def reconcile(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -
         return priority.index(name) if name in priority else len(priority)
 
     target_keys = {row.get(key) for row in target}
-    extra: dict[tuple[Any, str], list[tuple[Any, int, datetime | None]]] = {}
+    extra: dict[tuple[Any, str], list[Candidate]] = {}
     counters: Counters = {"reconcile.orphans": 0}
     for source in params["sources"]:
         for row in require_table(tables, source):
@@ -498,24 +534,34 @@ def reconcile(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -
                 continue
             for col in columns:
                 if row.get(col) is not None:
+                    raw = _time_of(row, col)
                     extra.setdefault((row[key], col), []).append(
-                        (row[col], rank(source), _parse_time(row.get("_observed_at")))
+                        (row[col], rank(source), _parse_time(raw), raw)
                     )
     out: list[Row] = []
     for row in target:
-        new = {k: v for k, v in row.items() if k != "_observed_at"}
-        own_time = _parse_time(row.get("_observed_at"))
+        new = {k: v for k, v in row.items() if k not in (_TIME, _TIMES)}
+        times = _times_by(row)
         for col in columns:
-            cands = [(row[col], rank(target_name), own_time)] if row.get(col) is not None else []
+            raw = _time_of(row, col)
+            cands: list[Candidate] = (
+                [(row[col], rank(target_name), _parse_time(raw), raw)]
+                if row.get(col) is not None else []
+            )
             cands += extra.get((row.get(key), col), [])
+            times.pop(col, None)
             if not cands:
                 new[col] = None  # 어느 원천에도 값이 없다 → 결측
                 continue
-            new[col], rule = _resolve(cands, tolerance)
+            new[col], rule, chosen_time = _resolve(cands, tolerance)
+            if new[col] is not None and chosen_time is not None:
+                times[col] = chosen_time
             if rule:
                 _bump(counters, "reconcile.conflicts")
                 _bump(counters, "reconcile.unresolved" if rule == "unresolved"
                       else f"reconcile.resolved.{rule}")
+        if times:
+            new[_TIMES] = times
         out.append(new)
     tables[params["into"]] = out
     counters["reconcile"] = counters.get("reconcile.conflicts", 0)
