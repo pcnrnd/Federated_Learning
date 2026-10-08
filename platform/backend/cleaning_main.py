@@ -19,7 +19,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from api import cleaning_jobs, cleaning_recipes, silo_groups
+from api import alignment_jobs, cleaning_jobs, cleaning_recipes, silo_groups
 from api.exception_handlers import register_exception_handlers
 from config import settings
 
@@ -46,6 +46,7 @@ async def api_key_middleware(request: Request, call_next):
 
 app.include_router(cleaning_recipes.router)
 app.include_router(cleaning_jobs.router)
+app.include_router(alignment_jobs.router)
 app.include_router(silo_groups.router)
 
 

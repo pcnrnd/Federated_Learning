@@ -7,6 +7,8 @@
 엣지 집계(train-edge): 자기 실학습 + 하위 파라미터를 combine 해 1건으로 대리 제출 (2단 HFL).
 수집(monitor): /proc 실측 리소스(cpu/mem/disk %)를 주기 push — SPA 사일로 리소스 화면 데이터원.
 연속학습(train-loop): open 라운드를 폴링해 릿지 실학습 기여 + 로컬 R² 지표를 라운드마다 push.
+수직 정렬(align): 정제 결과의 엔터티 id를 공유 키 FED_ALIGN_KEY(사일로 환경변수)로
+  HMAC-SHA256 해 다이제스트만 보내고, 서버 교집합만 같은 순서로 로컬 파일에 남긴다.
 
 원시 데이터는 컨테이너 밖으로 나가지 않는다 — 통계·파라미터·백분율만 push된다.
 
@@ -21,11 +23,14 @@
         --interval 5 --count 0
     python3 silo_worker.py train-loop --central http://fed-backend:8000 --silo-id silo-1 \
         --model e2e-ridge --max-rounds 250
+    FED_ALIGN_KEY=... python3 silo_worker.py align --central http://fed-backend:8000 \
+        --silo-id silo-4 --alignment-id a1 --recipe-name silo-hvc --recipe-version 1.0.0
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import random
@@ -33,6 +38,7 @@ import sys
 import time
 
 from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
+from silo_sdk.alignment import align_rows, hash_ids, load_align_key
 from silo_sdk.client import SiloClientError
 from silo_sdk.edge import combine
 from silo_sdk.integration import load_sources, schema_fingerprint
@@ -139,6 +145,49 @@ def run_clean(args: argparse.Namespace) -> None:
             ensure_ascii=False,
         )
     )
+
+
+# ---------- 사일로 간 수직 정렬 ----------
+
+
+def _wait_intersection(client: SiloClient, alignment_id: str, wait: float,
+                       poll_interval: float) -> list[str]:
+    """다른 사일로가 모두 제출할 때까지(409) 기다렸다가 교집합 다이제스트를 받는다."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return list(client.get_alignment_intersection(alignment_id)["hashed_keys"])
+        except SiloClientError as exc:
+            if exc.status != 409 or time.monotonic() > deadline:
+                raise
+        time.sleep(poll_interval)
+
+
+def run_align(args: argparse.Namespace) -> None:
+    """정제 결과 엔터티를 다른 사일로와 HMAC 교집합으로 정렬해 로컬에 남긴다."""
+    try:
+        key = load_align_key()
+    except ValueError as exc:
+        raise SystemExit(f"align 중단: {exc}") from exc
+    client = SiloClient(args.central, args.silo_id)
+    recipe = client.fetch_cleaning_recipe(args.recipe_name, args.recipe_version)
+    _, cleaned, _ = clean_local(args.silo_id, args.data_dir, recipe)
+    key_column = (recipe.get("mapping") or {}).get("key", "id")
+
+    digests = hash_ids((row[key_column] for row in cleaned), key)
+    client.submit_alignment_keys(args.alignment_id, list(digests))  # 다이제스트만 — 원본 id ❌
+    intersection = _wait_intersection(client, args.alignment_id, args.wait, args.poll_interval)
+    aligned, report = align_rows(cleaned, key_column, intersection, key)
+    client.report_alignment(args.alignment_id, report["matched"], report["excluded"],
+                            report["order_digest"])
+
+    out_path = os.path.join(args.data_dir, f"aligned-{args.alignment_id}.csv")
+    with open(out_path, "w", encoding="utf-8", newline="") as f:  # 로컬에만 남긴다
+        writer = csv.DictWriter(f, fieldnames=list(aligned[0]) if aligned else [key_column])
+        writer.writeheader()
+        writer.writerows(aligned)
+    print(json.dumps({"silo_id": args.silo_id, "rows_after_cleaning": len(cleaned),
+                      "intersection": len(intersection), **report}, ensure_ascii=False))
 
 
 # ---------- 리소스 실측 (/proc — 리눅스 컨테이너 전용) ----------
@@ -504,6 +553,17 @@ def main(argv: list[str]) -> None:
         help="연속 push 실패 허용 횟수 — 초과 시 종료 (기본 12 ≈ 5s 주기에서 1분+ 단절 허용)",
     )
     monitor.set_defaults(func=run_monitor)
+
+    align = sub.add_parser("align", help="사일로 간 수직 정렬 (공유 키 HMAC 교집합)")
+    align.add_argument("--central", required=True)
+    align.add_argument("--silo-id", required=True)
+    align.add_argument("--alignment-id", required=True)
+    align.add_argument("--recipe-name", required=True)
+    align.add_argument("--recipe-version", required=True)
+    align.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
+    align.add_argument("--wait", type=float, default=300.0, help="다른 사일로 제출 대기 한계(초)")
+    align.add_argument("--poll-interval", type=float, default=2.0, help="교집합 조회 주기(초)")
+    align.set_defaults(func=run_align)
 
     loop = sub.add_parser("train-loop", help="open 라운드 폴링 연속 학습 기여")
     loop.add_argument("--central", required=True)

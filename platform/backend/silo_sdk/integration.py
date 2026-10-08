@@ -269,3 +269,44 @@ def schema_fingerprint(rows: list[Row]) -> str | None:
         names = types[col]
         parts.append(f"{col}:{names.pop() if len(names) == 1 else 'mixed' if names else 'null'}")
     return hashlib.sha256(",".join(parts).encode("utf-8")).hexdigest()
+
+
+def join_sources(tables: Tables, params: dict[str, Any], mapping: dict[str, Any]) -> Counters:
+    """사일로 안 수직 결합 — 키 inner join. 결과는 params.into 표.
+
+    왼쪽 값이 우선이고, 왼쪽에 없거나 결측인 컬럼만 오른쪽 값으로 채운다. 오른쪽에 같은 키가
+    여러 번 있으면 첫 행을 쓴다. 제외 수를 사유(left_only·right_only·missing_key)별로 센다.
+    """
+    keys = params.get("keys") or [mapping["key"]]
+    left = require_table(tables, params["left"])
+    right = require_table(tables, params["right"])
+    counters: Counters = {"join_sources.in.left": len(left), "join_sources.in.right": len(right)}
+    index: dict[tuple, Row] = {}
+    for row in right:
+        key = tuple(row.get(k) for k in keys)
+        if any(_is_blank(v) for v in key):
+            _bump(counters, "join_sources.excluded.missing_key")
+            continue
+        index.setdefault(key, row)
+    joined: list[Row] = []
+    used: set[tuple] = set()
+    for row in left:
+        key = tuple(row.get(k) for k in keys)
+        if any(_is_blank(v) for v in key):
+            _bump(counters, "join_sources.excluded.missing_key")
+            continue
+        match = index.get(key)
+        if match is None:
+            _bump(counters, "join_sources.excluded.left_only")
+            continue
+        used.add(key)
+        merged = dict(row)
+        for col, value in match.items():
+            if merged.get(col) is None:
+                merged[col] = value
+        joined.append(merged)
+    counters["join_sources.excluded.right_only"] = len(set(index) - used)
+    counters["join_sources.matched"] = len(joined)
+    counters["join_sources"] = sum(v for k, v in counters.items() if ".excluded." in k)
+    tables[params["into"]] = joined
+    return counters

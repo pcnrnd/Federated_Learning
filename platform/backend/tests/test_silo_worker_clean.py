@@ -111,3 +111,83 @@ def test_clean_reports_schema_fingerprint(tmp_path, monkeypatch):
         [{"id": "E", "x1": 0.0, "y": 0.0}])
     assert report["step_counters"]["union_sources.duplicates.cross"] > 0
     assert report["step_counters"]["union_sources.duplicates.within"] > 0
+
+
+# ---------- 사일로 간 수직 정렬 (align, F4) ----------
+
+ALIGN_RECIPE = {
+    "steps": [
+        {"type": "map_schema", "params": {"sources": ["period_a", "period_b", "entity"]}},
+        {"type": "union_sources",
+         "params": {"sources": ["period_a", "period_b"], "into": "periods"}},
+        {"type": "join_sources", "params": {"left": "periods", "right": "entity", "into": "base"}},
+        {"type": "validate_schema", "params": {}},
+    ],
+    "mapping": {**synthetic.HVC_MAPPING, "common_schema": {
+        k: v for k, v in synthetic.HVC_MAPPING["common_schema"].items() if k != "x2"}},
+}
+
+
+class _AlignClient(_CleanClient):
+    def __init__(self) -> None:
+        super().__init__(ALIGN_RECIPE)
+        self.submitted: list[str] = []
+        self.polls = 0
+        self.align_report: dict = {}
+
+    def submit_alignment_keys(self, alignment_id, hashed_keys):
+        self.submitted = list(hashed_keys)
+        return {}
+
+    def get_alignment_intersection(self, alignment_id):
+        from silo_sdk.client import SiloClientError
+
+        self.polls += 1
+        if self.polls == 1:
+            raise SiloClientError(409, "다른 사일로 대기")
+        return {"status": "ready", "hashed_keys": sorted(self.submitted)[:5]}
+
+    def report_alignment(self, alignment_id, matched, excluded, order_digest):
+        self.align_report = {"matched": matched, "excluded": excluded,
+                             "order_digest": order_digest}
+        return {}
+
+
+def _align_args(tmp_path) -> argparse.Namespace:
+    return argparse.Namespace(central="http://c", silo_id="silo-4", alignment_id="a1",
+                              recipe_name="r", recipe_version="1.0.0", data_dir=str(tmp_path),
+                              wait=5.0, poll_interval=0.0)
+
+
+@pytest.mark.unit
+def test_align_sends_only_hmac_digests_and_keeps_intersection(tmp_path, monkeypatch, capsys):
+    import csv
+    import re
+
+    monkeypatch.setenv("FED_ALIGN_KEY", "silo-shared-align-key-for-tests")
+    client = _AlignClient()
+    _install(monkeypatch, client)
+
+    silo_worker.run_align(_align_args(tmp_path))
+
+    assert client.submitted and all(re.fullmatch(r"[0-9a-f]{64}", h) for h in client.submitted)
+    raw_ids = {r["eid"] for r in silo_worker.load_local_sources("silo-4", str(tmp_path))["entity"]}
+    assert not raw_ids & set(client.submitted)
+    assert client.align_report["matched"] == 5
+    assert client.align_report["excluded"] == len(client.submitted) - 5
+    with (tmp_path / "aligned-a1.csv").open(encoding="utf-8", newline="") as f:
+        aligned = list(csv.DictReader(f))
+    assert len(aligned) == 5  # 교집합 엔터티만, 서버가 준 순서대로 로컬에 남긴다
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["intersection"] == 5 and out["order_digest"] == client.align_report["order_digest"]
+
+
+@pytest.mark.unit
+def test_align_requires_silo_key_before_any_request(tmp_path, monkeypatch):
+    monkeypatch.delenv("FED_ALIGN_KEY", raising=False)
+    client = _AlignClient()
+    _install(monkeypatch, client)
+
+    with pytest.raises(SystemExit, match="FED_ALIGN_KEY"):
+        silo_worker.run_align(_align_args(tmp_path))
+    assert client.submitted == []

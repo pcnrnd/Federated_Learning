@@ -179,6 +179,7 @@ _SINGLE_TABLE_STEPS = {
 _MULTI_SOURCE_STEPS = {
     "map_schema": integration.map_schema,
     "union_sources": integration.union_sources,
+    "join_sources": integration.join_sources,
 }
 
 # 서버 services.cleaning_recipes.STEP_CATALOG 와 같아야 한다 (테스트로 고정)

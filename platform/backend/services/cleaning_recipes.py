@@ -57,6 +57,11 @@ STEP_CATALOG: dict[str, dict[str, Any]] = {
         "needs_mapping": True,
         "description": "수평 결합 — 공통 스키마 원천들의 행 결합, 원천 간·안 중복 제거",
     },
+    "join_sources": {
+        "required": ["left", "right", "into"],
+        "needs_mapping": True,
+        "description": "수직 결합 — 키 inner join, 제외 수(한쪽에만 있는 키·키 결측) 기록",
+    },
 }
 
 # 매핑표의 원천 이름을 가리키는 파라미터 (단계 → 파라미터 이름)

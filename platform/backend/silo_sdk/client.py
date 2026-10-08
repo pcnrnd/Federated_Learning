@@ -295,6 +295,32 @@ class SiloClient:
             payload,
         )
 
+    # ---------- 사일로 간 수직 정렬 (HMAC 다이제스트만 — 원본 id 없음) ----------
+
+    def submit_alignment_keys(self, alignment_id: str, hashed_keys: list[str]) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/alignment-jobs/{alignment_id}/submit",
+            {"silo_id": self.silo_id, "hashed_keys": list(hashed_keys)},
+        )
+
+    def get_alignment_intersection(self, alignment_id: str) -> dict[str, Any]:
+        """교집합 다이제스트 — 다른 사일로가 아직 제출 전이면 SiloClientError(409)."""
+        return self._request(
+            "GET",
+            f"/api/alignment-jobs/{alignment_id}/intersection" + _query(silo_id=self.silo_id),
+        )
+
+    def report_alignment(
+        self, alignment_id: str, matched: int, excluded: int, order_digest: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/alignment-jobs/{alignment_id}/report",
+            {"silo_id": self.silo_id, "matched": int(matched), "excluded": int(excluded),
+             "order_digest": order_digest},
+        )
+
     def health(self) -> bool:
         """간단한 ping — 메인 페이지로 200 응답 확인"""
         try:

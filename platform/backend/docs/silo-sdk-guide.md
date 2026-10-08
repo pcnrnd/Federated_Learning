@@ -98,6 +98,45 @@ client.report_cleaning_shard(
 )
 ```
 
+### 다원천 통합 정제 (수평·수직·교차)
+
+레시피에 매핑표(`mapping`)가 있으면 `apply_recipe`가 원천 묶음 `{원천 이름: 행 목록}`을 받는다.
+수평(기간별 표 행 결합) → 수직(키 결합) → 교차(다른 단위·코드의 기록 변환과 충돌 해소) →
+정합성 검사 순으로 공통 스키마를 만든다. 카운터에는 단계별 세부(`<step>.<항목>`)가 함께 담긴다.
+
+```python
+from silo_sdk.integration import load_sources
+
+tables = load_sources({"period_a": "period_a.csv", "entity": "entity.csv", ...})
+cleaned, counters = apply_recipe(tables, recipe["steps"], mapping=recipe["mapping"])
+# counters 예: validate_schema.excluded.missing, union_sources.duplicates.cross,
+#              join_sources.excluded.left_only, map_schema.cast_failed
+```
+
+### 사일로 간 수직 정렬 (HMAC 교집합)
+
+같은 엔터티를 서로 다른 사일로가 가질 때, 원본 id를 보내지 않고 공통 엔터티만 같은 순서로 맞춘다.
+
+```python
+from silo_sdk.alignment import align_rows, hash_ids, load_align_key
+
+key = load_align_key()                       # 사일로 환경변수 FED_ALIGN_KEY (16자 이상)
+digests = hash_ids((r["id"] for r in cleaned), key)   # {HMAC-SHA256 hex: id}
+client.submit_alignment_keys("a1", list(digests))     # 다이제스트만 전송
+intersection = client.get_alignment_intersection("a1")["hashed_keys"]  # 모두 제출 전 409
+aligned, report = align_rows(cleaned, "id", intersection, key)  # 교집합만, 서버 순서대로
+client.report_alignment("a1", report["matched"], report["excluded"], report["order_digest"])
+```
+
+한계(이번 구현의 보안 수준):
+
+- 키를 사일로끼리 공유한다. 키를 가진 사일로는 다른 사일로의 다이제스트를 추측 가능한 id
+  사전(예: 순번 id)과 대조해 상대의 엔터티 보유 여부를 알 수 있다.
+- 서버는 키가 없어 다이제스트를 id로 되돌리지 못하지만, 교집합 크기와 어떤 다이제스트가
+  공통인지는 안다. 키가 서버로 새면 같은 사전 대조가 가능하다 — 키는 서버 환경에 두지 않는다.
+- 강화하려면 키 공유 없는 PSI(사설 교집합: ECDH·OPRF 기반)로 바꿔야 한다. 수직 연합학습
+  알고리즘(정렬된 엔터티로 특징을 나눠 학습)은 이번 범위 밖이다.
+
 ### 오류 처리
 ```python
 from silo_sdk import SiloClient, SiloClientError
@@ -152,6 +191,15 @@ asyncio.run(main())
 | `trim_whitespace` | `columns` | 문자열 양끝 공백 제거 |
 | `lowercase` | `columns` | 문자열 소문자화 |
 | `regex_filter` | `column`, `pattern` | 정규식 매칭되지 않는 행 제거 |
+
+다원천 단계(레시피 `mapping` 필요 — 서버 `STEP_CATALOG`와 SDK `SUPPORTED_STEPS`는 테스트로 일치를 고정):
+
+| step type | 필수 파라미터 | 동작 |
+|---|---|---|
+| `map_schema` | `sources` | 표 원천을 공통 스키마로 (컬럼명·코드표·형 변환·단위 배율/오프셋), 실패 값은 결측으로 두고 사유별 집계 |
+| `validate_schema` | (`source` 선택) | 존재·형식·유한·범위 위반 행 제외, 사유별 집계. 유효 행 0이면 정제 실패 |
+| `union_sources` | `sources`, `into` | 수평 결합 — 행 결합 + 원천 간·안 중복 제거 |
+| `join_sources` | `left`, `right`, `into` | 수직 결합 — 키 inner join, 제외 수 기록 |
 
 ## 원시 데이터 절대 금지
 
