@@ -187,13 +187,20 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
             "submitted_at": _now_iso(),
             "checksum": contribution.checksum or _checksum_params(contribution.parameters),
             "aggregated_from": list(contribution.aggregated_from),
+            **contribution.cleaning_stats(),
         }
         upsert_contribution(contribution.round_id, contribution.silo_id, record)
 
+        stats = contribution.cleaning_stats()
         updated = entry.model_copy(
             update={
                 "contributors": entry.contributors + [contribution.silo_id],
                 "total_samples": entry.total_samples + contribution.sample_count,
+                "cleaning_stats": (
+                    {**entry.cleaning_stats, contribution.silo_id: stats}
+                    if stats
+                    else entry.cleaning_stats
+                ),
             }
         )
         _save_round(updated)
@@ -214,6 +221,7 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
         submitted_at=record["submitted_at"],
         checksum=record["checksum"],
         aggregated_from=list(contribution.aggregated_from),
+        **contribution.cleaning_stats(),
     )
 
 
@@ -228,6 +236,9 @@ def list_contributions(round_id: str) -> list[ParameterContributionRecord]:
             submitted_at=r["submitted_at"],
             checksum=r.get("checksum"),
             aggregated_from=list(r.get("aggregated_from", [])),
+            rows_before_cleaning=r.get("rows_before_cleaning"),
+            rows_after_cleaning=r.get("rows_after_cleaning"),
+            train_rmse=r.get("train_rmse"),
         )
         for r in contributions.values()
     ]

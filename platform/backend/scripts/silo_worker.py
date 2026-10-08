@@ -4,6 +4,8 @@
   레시피에 매핑표(mapping)가 있으면 로컬 원천 파일(--data-dir, 없으면 합성 생성)을,
   없으면 기존 더미 단일 표를 정제한다.
 학습(train): 사일로별 non-IID 로컬 데이터 생성 → train_ridge 실학습 → 파라미터 기여 push.
+  --recipe-name/--recipe-version 을 주면(train·train-loop·train-edge 공통) 로컬 원천 3유형에
+  레시피를 적용한 정제 결과로 학습하고, 정제 전후 행 수·학습 RMSE를 기여와 함께 보낸다.
 엣지 집계(train-edge): 자기 실학습 + 하위 파라미터를 combine 해 1건으로 대리 제출 (2단 HFL).
 수집(monitor): /proc 실측 리소스(cpu/mem/disk %)를 주기 push — SPA 사일로 리소스 화면 데이터원.
 연속학습(train-loop): open 라운드를 폴링해 릿지 실학습 기여 + 로컬 R² 지표를 라운드마다 push.
@@ -32,6 +34,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import random
 import sys
@@ -305,6 +308,39 @@ def _local_accuracy(rows: list[dict], parameters: list[float]) -> float:
     return max(0.0, min(1.0, 1.0 - sse / sst))
 
 
+_STAT_KEYS = ("rows_before_cleaning", "rows_after_cleaning", "train_rmse")
+
+
+def _training_rows(args: argparse.Namespace, client: SiloClient) -> tuple[list[dict], dict]:
+    """학습 입력 행과 정제 통계 — 레시피를 지정하면 로컬 원천 정제 결과, 아니면 기존 합성 행."""
+    name = getattr(args, "recipe_name", None)
+    version = getattr(args, "recipe_version", None)
+    if not name and not version:
+        return _local_train_rows(args.silo_id), {}  # 기존 동작 그대로
+    if not (name and version):
+        raise SystemExit("--recipe-name과 --recipe-version은 함께 지정해야 합니다")
+    recipe = client.fetch_cleaning_recipe(name, version)
+    rows_in, cleaned, _ = clean_local(
+        args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
+    )
+    return cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
+
+
+def _rmse(rows: list[dict], parameters: list[float]) -> float:
+    """로컬 학습 오차 RMSE — 스칼라만 보고한다."""
+    *weights, bias = parameters
+    sse = sum(
+        (row["y"] - (sum(w * row[c] for w, c in zip(weights, FEATURES)) + bias)) ** 2
+        for row in rows
+    )
+    return math.sqrt(sse / len(rows)) if rows else 0.0
+
+
+def _with_rmse(stats: dict, rows: list[dict], parameters: list[float]) -> dict:
+    """정제 통계가 있을 때만 학습 RMSE를 붙인다 (레시피 미지정이면 빈 dict 그대로)."""
+    return {**stats, "train_rmse": _rmse(rows, parameters)} if stats else {}
+
+
 def _already_contributed(client: SiloClient, round_id: str, silo_id: str) -> bool:
     """409의 원인 판별 — 라운드를 재조회해 내 기여가 실제로 등록돼 있는지 본다.
 
@@ -328,7 +364,7 @@ def run_train_loop(args: argparse.Namespace) -> None:
     없으면 잔여 라운드 없이 종료된 것으로 보고 현황을 남기고 빠져나온다.
     """
     client = SiloClient(args.central, args.silo_id)
-    rows = _local_train_rows(args.silo_id)
+    rows, stats = _training_rows(args, client)
     contributed_rounds: set[str] = set()
     idle_deadline = time.monotonic() + args.max_idle
     while len(contributed_rounds) < args.max_rounds:
@@ -364,7 +400,8 @@ def run_train_loop(args: argparse.Namespace) -> None:
                 continue
             result = train_ridge(rows, FEATURES, "y", l2=1e-6)
             try:
-                client.push_parameters(round_id, result.sample_count, result.parameters)
+                client.push_parameters(round_id, result.sample_count, result.parameters,
+                                       **_with_rmse(stats, rows, result.parameters))
             except (TimeoutError, OSError) as exc:
                 # push 자체가 타임아웃 — 성공했는지 불명이므로 세지 않고 재폴링
                 # (중복 push는 서버가 409로 걸러준다)
@@ -422,10 +459,18 @@ def run_train_loop(args: argparse.Namespace) -> None:
 
 def run_train(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
-    rows = _local_train_rows(args.silo_id)
+    rows, stats = _training_rows(args, client)
     result = train_ridge(rows, FEATURES, "y", l2=1e-6)
+    stats = _with_rmse(stats, rows, result.parameters)
+    if getattr(args, "emit_only", False):
+        # 엣지 집계자에게 넘길 하위 결과 1건 (train-edge --children-json 형식) — push 하지 않는다
+        print(json.dumps({"silo_id": args.silo_id, "sample_count": result.sample_count,
+                          "parameters": result.parameters, **stats}, ensure_ascii=False))
+        return
+    if not args.round_id:
+        raise SystemExit("--round-id가 필요합니다 (--emit-only가 아닐 때)")
     record = client.push_parameters(
-        args.round_id, result.sample_count, result.parameters
+        args.round_id, result.sample_count, result.parameters, **stats
     )
     print(
         json.dumps(
@@ -434,6 +479,7 @@ def run_train(args: argparse.Namespace) -> None:
                 "sample_count": result.sample_count,
                 "local_parameters": [round(p, 6) for p in result.parameters],
                 "parameter_dim": record["parameter_dim"],
+                **stats,
             },
             ensure_ascii=False,
         )
@@ -463,6 +509,22 @@ def _load_children(source: str) -> list[dict]:
     return children
 
 
+def _edge_cleaning_stats(own: dict, own_samples: int, children: list[dict]) -> dict:
+    """집계자 자신 + 하위의 정제 통계 합 — 모든 참여자가 통계를 가졌을 때만 (아니면 빈 dict).
+
+    행 수는 합, 학습 RMSE는 표본수 가중 합성 sqrt(Σ nᵢ·rmseᵢ² / Σ nᵢ).
+    """
+    if not own or not all(all(k in c for k in _STAT_KEYS) for c in children):
+        return {}
+    parts = [(own_samples, own)] + [(int(c["sample_count"]), c) for c in children]
+    total = sum(n for n, _ in parts)
+    return {
+        "rows_before_cleaning": sum(int(s["rows_before_cleaning"]) for _, s in parts),
+        "rows_after_cleaning": sum(int(s["rows_after_cleaning"]) for _, s in parts),
+        "train_rmse": math.sqrt(sum(n * float(s["train_rmse"]) ** 2 for n, s in parts) / total),
+    }
+
+
 def run_train_edge(args: argparse.Namespace) -> None:
     """엣지 집계자 모드 — 자기 실학습 + 하위 파라미터를 로컬 가중평균해 1건 대리 제출.
 
@@ -478,8 +540,11 @@ def run_train_edge(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
     children = _load_children(args.children_json)
 
-    rows = _local_train_rows(args.silo_id)
+    rows, stats = _training_rows(args, client)
     mine = train_ridge(rows, FEATURES, "y", l2=1e-6)
+    edge_stats = _edge_cleaning_stats(
+        _with_rmse(stats, rows, mine.parameters), mine.sample_count, children
+    )
 
     participants = [(args.silo_id, mine.sample_count, mine.parameters)]
     participants += [
@@ -490,7 +555,7 @@ def run_train_edge(args: argparse.Namespace) -> None:
 
     child_ids = [c["silo_id"] for c in children]
     record = client.push_parameters(
-        args.round_id, edge_total, edge_params, aggregated_from=child_ids
+        args.round_id, edge_total, edge_params, aggregated_from=child_ids, **edge_stats
     )
     print(
         json.dumps(
@@ -507,6 +572,13 @@ def run_train_edge(args: argparse.Namespace) -> None:
             ensure_ascii=False,
         )
     )
+
+
+def _add_recipe_args(parser: argparse.ArgumentParser) -> None:
+    """정제 → 학습: 지정하면 로컬 원천에 레시피를 적용한 결과로 학습한다 (생략 시 기존 동작)."""
+    parser.add_argument("--recipe-name", help="정제 레시피 이름 (--recipe-version과 함께)")
+    parser.add_argument("--recipe-version", help="정제 레시피 버전")
+    parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
 
 
 def main(argv: list[str]) -> None:
@@ -526,7 +598,10 @@ def main(argv: list[str]) -> None:
     train = sub.add_parser("train", help="로컬 릿지 학습 + 기여 push")
     train.add_argument("--central", required=True)
     train.add_argument("--silo-id", required=True)
-    train.add_argument("--round-id", required=True)
+    train.add_argument("--round-id", help="기여 대상 라운드 (--emit-only면 생략)")
+    train.add_argument("--emit-only", action="store_true",
+                       help="push 없이 하위 결과 JSON 1줄만 출력 (train-edge 입력용)")
+    _add_recipe_args(train)
     train.set_defaults(func=run_train)
 
     edge_mode = sub.add_parser(
@@ -541,6 +616,7 @@ def main(argv: list[str]) -> None:
         help="하위 학습 결과 JSON 경로 ('-' = stdin): "
         "[{silo_id, sample_count, parameters}, ...]",
     )
+    _add_recipe_args(edge_mode)
     edge_mode.set_defaults(func=run_train_edge)
 
     monitor = sub.add_parser("monitor", help="리소스 실측 주기 push")
@@ -572,6 +648,7 @@ def main(argv: list[str]) -> None:
     loop.add_argument("--max-rounds", type=int, default=250, help="기여할 라운드 수")
     loop.add_argument("--poll-interval", type=float, default=0.5, help="라운드 폴링 주기(초)")
     loop.add_argument("--max-idle", type=float, default=120.0, help="새 라운드 무발견 종료 한계(초)")
+    _add_recipe_args(loop)
     loop.set_defaults(func=run_train_loop)
 
     args = parser.parse_args(argv)

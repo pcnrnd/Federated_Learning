@@ -172,8 +172,14 @@ class SiloClient:
         checksum: str | None = None,
         idempotency_key: str | None = None,
         aggregated_from: list[str] | None = None,
+        rows_before_cleaning: int | None = None,
+        rows_after_cleaning: int | None = None,
+        train_rmse: float | None = None,
     ) -> dict[str, Any]:
         """파라미터 기여를 push.
+
+        정제한 로컬 데이터로 학습했으면 정제 전후 행 수와 학습 RMSE를 함께 보낸다(통계만).
+        지정하지 않으면 payload는 기존과 같다.
 
         엣지 집계자가 대리 제출할 때는 `edge.combine([자신, *하위])` 결과와 함께
         `aggregated_from`에 **하위 노드 id 목록만** 넘긴다 (id 목록일 뿐 원시 데이터 아님).
@@ -181,7 +187,7 @@ class SiloClient:
         provenance 이므로 하위만 담는다 — 자기 자신을 넣으면 서버가 422로 거부한다.
         평면 제출이면 생략 — 빈 목록으로 나가 기존 동작과 동일하다.
         """
-        payload = {
+        payload: dict[str, Any] = {
             "round_id": round_id,
             "silo_id": self.silo_id,
             "sample_count": int(sample_count),
@@ -189,6 +195,9 @@ class SiloClient:
             "checksum": checksum,
             "aggregated_from": list(aggregated_from or []),
         }
+        stats = {"rows_before_cleaning": rows_before_cleaning,
+                 "rows_after_cleaning": rows_after_cleaning, "train_rmse": train_rmse}
+        payload.update({k: v for k, v in stats.items() if v is not None})
         return self._request(
             "POST",
             f"/api/training-rounds/{round_id}/contributions",

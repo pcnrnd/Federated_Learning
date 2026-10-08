@@ -73,6 +73,10 @@
 | GET | `/api/training-rounds/{id}/contributions` | 기여 목록 |
 | POST | `/api/training-rounds/{id}/aggregate` | FedAvg 집계 |
 
+기여에 정제 통계를 함께 보낼 수 있다(선택): `rows_before_cleaning`·`rows_after_cleaning`·
+`train_rmse` — 사일로가 레시피로 정제한 로컬 데이터로 학습했을 때의 행 수와 학습 오차다.
+라운드의 `cleaning_stats`(사일로별)와 기여 목록에 기록된다. 생략하면 기존과 같다.
+
 ## Batch 잡 (P1)
 
 | Method | Path | 설명 |
