@@ -22,10 +22,42 @@ const SHARD_STATE_META: Record<
   failed: { label: '실패', cls: 'dep-state-failed' },
 }
 
-function counterText(counters: Record<string, number>): string {
-  return Object.entries(counters)
-    .map(([step, n]) => `${step} ${formatNumber(n)}`)
-    .join(' · ')
+/**
+ * `<step>.<항목>.<세부>` 형태의 카운터 키를 `.` 경계마다 줄바꿈 기회(<wbr>)와 함께 렌더링한다.
+ * 표시 문자열은 그대로이고, 좁은 카드에서 긴 키가 카드 밖으로 밀려 잘리는 것만 막는다.
+ */
+function CounterKey({ name }: { name: string }) {
+  const parts = name.split('.')
+  return (
+    <>
+      {parts.map((part, i) => (
+        <span key={i}>
+          {i > 0 && (
+            <>
+              .<wbr />
+            </>
+          )}
+          {part}
+        </span>
+      ))}
+    </>
+  )
+}
+
+/**
+ * step별 적용 건수를 카운터 하나당 칩 하나로, 들어온 순서 그대로 나열한다.
+ * 상태 칩 행과 분리된 블록이라 카운터가 많아도 가로로 넘치지 않고 줄바꿈된다.
+ */
+function CounterList({ counters }: { counters: Record<string, number> }) {
+  return (
+    <div className="cleanse-counters" title="정제 step별 적용 건수">
+      {Object.entries(counters).map(([step, n]) => (
+        <span key={step} className="cleanse-counter">
+          <CounterKey name={step} /> {formatNumber(n)}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 export function CleansingGrid({ siloData }: CleansingGridProps) {
@@ -56,14 +88,14 @@ export function CleansingGrid({ siloData }: CleansingGridProps) {
               />
             </div>
             {liveState && (
-              <div className="cleanse-progress-row">
-                <span className={`dep-state-badge ${liveState.cls}`}>{liveState.label}</span>
+              <>
+                <div className="cleanse-progress-row">
+                  <span className={`dep-state-badge ${liveState.cls}`}>{liveState.label}</span>
+                </div>
                 {d.stepCounters && Object.keys(d.stepCounters).length > 0 && (
-                  <span className="cleanse-label" title="정제 step별 적용 건수">
-                    {counterText(d.stepCounters)}
-                  </span>
+                  <CounterList counters={d.stepCounters} />
                 )}
-              </div>
+              </>
             )}
           </div>
         )
