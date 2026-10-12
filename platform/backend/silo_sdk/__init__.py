@@ -8,9 +8,10 @@
   * 표준 라이브러리만 사용 (urllib) — 사일로 환경 의존성 최소화.
   * push 실패 시 호출 측이 결정할 수 있도록 예외를 그대로 전파.
 """
-from . import edge
+from . import alignment, edge
 from .async_client import AsyncSiloClient
 from .cleaning import apply_recipe
+from .integration import CleaningError
 from .client import SiloClient, SiloClientError
 from .edge import combine
 from .histograms import build_histogram
@@ -18,9 +19,11 @@ from .trainer import RidgeResult, train_ridge
 
 __all__ = [
     "AsyncSiloClient",
+    "CleaningError",
     "RidgeResult",
     "SiloClient",
     "SiloClientError",
+    "alignment",
     "apply_recipe",
     "build_histogram",
     "combine",

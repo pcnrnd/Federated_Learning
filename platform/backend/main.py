@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from api import (
     ab_tests,
+    alignment_jobs,
     cleaning_jobs,
     cleaning_recipes,
     dashboard,
@@ -128,6 +129,8 @@ app.include_router(ab_tests.router)
 # 데이터 정제 (P1)
 app.include_router(cleaning_recipes.router)
 app.include_router(cleaning_jobs.router)
+app.include_router(cleaning_jobs.shards_router)
+app.include_router(alignment_jobs.router)  # 사일로 간 수직 정렬 (HMAC 교집합)
 
 # 사일로 데이터 시각화 (P2) — 공인인증 KPI (5종 × 6 사일로)
 app.include_router(visualizations.router)

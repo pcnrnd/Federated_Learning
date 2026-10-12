@@ -1,10 +1,16 @@
 """사일로 컨테이너 안에서 실행되는 E2E 워커 (표준 라이브러리 + silo_sdk 전용).
 
-정제(clean): 레시피 조회 → 샤드 start → 로컬 더미 데이터에 apply_recipe → 카운터 report.
+정제(clean): 레시피 조회 → 샤드 start → 로컬 데이터에 apply_recipe → 카운터 report.
+  레시피에 매핑표(mapping)가 있으면 로컬 원천 파일(--data-dir, 없으면 합성 생성)을,
+  없으면 기존 더미 단일 표를 정제한다.
 학습(train): 사일로별 non-IID 로컬 데이터 생성 → train_ridge 실학습 → 파라미터 기여 push.
+  --recipe-name/--recipe-version 을 주면(train·train-loop·train-edge 공통) 로컬 원천 3유형에
+  레시피를 적용한 정제 결과로 학습하고, 정제 전후 행 수·학습 RMSE를 기여와 함께 보낸다.
 엣지 집계(train-edge): 자기 실학습 + 하위 파라미터를 combine 해 1건으로 대리 제출 (2단 HFL).
 수집(monitor): /proc 실측 리소스(cpu/mem/disk %)를 주기 push — SPA 사일로 리소스 화면 데이터원.
 연속학습(train-loop): open 라운드를 폴링해 릿지 실학습 기여 + 로컬 R² 지표를 라운드마다 push.
+수직 정렬(align): 정제 결과의 엔터티 id를 공유 키 FED_ALIGN_KEY(사일로 환경변수)로
+  HMAC-SHA256 해 다이제스트만 보내고, 서버 교집합만 같은 순서로 로컬 파일에 남긴다.
 
 원시 데이터는 컨테이너 밖으로 나가지 않는다 — 통계·파라미터·백분율만 push된다.
 
@@ -19,22 +25,30 @@
         --interval 5 --count 0
     python3 silo_worker.py train-loop --central http://fed-backend:8000 --silo-id silo-1 \
         --model e2e-ridge --max-rounds 250
+    FED_ALIGN_KEY=... python3 silo_worker.py align --central http://fed-backend:8000 \
+        --silo-id silo-4 --alignment-id a1 --recipe-name silo-hvc --recipe-version 1.0.0
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import math
 import os
 import random
 import sys
 import time
 
-from silo_sdk import SiloClient, apply_recipe, train_ridge
+from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
+from silo_sdk.alignment import align_rows, hash_ids, load_align_key, order_digest
 from silo_sdk.client import SiloClientError
 from silo_sdk.edge import combine
+from silo_sdk.integration import load_sources, schema_fingerprint
 
 FEATURES = ["x1", "x2", "x3"]
+# 사일로 로컬 원천 파일 위치 (컨테이너 안 — 사일로 밖으로 나가지 않는다)
+DEFAULT_DATA_DIR = os.environ.get("FED_SILO_DATA_DIR", "/srv/silo-data")
 
 # 학습 데이터의 참 모델 — 전 사일로 공통 (E2E에서 집계 결과와 대조)
 TRUE_WEIGHTS = [2.0, -3.0, 0.5]
@@ -87,25 +101,65 @@ def _local_train_rows(silo_id: str) -> list[dict]:
     return rows
 
 
-def run_clean(args: argparse.Namespace) -> None:
-    client = SiloClient(args.central, args.silo_id)
-    recipe = client.fetch_cleaning_recipe(args.recipe_name, args.recipe_version)
-    client.start_cleaning_shard(args.job_id, args.shard_index)
+def load_local_sources(silo_id: str, data_dir: str) -> dict[str, list[dict]]:
+    """사일로 로컬 원천 3유형(4파일)을 읽는다 — 파일이 없으면 합성 원천을 먼저 쓴다."""
+    return load_sources(synthetic.ensure_sources(silo_id, data_dir))
 
-    rows = _dirty_rows(args.silo_id)
+
+def clean_local(
+    silo_id: str, data_dir: str, recipe: dict
+) -> tuple[int, list[dict], dict[str, int]]:
+    """레시피를 로컬 데이터에 적용 → (입력 행 수, 정제 행, 카운터). 행은 로컬에서만 쓴다."""
+    if recipe.get("mapping"):
+        tables = load_local_sources(silo_id, data_dir)
+        rows_in = sum(len(rows) for rows in tables.values())
+        cleaned, counters = apply_recipe(tables, recipe["steps"], mapping=recipe["mapping"])
+        return rows_in, cleaned, counters
+    rows = _dirty_rows(silo_id)
     cleaned, counters = apply_recipe(rows, recipe["steps"])
+    return len(rows), cleaned, counters
+
+
+MAX_ERROR_CHARS = 500
+
+
+def _clean_shard(client: SiloClient, args: argparse.Namespace, job_id: str, shard_index: int,
+                 recipe_name: str, recipe_version: str) -> bool:
+    """샤드 1건 정제 → 보고. 시작 뒤 정제가 실패하면 error를 담아 보고하고 False.
+
+    실패를 보고하지 않으면 샤드가 running에 고착돼 잡이 끝나지 않는다. 오류 문구는 예외
+    형식과 메시지(통계·컬럼명)뿐이다 — 원시 행은 담지 않는다.
+    """
+    recipe = client.fetch_cleaning_recipe(recipe_name, recipe_version)
+    client.start_cleaning_shard(job_id, shard_index)
+
+    try:
+        rows_in, cleaned, counters = clean_local(
+            args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
+        )
+    except Exception as exc:  # noqa: BLE001 — 어떤 실패든 서버에 보고해 샤드를 닫는다
+        error = f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
+        client.report_cleaning_shard(job_id, shard_index, rows_in=0, rows_out=0,
+                                     step_counters={}, error=error)
+        print(json.dumps({"silo_id": args.silo_id, "job_id": job_id,
+                          "shard_index": shard_index, "event": "shard_failed",
+                          "error": error}, ensure_ascii=False))
+        return False
     job = client.report_cleaning_shard(
-        args.job_id,
-        args.shard_index,
-        rows_in=len(rows),
+        job_id,
+        shard_index,
+        rows_in=rows_in,
         rows_out=len(cleaned),
         step_counters=counters,
+        schema_fingerprint=schema_fingerprint(cleaned),
     )
     print(
         json.dumps(
             {
                 "silo_id": args.silo_id,
-                "rows_in": len(rows),
+                "job_id": job_id,
+                "shard_index": shard_index,
+                "rows_in": rows_in,
                 "rows_out": len(cleaned),
                 "counters": counters,
                 "job_status": job["status"],
@@ -113,6 +167,110 @@ def run_clean(args: argparse.Namespace) -> None:
             ensure_ascii=False,
         )
     )
+    return True
+
+
+def run_clean(args: argparse.Namespace) -> None:
+    """작업 번호를 주면 그 샤드를, 모두 생략하면 내게 배정된 대기 샤드를 차례로 처리한다."""
+    client = SiloClient(args.central, args.silo_id)
+    given = (args.job_id, args.shard_index, args.recipe_name, args.recipe_version)
+    if all(v is not None for v in given):
+        if not _clean_shard(client, args, *given):
+            raise SystemExit("정제 실패 샤드 1건 (오류를 서버에 보고함)")
+        return
+    if any(v is not None for v in given):
+        raise SystemExit(
+            "--job-id·--shard-index·--recipe-name·--recipe-version은 함께 지정하거나 "
+            "모두 생략해야 합니다 (생략 = 배정된 대기 샤드 처리)"
+        )
+    shards = client.list_assigned_shards(status="pending")
+    if not shards:
+        print(json.dumps({"silo_id": args.silo_id, "event": "no_assigned_shards"},
+                         ensure_ascii=False))
+        return
+    failed = [
+        shard["job_id"]
+        for shard in shards
+        if not _clean_shard(client, args, shard["job_id"], int(shard["shard_index"]),
+                            shard["recipe_name"], shard["recipe_version"])
+    ]
+    if failed:
+        raise SystemExit(f"정제 실패 샤드 {len(failed)}건 {failed} (오류를 서버에 보고함)")
+
+
+# ---------- 사일로 간 수직 정렬 ----------
+
+
+def _wait_intersection(client: SiloClient, alignment_id: str, wait: float,
+                       poll_interval: float) -> list[str]:
+    """다른 사일로가 모두 제출할 때까지(409) 기다렸다가 교집합 다이제스트를 받는다."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return list(client.get_alignment_intersection(alignment_id)["hashed_keys"])
+        except SiloClientError as exc:
+            if exc.status != 409:
+                raise
+            if time.monotonic() > deadline:
+                raise SystemExit(
+                    "align 대기 한계 초과 — 다른 사일로가 제출한 뒤 같은 명령으로 다시 실행하면 "
+                    "이어서 진행합니다"
+                ) from exc
+        time.sleep(poll_interval)
+
+
+def _submit_or_resume(client: SiloClient, alignment_id: str, silo_id: str,
+                      digests: list[str]) -> None:
+    """다이제스트 제출. 이미 제출했으면(409) 같은 집합인지 확인하고 이어서 진행한다.
+
+    대기 한계 초과·응답 유실 뒤 재실행이 중복 제출 409에서 멈추지 않게 한다. 서버에 남은
+    제출 집합 지문과 지금 집합의 지문이 같을 때만 이어 간다 — 그 사이 원천·키·레시피가 바뀌어
+    다른 집합이 되면(건수가 같아도) 교집합 기준과 정렬 대상이 어긋나므로 중단한다.
+    """
+    current = order_digest(sorted(set(digests)))
+    try:
+        client.submit_alignment_keys(alignment_id, digests)
+        return
+    except SiloClientError as exc:
+        if exc.status != 409:
+            raise
+        job = client.get_alignment(alignment_id)
+        mine = next((p for p in job.get("participants", []) if p.get("silo_id") == silo_id), {})
+        if mine.get("submitted_digest") != current:
+            raise SystemExit(
+                f"align 중단: 이미 제출한 다이제스트 집합(건수 {mine.get('submitted')})이 "
+                f"지금 집합(건수 {len(set(digests))})과 다릅니다 — 원천·키·레시피가 바뀌었으면 "
+                "새 정렬 작업으로 다시 하세요"
+            ) from exc
+    print(json.dumps({"silo_id": silo_id, "event": "already_submitted",
+                      "submitted": len(digests)}, ensure_ascii=False))
+
+
+def run_align(args: argparse.Namespace) -> None:
+    """정제 결과 엔터티를 다른 사일로와 HMAC 교집합으로 정렬해 로컬에 남긴다."""
+    try:
+        key = load_align_key()
+    except ValueError as exc:
+        raise SystemExit(f"align 중단: {exc}") from exc
+    client = SiloClient(args.central, args.silo_id)
+    recipe = client.fetch_cleaning_recipe(args.recipe_name, args.recipe_version)
+    _, cleaned, _ = clean_local(args.silo_id, args.data_dir, recipe)
+    key_column = (recipe.get("mapping") or {}).get("key", "id")
+
+    digests = hash_ids((row[key_column] for row in cleaned), key)
+    _submit_or_resume(client, args.alignment_id, args.silo_id, list(digests))  # 다이제스트만
+    intersection = _wait_intersection(client, args.alignment_id, args.wait, args.poll_interval)
+    aligned, report = align_rows(cleaned, key_column, intersection, key)
+    client.report_alignment(args.alignment_id, report["matched"], report["excluded"],
+                            report["order_digest"])
+
+    out_path = os.path.join(args.data_dir, f"aligned-{args.alignment_id}.csv")
+    with open(out_path, "w", encoding="utf-8", newline="") as f:  # 로컬에만 남긴다
+        writer = csv.DictWriter(f, fieldnames=list(aligned[0]) if aligned else [key_column])
+        writer.writeheader()
+        writer.writerows(aligned)
+    print(json.dumps({"silo_id": args.silo_id, "rows_after_cleaning": len(cleaned),
+                      "intersection": len(intersection), **report}, ensure_ascii=False))
 
 
 # ---------- 리소스 실측 (/proc — 리눅스 컨테이너 전용) ----------
@@ -230,6 +388,39 @@ def _local_accuracy(rows: list[dict], parameters: list[float]) -> float:
     return max(0.0, min(1.0, 1.0 - sse / sst))
 
 
+_STAT_KEYS = ("rows_before_cleaning", "rows_after_cleaning", "train_rmse")
+
+
+def _training_rows(args: argparse.Namespace, client: SiloClient) -> tuple[list[dict], dict]:
+    """학습 입력 행과 정제 통계 — 레시피를 지정하면 로컬 원천 정제 결과, 아니면 기존 합성 행."""
+    name = getattr(args, "recipe_name", None)
+    version = getattr(args, "recipe_version", None)
+    if not name and not version:
+        return _local_train_rows(args.silo_id), {}  # 기존 동작 그대로
+    if not (name and version):
+        raise SystemExit("--recipe-name과 --recipe-version은 함께 지정해야 합니다")
+    recipe = client.fetch_cleaning_recipe(name, version)
+    rows_in, cleaned, _ = clean_local(
+        args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
+    )
+    return cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
+
+
+def _rmse(rows: list[dict], parameters: list[float]) -> float:
+    """로컬 학습 오차 RMSE — 스칼라만 보고한다."""
+    *weights, bias = parameters
+    sse = sum(
+        (row["y"] - (sum(w * row[c] for w, c in zip(weights, FEATURES)) + bias)) ** 2
+        for row in rows
+    )
+    return math.sqrt(sse / len(rows)) if rows else 0.0
+
+
+def _with_rmse(stats: dict, rows: list[dict], parameters: list[float]) -> dict:
+    """정제 통계가 있을 때만 학습 RMSE를 붙인다 (레시피 미지정이면 빈 dict 그대로)."""
+    return {**stats, "train_rmse": _rmse(rows, parameters)} if stats else {}
+
+
 def _already_contributed(client: SiloClient, round_id: str, silo_id: str) -> bool:
     """409의 원인 판별 — 라운드를 재조회해 내 기여가 실제로 등록돼 있는지 본다.
 
@@ -253,7 +444,26 @@ def run_train_loop(args: argparse.Namespace) -> None:
     없으면 잔여 라운드 없이 종료된 것으로 보고 현황을 남기고 빠져나온다.
     """
     client = SiloClient(args.central, args.silo_id)
-    rows = _local_train_rows(args.silo_id)
+    rows, stats = _training_rows(args, client)
+    explicit = bool(getattr(args, "recipe_name", None))
+    linked: dict[str, tuple[list[dict], dict]] = {}
+
+    def inputs_for(entry: dict) -> tuple[list[dict], dict]:
+        """라운드에 정제 작업이 연결돼 있으면(레시피 미지정 시) 그 레시피로 정제한 행."""
+        job_ref = None if explicit else entry.get("cleaning_job_id")
+        if not job_ref:
+            return rows, stats
+        if job_ref not in linked:
+            job = client.get_cleaning_job(job_ref)
+            recipe = client.fetch_cleaning_recipe(job["recipe_name"], job["recipe_version"])
+            rows_in, cleaned, _ = clean_local(
+                args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
+            )
+            linked[job_ref] = (
+                cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
+            )
+        return linked[job_ref]
+
     contributed_rounds: set[str] = set()
     idle_deadline = time.monotonic() + args.max_idle
     while len(contributed_rounds) < args.max_rounds:
@@ -287,9 +497,19 @@ def run_train_loop(args: argparse.Namespace) -> None:
             round_id = entry["round_id"]
             if round_id in contributed_rounds or args.silo_id in entry.get("contributors", []):
                 continue
-            result = train_ridge(rows, FEATURES, "y", l2=1e-6)
             try:
-                client.push_parameters(round_id, result.sample_count, result.parameters)
+                round_rows, round_stats = inputs_for(entry)
+            except Exception as exc:  # noqa: BLE001 — 일시 오류만 재폴링, 나머지는 그대로 던진다
+                if not _is_transient(exc):
+                    raise  # 연결된 정제 작업이 없음(404) 등 — 설정 오류는 드러낸다
+                print(json.dumps({"silo_id": args.silo_id, "event": "transient_error",
+                                  "round_id": round_id, "error": str(exc)[:200]},
+                                 ensure_ascii=False), flush=True)
+                break
+            result = train_ridge(round_rows, FEATURES, "y", l2=1e-6)
+            try:
+                client.push_parameters(round_id, result.sample_count, result.parameters,
+                                       **_with_rmse(round_stats, round_rows, result.parameters))
             except (TimeoutError, OSError) as exc:
                 # push 자체가 타임아웃 — 성공했는지 불명이므로 세지 않고 재폴링
                 # (중복 push는 서버가 409로 걸러준다)
@@ -329,7 +549,7 @@ def run_train_loop(args: argparse.Namespace) -> None:
                     entry["model_name"],
                     entry["version"],
                     "accuracy",
-                    _local_accuracy(rows, result.parameters),
+                    _local_accuracy(round_rows, result.parameters),
                 )
             except (TimeoutError, OSError, SiloClientError):
                 pass  # 지표 push는 best-effort — 기여 진행을 막지 않는다
@@ -347,10 +567,18 @@ def run_train_loop(args: argparse.Namespace) -> None:
 
 def run_train(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
-    rows = _local_train_rows(args.silo_id)
+    rows, stats = _training_rows(args, client)
     result = train_ridge(rows, FEATURES, "y", l2=1e-6)
+    stats = _with_rmse(stats, rows, result.parameters)
+    if getattr(args, "emit_only", False):
+        # 엣지 집계자에게 넘길 하위 결과 1건 (train-edge --children-json 형식) — push 하지 않는다
+        print(json.dumps({"silo_id": args.silo_id, "sample_count": result.sample_count,
+                          "parameters": result.parameters, **stats}, ensure_ascii=False))
+        return
+    if not args.round_id:
+        raise SystemExit("--round-id가 필요합니다 (--emit-only가 아닐 때)")
     record = client.push_parameters(
-        args.round_id, result.sample_count, result.parameters
+        args.round_id, result.sample_count, result.parameters, **stats
     )
     print(
         json.dumps(
@@ -359,6 +587,7 @@ def run_train(args: argparse.Namespace) -> None:
                 "sample_count": result.sample_count,
                 "local_parameters": [round(p, 6) for p in result.parameters],
                 "parameter_dim": record["parameter_dim"],
+                **stats,
             },
             ensure_ascii=False,
         )
@@ -388,6 +617,22 @@ def _load_children(source: str) -> list[dict]:
     return children
 
 
+def _edge_cleaning_stats(own: dict, own_samples: int, children: list[dict]) -> dict:
+    """집계자 자신 + 하위의 정제 통계 합 — 모든 참여자가 통계를 가졌을 때만 (아니면 빈 dict).
+
+    행 수는 합, 학습 RMSE는 표본수 가중 합성 sqrt(Σ nᵢ·rmseᵢ² / Σ nᵢ).
+    """
+    if not own or not all(all(c.get(k) is not None for k in _STAT_KEYS) for c in children):
+        return {}
+    parts = [(own_samples, own)] + [(int(c["sample_count"]), c) for c in children]
+    total = sum(n for n, _ in parts)
+    return {
+        "rows_before_cleaning": sum(int(s["rows_before_cleaning"]) for _, s in parts),
+        "rows_after_cleaning": sum(int(s["rows_after_cleaning"]) for _, s in parts),
+        "train_rmse": math.sqrt(sum(n * float(s["train_rmse"]) ** 2 for n, s in parts) / total),
+    }
+
+
 def run_train_edge(args: argparse.Namespace) -> None:
     """엣지 집계자 모드 — 자기 실학습 + 하위 파라미터를 로컬 가중평균해 1건 대리 제출.
 
@@ -403,8 +648,11 @@ def run_train_edge(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
     children = _load_children(args.children_json)
 
-    rows = _local_train_rows(args.silo_id)
+    rows, stats = _training_rows(args, client)
     mine = train_ridge(rows, FEATURES, "y", l2=1e-6)
+    edge_stats = _edge_cleaning_stats(
+        _with_rmse(stats, rows, mine.parameters), mine.sample_count, children
+    )
 
     participants = [(args.silo_id, mine.sample_count, mine.parameters)]
     participants += [
@@ -415,7 +663,7 @@ def run_train_edge(args: argparse.Namespace) -> None:
 
     child_ids = [c["silo_id"] for c in children]
     record = client.push_parameters(
-        args.round_id, edge_total, edge_params, aggregated_from=child_ids
+        args.round_id, edge_total, edge_params, aggregated_from=child_ids, **edge_stats
     )
     print(
         json.dumps(
@@ -434,6 +682,13 @@ def run_train_edge(args: argparse.Namespace) -> None:
     )
 
 
+def _add_recipe_args(parser: argparse.ArgumentParser) -> None:
+    """정제 → 학습: 지정하면 로컬 원천에 레시피를 적용한 결과로 학습한다 (생략 시 기존 동작)."""
+    parser.add_argument("--recipe-name", help="정제 레시피 이름 (--recipe-version과 함께)")
+    parser.add_argument("--recipe-version", help="정제 레시피 버전")
+    parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
+
+
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description="사일로 E2E 워커")
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -441,16 +696,21 @@ def main(argv: list[str]) -> None:
     clean = sub.add_parser("clean", help="정제 샤드 처리")
     clean.add_argument("--central", required=True)
     clean.add_argument("--silo-id", required=True)
-    clean.add_argument("--job-id", required=True)
-    clean.add_argument("--shard-index", type=int, required=True)
-    clean.add_argument("--recipe-name", required=True)
-    clean.add_argument("--recipe-version", required=True)
+    # 넷 다 생략하면 내게 배정된 대기 샤드를 서버에서 찾아 처리한다
+    clean.add_argument("--job-id")
+    clean.add_argument("--shard-index", type=int)
+    clean.add_argument("--recipe-name")
+    clean.add_argument("--recipe-version")
+    clean.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
     clean.set_defaults(func=run_clean)
 
     train = sub.add_parser("train", help="로컬 릿지 학습 + 기여 push")
     train.add_argument("--central", required=True)
     train.add_argument("--silo-id", required=True)
-    train.add_argument("--round-id", required=True)
+    train.add_argument("--round-id", help="기여 대상 라운드 (--emit-only면 생략)")
+    train.add_argument("--emit-only", action="store_true",
+                       help="push 없이 하위 결과 JSON 1줄만 출력 (train-edge 입력용)")
+    _add_recipe_args(train)
     train.set_defaults(func=run_train)
 
     edge_mode = sub.add_parser(
@@ -465,6 +725,7 @@ def main(argv: list[str]) -> None:
         help="하위 학습 결과 JSON 경로 ('-' = stdin): "
         "[{silo_id, sample_count, parameters}, ...]",
     )
+    _add_recipe_args(edge_mode)
     edge_mode.set_defaults(func=run_train_edge)
 
     monitor = sub.add_parser("monitor", help="리소스 실측 주기 push")
@@ -478,6 +739,17 @@ def main(argv: list[str]) -> None:
     )
     monitor.set_defaults(func=run_monitor)
 
+    align = sub.add_parser("align", help="사일로 간 수직 정렬 (공유 키 HMAC 교집합)")
+    align.add_argument("--central", required=True)
+    align.add_argument("--silo-id", required=True)
+    align.add_argument("--alignment-id", required=True)
+    align.add_argument("--recipe-name", required=True)
+    align.add_argument("--recipe-version", required=True)
+    align.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
+    align.add_argument("--wait", type=float, default=300.0, help="다른 사일로 제출 대기 한계(초)")
+    align.add_argument("--poll-interval", type=float, default=2.0, help="교집합 조회 주기(초)")
+    align.set_defaults(func=run_align)
+
     loop = sub.add_parser("train-loop", help="open 라운드 폴링 연속 학습 기여")
     loop.add_argument("--central", required=True)
     loop.add_argument("--silo-id", required=True)
@@ -485,6 +757,7 @@ def main(argv: list[str]) -> None:
     loop.add_argument("--max-rounds", type=int, default=250, help="기여할 라운드 수")
     loop.add_argument("--poll-interval", type=float, default=0.5, help="라운드 폴링 주기(초)")
     loop.add_argument("--max-idle", type=float, default=120.0, help="새 라운드 무발견 종료 한계(초)")
+    _add_recipe_args(loop)
     loop.set_defaults(func=run_train_loop)
 
     args = parser.parse_args(argv)

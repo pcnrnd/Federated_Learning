@@ -23,7 +23,7 @@ from models.federated_schemas import (
     TrainingRound,
     TrainingRoundCreate,
 )
-from services import fedavg_aggregator, silo_group_service
+from services import cleaning_job_service, fedavg_aggregator, silo_group_service
 from services.model_registry import get_model
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,8 @@ def create_round(request: TrainingRoundCreate) -> TrainingRound:
     """학습 라운드 생성 — 모델/그룹 존재 사전 검증"""
     get_model(request.model_name, request.version)
     group = silo_group_service.get_group(request.group_id)
+    if request.cleaning_job_id:
+        cleaning_job_service.get_job(request.cleaning_job_id)  # 없으면 404
     members = list(group.member_node_ids)
     # 집계자는 클러스터 1개만 맡는다 (silo_group_service 규칙) — 집계자 → 멤버 사본
     clusters = {
@@ -91,6 +93,7 @@ def create_round(request: TrainingRoundCreate) -> TrainingRound:
         # open 시점 멤버를 동결 — 라운드 도중 그룹이 바뀌어도 진행 중 라운드는 무영향
         member_snapshot=members,
         cluster_snapshot=clusters,
+        cleaning_job_id=request.cleaning_job_id,
     )
     # 라운드 파일의 모든 쓰기는 _round_lock으로 직렬화한다 — 잠금 없이 쓰면
     # 동시 기여/집계의 load→save 와 read-modify-write 경합으로 방금 만든 라운드가
@@ -187,13 +190,20 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
             "submitted_at": _now_iso(),
             "checksum": contribution.checksum or _checksum_params(contribution.parameters),
             "aggregated_from": list(contribution.aggregated_from),
+            **contribution.cleaning_stats(),
         }
         upsert_contribution(contribution.round_id, contribution.silo_id, record)
 
+        stats = contribution.cleaning_stats()
         updated = entry.model_copy(
             update={
                 "contributors": entry.contributors + [contribution.silo_id],
                 "total_samples": entry.total_samples + contribution.sample_count,
+                "cleaning_stats": (
+                    {**entry.cleaning_stats, contribution.silo_id: stats}
+                    if stats
+                    else entry.cleaning_stats
+                ),
             }
         )
         _save_round(updated)
@@ -214,6 +224,7 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
         submitted_at=record["submitted_at"],
         checksum=record["checksum"],
         aggregated_from=list(contribution.aggregated_from),
+        **contribution.cleaning_stats(),
     )
 
 
@@ -228,6 +239,9 @@ def list_contributions(round_id: str) -> list[ParameterContributionRecord]:
             submitted_at=r["submitted_at"],
             checksum=r.get("checksum"),
             aggregated_from=list(r.get("aggregated_from", [])),
+            rows_before_cleaning=r.get("rows_before_cleaning"),
+            rows_after_cleaning=r.get("rows_after_cleaning"),
+            train_rmse=r.get("train_rmse"),
         )
         for r in contributions.values()
     ]

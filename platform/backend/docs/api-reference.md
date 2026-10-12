@@ -73,6 +73,14 @@
 | GET | `/api/training-rounds/{id}/contributions` | 기여 목록 |
 | POST | `/api/training-rounds/{id}/aggregate` | FedAvg 집계 |
 
+기여에 정제 통계를 함께 보낼 수 있다(선택): `rows_before_cleaning`·`rows_after_cleaning`·
+`train_rmse` — 사일로가 레시피로 정제한 로컬 데이터로 학습했을 때의 행 수와 학습 오차다.
+라운드의 `cleaning_stats`(사일로별)와 기여 목록에 기록된다. 생략하면 기존과 같다.
+
+라운드·잡 생성 시 `cleaning_job_id`(선택, 없는 작업이면 404)로 학습 입력을 만든 정제 작업을
+기록한다. 잡이 여는 라운드에 그대로 이어지고, 사일로 `train-loop`는 레시피를 따로 주지 않으면
+라운드에 연결된 정제 작업의 레시피로 로컬 원천을 정제해 학습한다.
+
 ## Batch 잡 (P1)
 
 | Method | Path | 설명 |
@@ -140,7 +148,27 @@
 | POST | `/api/cleaning-jobs` | 새 잡 (자동 샤드 배정) |
 | GET | `/api/cleaning-jobs/{id}` | 단건 |
 | POST | `/api/cleaning-jobs/{id}/shards/{shard_index}/start` | 샤드 처리 시작 |
-| POST | `/api/cleaning-jobs/{id}/shards/{shard_index}/report` | 샤드 결과 보고 |
+| POST | `/api/cleaning-jobs/{id}/shards/{shard_index}/report` | 샤드 결과 보고 (`schema_fingerprint` 선택) |
+| GET | `/api/cleaning-jobs/{id}/schema-consistency` | 사일로 간 공통 스키마 지문 일치 판정 |
+| GET | `/api/cleaning-shards?silo_id=&status=` | 사일로에 배정된 샤드 (작업 번호 없이 대기 샤드 찾기) |
+
+레시피의 `mapping`(매핑표)은 다원천 단계(`map_schema`·`union_sources`·`join_sources` 등)에
+필요하다 — 공통 스키마(형식·허용 범위), 원천별 컬럼 대응, 단위 배율·오프셋, 코드표.
+`schema_fingerprint`는 정제 결과의 정렬된 `컬럼:형식`을 이은 문자열의 sha256이다(값 없음).
+
+## 사일로 간 수직 정렬 (HMAC 교집합)
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/api/alignment-jobs` | 모든 정렬 작업 |
+| POST | `/api/alignment-jobs` | 새 작업 (`alignment_id`, 참여 `silo_ids` 2곳 이상) |
+| GET | `/api/alignment-jobs/{id}` | 상태(waiting/ready)·사일로별 제출 수·제출 집합 지문(`submitted_digest`)·남은·제외 수·교집합 크기·순서 일치 |
+| POST | `/api/alignment-jobs/{id}/submit` | 사일로의 HMAC-SHA256 다이제스트 목록 (64자 hex만, 사일로당 1회) |
+| GET | `/api/alignment-jobs/{id}/intersection?silo_id=` | 교집합 다이제스트(정렬) — 참여자만, 모두 제출 전 409 |
+| POST | `/api/alignment-jobs/{id}/report` | 정렬 결과 통계(`matched`·`excluded`·`order_digest`) |
+
+서버는 원본 id를 받지 않는다(형식 검사로 거부). 공유 키 `FED_ALIGN_KEY`는 사일로 환경변수에만
+있다. 한계와 강화 방향은 `silo-sdk-guide.md` §사일로 간 수직 정렬 참조.
 
 ## 시각화 (P2)
 

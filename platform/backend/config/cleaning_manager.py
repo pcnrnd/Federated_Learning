@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 RECIPES_FILE: Path = CONFIG_DIR / "cleaning_recipes.yaml"
 JOBS_FILE: Path = CONFIG_DIR / "cleaning_jobs.yaml"
+# 사일로 간 수직 정렬 — HMAC 다이제스트·교집합·건수만 (원본 id 없음)
+ALIGNMENTS_FILE: Path = CONFIG_DIR / "alignment_jobs.yaml"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -37,3 +39,12 @@ def load_jobs() -> dict[str, Any]:
 
 def save_jobs(data: dict[str, Any]) -> None:
     _save(JOBS_FILE, data)
+
+
+def load_alignments() -> dict[str, Any]:
+    """{alignment_id: {job, hashes: {silo_id: [digest]}, intersection}}"""
+    return _load(ALIGNMENTS_FILE)
+
+
+def save_alignments(data: dict[str, Any]) -> None:
+    _save(ALIGNMENTS_FILE, data)

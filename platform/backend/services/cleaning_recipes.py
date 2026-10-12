@@ -41,6 +41,43 @@ STEP_CATALOG: dict[str, dict[str, Any]] = {
         "required": ["column", "pattern"],
         "description": "정규식 매칭되지 않는 행 제거",
     },
+    # ---------- 다원천 단계 — 레시피 매핑표(mapping)가 필요하다 ----------
+    "map_schema": {
+        "required": ["sources"],
+        "needs_mapping": True,
+        "description": "표 원천을 매핑표대로 공통 스키마에 맞춤 (컬럼명·형식·단위·코드)",
+    },
+    "validate_schema": {
+        "required": [],
+        "needs_mapping": True,
+        "description": "공통 스키마(존재·형식·유한·범위) 위반 행 제외, 사유별 집계",
+    },
+    "union_sources": {
+        "required": ["sources", "into"],
+        "needs_mapping": True,
+        "description": "수평 결합 — 공통 스키마 원천들의 행 결합, 원천 간·안 중복 제거",
+    },
+    "join_sources": {
+        "required": ["left", "right", "into"],
+        "needs_mapping": True,
+        "description": "수직 결합 — 키 inner join, 제외 수(한쪽에만 있는 키·키 결측) 기록",
+    },
+    "parse_records": {
+        "required": ["source", "into"],
+        "needs_mapping": True,
+        "description": "교차 — JSON 기록(속성 코드·값·단위·시각)을 공통 컬럼 행으로, 변환 실패 집계",
+    },
+    "reconcile": {
+        "required": ["target", "sources", "columns", "into"],
+        "needs_mapping": True,
+        "description": "교차 충돌 해소 — 우선 원천 → 최신 시각 → 허용 오차, 충돌·규칙별 해소 수",
+    },
+}
+
+# 매핑표의 원천을 직접 읽는 단계 → (원천 파라미터, 요구 형식)
+_SOURCE_PARAMS: dict[str, tuple[str, str]] = {
+    "map_schema": ("sources", "table"),
+    "parse_records": ("source", "records"),
 }
 
 
@@ -51,3 +88,27 @@ def validate_step_params(step_type: str, params: dict[str, Any]) -> None:
     missing = [k for k in STEP_CATALOG[step_type]["required"] if k not in params]
     if missing:
         raise ValueError(f"'{step_type}' 누락 필수 파라미터: {missing}")
+
+
+def validate_mapping_usage(
+    step_type: str, params: dict[str, Any], source_formats: dict[str, str] | None
+) -> None:
+    """다원천 단계가 매핑표를 갖췄는지, 가리키는 원천이 매핑표에 있고 형식이 맞는지 검사.
+
+    source_formats: 매핑표의 원천 이름 → 형식(table|records) (매핑표가 없으면 None)
+    """
+    if not STEP_CATALOG[step_type].get("needs_mapping"):
+        return
+    if source_formats is None:
+        raise ValueError(f"'{step_type}' 단계에는 레시피 매핑표(mapping)가 필요합니다")
+    if step_type not in _SOURCE_PARAMS:
+        return
+    param, fmt = _SOURCE_PARAMS[step_type]
+    value = params[param]
+    names = value if isinstance(value, list) else [value]
+    unknown = [n for n in names if n not in source_formats]
+    if unknown:
+        raise ValueError(f"'{step_type}': 매핑표에 없는 원천 {unknown}")
+    wrong = [n for n in names if source_formats[n] != fmt]
+    if wrong:
+        raise ValueError(f"'{step_type}': {fmt} 형식이 아닌 원천 {wrong}")

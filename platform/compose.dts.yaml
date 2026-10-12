@@ -1,0 +1,36 @@
+# dts 서버(192.168.0.188) 전용 오버라이드 — compose.yaml 과 함께 쓴다.
+#
+#   docker compose -p fed-platform -f compose.yaml -f compose.dts.yaml up -d --build
+#
+# dts 는 인구감소 과제 등 다른 서비스와 공유하는 서버다. 따라서 이 오버라이드의 목적은
+# 하나뿐이다: 호스트 포트 노출을 127.0.0.1 로 묶고 불필요한 노출을 전부 없앤다.
+#   - backend: 기존 ${FED_PLATFORM_PORT:-8000} 은 dts 의 기존 서비스와 겹치므로 18080 으로
+#     옮기고 루프백에만 바인딩한다. SPA 접근은 ssh 로컬 포워딩으로 한다.
+#   - silo-1~6: SSH(2223~2228) / Docker API(2371~2376) / MinIO(7001~7012) 호스트 공개를
+#     전부 제거한다. E2E 는 docker exec 로만 사일로에 접근하므로 하나도 필요 없고,
+#     특히 silo-5 의 "2375:2375" 는 무인증 Docker API 를 호스트에 그대로 여는 것이라
+#     공유 서버에서는 곧바로 루트 권한 탈취 경로가 된다.
+#
+# Compose 의 리스트 병합은 append 다. 그래서 단순 재지정으로는 기존 포트가 남는다.
+# `!override`(값 교체) / `!reset`(값 제거) 태그로 상위 파일의 ports 를 실제로 대체한다
+# (Compose v2.24.4+ 지원, dts 는 v2.34.0).
+services:
+  backend:
+    ports: !override
+      - "127.0.0.1:18080:8000"
+    environment:
+      # 다중 워커 없이도 YAML 백엔드의 워커 간 직렬화 부재를 피한다
+      FED_STORAGE: sqlite
+
+  silo-1:
+    ports: !reset []
+  silo-2:
+    ports: !reset []
+  silo-3:
+    ports: !reset []
+  silo-4:
+    ports: !reset []
+  silo-5:
+    ports: !reset []
+  silo-6:
+    ports: !reset []

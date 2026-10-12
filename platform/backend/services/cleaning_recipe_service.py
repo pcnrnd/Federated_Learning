@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from config.cleaning_manager import load_recipes, save_recipes
 from models.cleaning_schemas import CleaningRecipe, CleaningRecipeRequest
-from services.cleaning_recipes import validate_step_params
+from services.cleaning_recipes import validate_mapping_usage, validate_step_params
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,16 @@ def get_recipe(name: str, version: str) -> CleaningRecipe:
 
 
 def register_recipe(request: CleaningRecipeRequest) -> CleaningRecipe:
-    # step 파라미터 사전 검증
+    # step 파라미터·매핑표 참조 사전 검증
+    source_formats = (
+        {name: src.format for name, src in request.mapping.sources.items()}
+        if request.mapping
+        else None
+    )
     for step in request.steps:
         try:
             validate_step_params(step.type, step.params)
+            validate_mapping_usage(step.type, step.params, source_formats)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -65,6 +71,7 @@ def register_recipe(request: CleaningRecipeRequest) -> CleaningRecipe:
         description=request.description,
         steps=request.steps,
         created_at=_now_iso(),
+        mapping=request.mapping,
     )
     payload = recipe.model_dump()
     payload.pop("name")

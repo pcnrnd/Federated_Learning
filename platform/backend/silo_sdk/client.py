@@ -172,8 +172,14 @@ class SiloClient:
         checksum: str | None = None,
         idempotency_key: str | None = None,
         aggregated_from: list[str] | None = None,
+        rows_before_cleaning: int | None = None,
+        rows_after_cleaning: int | None = None,
+        train_rmse: float | None = None,
     ) -> dict[str, Any]:
         """파라미터 기여를 push.
+
+        정제한 로컬 데이터로 학습했으면 정제 전후 행 수와 학습 RMSE를 함께 보낸다(통계만).
+        지정하지 않으면 payload는 기존과 같다.
 
         엣지 집계자가 대리 제출할 때는 `edge.combine([자신, *하위])` 결과와 함께
         `aggregated_from`에 **하위 노드 id 목록만** 넘긴다 (id 목록일 뿐 원시 데이터 아님).
@@ -181,7 +187,7 @@ class SiloClient:
         provenance 이므로 하위만 담는다 — 자기 자신을 넣으면 서버가 422로 거부한다.
         평면 제출이면 생략 — 빈 목록으로 나가 기존 동작과 동일하다.
         """
-        payload = {
+        payload: dict[str, Any] = {
             "round_id": round_id,
             "silo_id": self.silo_id,
             "sample_count": int(sample_count),
@@ -189,6 +195,9 @@ class SiloClient:
             "checksum": checksum,
             "aggregated_from": list(aggregated_from or []),
         }
+        stats = {"rows_before_cleaning": rows_before_cleaning,
+                 "rows_after_cleaning": rows_after_cleaning, "train_rmse": train_rmse}
+        payload.update({k: v for k, v in stats.items() if v is not None})
         return self._request(
             "POST",
             f"/api/training-rounds/{round_id}/contributions",
@@ -252,6 +261,16 @@ class SiloClient:
     def fetch_cleaning_recipe(self, name: str, version: str) -> dict[str, Any]:
         return self._request("GET", f"/api/cleaning-recipes/{name}/{version}")
 
+    def list_assigned_shards(self, status: str | None = "pending") -> list[Any]:
+        """내게 배정된 정제 샤드 (기본: 대기 중) — 작업 번호 없이 할 일을 찾는다."""
+        result = self._request(
+            "GET", "/api/cleaning-shards" + _query(silo_id=self.silo_id, status=status)
+        )
+        return result if isinstance(result, list) else []
+
+    def get_cleaning_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/cleaning-jobs/{job_id}")
+
     def start_cleaning_shard(self, job_id: str, shard_index: int) -> dict[str, Any]:
         return self._request(
             "POST",
@@ -270,9 +289,13 @@ class SiloClient:
         started_at: str | None = None,
         completed_at: str | None = None,
         error: str | None = None,
+        schema_fingerprint: str | None = None,
     ) -> dict[str, Any]:
-        """정제 샤드 처리 결과 보고 — 통계만, 원시 데이터 없음."""
-        payload = {
+        """정제 샤드 처리 결과 보고 — 통계만, 원시 데이터 없음.
+
+        schema_fingerprint: 정제 결과의 공통 스키마 지문(sha256) — 서버가 사일로 간 일치를 판정.
+        """
+        payload: dict[str, Any] = {
             "job_id": job_id,
             "shard_index": shard_index,
             "silo_id": self.silo_id,
@@ -283,10 +306,41 @@ class SiloClient:
             "completed_at": completed_at or _now_iso(),
             "error": error,
         }
+        if schema_fingerprint is not None:
+            payload["schema_fingerprint"] = schema_fingerprint
         return self._request(
             "POST",
             f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/report",
             payload,
+        )
+
+    # ---------- 사일로 간 수직 정렬 (HMAC 다이제스트만 — 원본 id 없음) ----------
+
+    def submit_alignment_keys(self, alignment_id: str, hashed_keys: list[str]) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/alignment-jobs/{alignment_id}/submit",
+            {"silo_id": self.silo_id, "hashed_keys": list(hashed_keys)},
+        )
+
+    def get_alignment(self, alignment_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/alignment-jobs/{alignment_id}")
+
+    def get_alignment_intersection(self, alignment_id: str) -> dict[str, Any]:
+        """교집합 다이제스트 — 다른 사일로가 아직 제출 전이면 SiloClientError(409)."""
+        return self._request(
+            "GET",
+            f"/api/alignment-jobs/{alignment_id}/intersection" + _query(silo_id=self.silo_id),
+        )
+
+    def report_alignment(
+        self, alignment_id: str, matched: int, excluded: int, order_digest: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/alignment-jobs/{alignment_id}/report",
+            {"silo_id": self.silo_id, "matched": int(matched), "excluded": int(excluded),
+             "order_digest": order_digest},
         )
 
     def health(self) -> bool:

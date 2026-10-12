@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 RoundStatus = Literal["open", "aggregating", "completed", "failed"]
 JobScheduleKind = Literal["manual", "chain", "interval"]
@@ -56,6 +56,9 @@ class TrainingRoundCreate(BaseModel):
     group_id: str
     min_contributions: int = Field(default=2, ge=1, description="집계 시작 최소 기여수")
     notes: str = ""
+    cleaning_job_id: str | None = Field(
+        default=None, description="학습 입력을 만든 정제 작업 — 사일로가 그 레시피로 정제해 학습"
+    )
 
 
 class ParameterContribution(BaseModel):
@@ -68,6 +71,26 @@ class ParameterContribution(BaseModel):
     checksum: str | None = None
     # 집계자가 대리 제출 시: 로컬 평균에 포함된 하위 노드 id 목록 (평면 제출이면 생략)
     aggregated_from: list[str] = Field(default_factory=list)
+    # 정제 → 학습: 레시피로 정제한 로컬 데이터로 학습했을 때의 통계 (행 수·학습 오차만)
+    rows_before_cleaning: int | None = Field(default=None, ge=0)
+    rows_after_cleaning: int | None = Field(default=None, ge=0)
+    train_rmse: float | None = Field(default=None, ge=0, description="로컬 학습 RMSE")
+
+    @model_validator(mode="after")
+    def _rows_shrink(self) -> ParameterContribution:
+        before, after = self.rows_before_cleaning, self.rows_after_cleaning
+        if before is not None and after is not None and after > before:
+            raise ValueError("rows_after_cleaning이 rows_before_cleaning보다 클 수 없습니다")
+        return self
+
+    def cleaning_stats(self) -> dict[str, float | int]:
+        """값이 있는 정제 통계만 (없으면 빈 dict)"""
+        stats = {
+            "rows_before_cleaning": self.rows_before_cleaning,
+            "rows_after_cleaning": self.rows_after_cleaning,
+            "train_rmse": self.train_rmse,
+        }
+        return {k: v for k, v in stats.items() if v is not None}
 
 
 class ParameterContributionRecord(BaseModel):
@@ -81,6 +104,9 @@ class ParameterContributionRecord(BaseModel):
     checksum: str | None = None
     # 대리 제출 출처(provenance) — 리니지·감사용. id 목록일 뿐 원시 데이터가 아니다.
     aggregated_from: list[str] = Field(default_factory=list)
+    rows_before_cleaning: int | None = None
+    rows_after_cleaning: int | None = None
+    train_rmse: float | None = None
 
 
 class TrainingRound(BaseModel):
@@ -104,6 +130,9 @@ class TrainingRound(BaseModel):
     # open 시점 클러스터 스냅샷 — 집계자 → 클러스터 멤버 (member_snapshot 안 집계자만).
     # None = 도입 이전 레코드 → 현재 그룹 설정으로 추정. {} = 집계자 없음 (추정하지 않는다).
     cluster_snapshot: dict[str, list[str]] | None = None
+    # 사일로별 정제 통계 — 정제 전후 행 수·학습 오차 (레시피로 정제해 학습한 기여만)
+    cleaning_stats: dict[str, dict[str, float | int]] = Field(default_factory=dict)
+    cleaning_job_id: str | None = None  # 학습 입력을 만든 정제 작업 (None = 연결 없음)
 
 
 class AggregateResult(BaseModel):
@@ -135,6 +164,9 @@ class TrainingJobRequest(BaseModel):
     min_contributions: int = Field(default=2, ge=1)
     max_rounds: int = Field(default=10, ge=1, le=10_000)
     notes: str = ""
+    cleaning_job_id: str | None = Field(
+        default=None, description="정제 작업 — 이 잡이 여는 라운드에 그대로 기록된다"
+    )
 
 
 class TrainingJob(BaseModel):
@@ -155,3 +187,4 @@ class TrainingJob(BaseModel):
     updated_at: str
     notes: str = ""
     error: str | None = None
+    cleaning_job_id: str | None = None
