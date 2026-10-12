@@ -2605,6 +2605,28 @@ span.dep-state-failed.dep-state-badge {
   font-size: 16px;
 }
 
+/* step 카운터: 상태 칩 행과 분리된 블록. 카운터가 많아도 카드 폭 안에서 줄바꿈된다 */
+.cleanse-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cleanse-counter {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgb(var(--ink) / 0.04);
+  border: 1px solid rgb(var(--ink) / 0.08);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .data-subhead {
   display: flex;
   align-items: center;
