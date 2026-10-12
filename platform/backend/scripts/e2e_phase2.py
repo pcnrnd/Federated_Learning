@@ -43,11 +43,12 @@ CENTRAL_IN_NET = "http://fed-backend:8000"  # 컨테이너망 기준 중앙 URL
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase 2 E2E 중앙 드라이버")
     parser.add_argument("--base", default="http://localhost:8000", help="중앙 API 베이스 URL")
-    parser.add_argument("--distro", default="Ubuntu-24.04", help="WSL 배포판 이름")
+    # 리눅스 호스트(dts 등)에서는 docker 를 네이티브로 부른다 — 기본값이 빈 문자열이면
+    # WSL 프리픽스 없이 실행된다. Windows 기본값은 기존과 동일하게 유지한다.
     parser.add_argument(
-        "--repo-wsl",
-        default="/mnt/f/rnd_github/pcnrnd/Federated_Learning",
-        help="WSL에서 본 저장소 절대 경로 (docker cp 소스)",
+        "--distro",
+        default="Ubuntu-24.04" if sys.platform == "win32" else "",
+        help="WSL 배포판 이름 (빈 값이면 docker 를 네이티브로 호출)",
     )
     parser.add_argument(
         "--silos",
@@ -65,7 +66,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 ARGS = parse_args(sys.argv[1:])
 BASE = ARGS.base
-WSL = ["wsl", "-d", ARGS.distro]
+WSL = ["wsl", "-d", ARGS.distro] if ARGS.distro else []
+# 사일로 컨테이너에 읽기 전용 마운트된 워커 (compose.yaml ./backend/scripts → /opt/silo_scripts)
+WORKER = "/opt/silo_scripts/silo_worker.py"
 SILOS = [s.strip() for s in ARGS.silos.split(",") if s.strip()]
 
 log_file = open(ARGS.log, "w", encoding="utf-8")
@@ -103,7 +106,7 @@ def wsl_run(cmd, timeout=180):
 
 
 def silo_exec(silo, args, timeout=180):
-    r = wsl_run(["docker", "exec", silo, "python3", "/tmp/silo_worker.py"] + args,
+    r = wsl_run(["docker", "exec", silo, "python3", WORKER] + args,
                 timeout=timeout)
     out = (r.stdout or "").strip()
     if r.stderr:
@@ -116,7 +119,7 @@ def silo_exec(silo, args, timeout=180):
 
 def silo_daemon(silo, worker_args, log_name):
     """컨테이너 내부에서 워커를 백그라운드 기동, 출력은 /tmp/<log_name>에 남긴다."""
-    inner = "python3 /tmp/silo_worker.py " + " ".join(worker_args) + f" > /tmp/{log_name} 2>&1"
+    inner = f"python3 {WORKER} " + " ".join(worker_args) + f" > /tmp/{log_name} 2>&1"
     r = wsl_run(["docker", "exec", "-d", silo, "sh", "-c", inner], timeout=60)
     if r.returncode != 0:
         raise SystemExit(f"E2E FAIL: {silo} 데몬 기동 실패: {r.stderr}")
@@ -142,15 +145,14 @@ def main():
     else:
         raise SystemExit("E2E FAIL: /readyz 미응답")
     for silo in SILOS:
-        # 재실행 대비 — 이전 실행이 남긴 워커 데몬을 정리하고 최신 워커를 배포한다
+        # 재실행 대비 — 이전 실행이 남긴 학습 데몬만 정리한다. 수집기(monitor)는 entrypoint가
+        # 자동 기동·감시하므로 건드리지 않는다. 워커는 마운트로 이미 최신이다(복사 단계 없음).
         wsl_run(["docker", "exec", silo, "sh", "-c",
-                 "pkill -f silo_worker.py || true"], timeout=60)
-        r = wsl_run(["docker", "cp",
-                     f"{ARGS.repo_wsl}/platform/backend/scripts/silo_worker.py",
-                     f"{silo}:/tmp/silo_worker.py"], timeout=120)
+                 "pkill -f '[s]ilo_worker.py train-loop' || true"], timeout=60)
+        r = wsl_run(["docker", "exec", silo, "test", "-f", WORKER], timeout=60)
         if r.returncode != 0:
-            raise SystemExit(f"docker cp 실패: {silo}: {r.stderr}")
-    log(f"  worker 배포 완료: {', '.join(SILOS)} (이전 데몬 정리 포함)")
+            raise SystemExit(f"E2E FAIL: {silo}에 {WORKER} 없음 (compose 마운트 확인)")
+    log(f"  worker 마운트 확인: {', '.join(SILOS)} (이전 학습 데몬 정리 포함)")
 
     log(f"[1] 사일로 그룹 보증 — {GROUP} (멤버 {len(SILOS)})")
     payload = {"group_id": GROUP, "description": "Phase2 E2E 6사일로 루트 그룹",
@@ -160,8 +162,13 @@ def main():
         api("PUT", f"/api/silo-groups/{GROUP}", payload)
     log(f"  그룹 준비 완료 (POST -> {status})")
 
-    log("[1b] 리소스 monitor 데몬 기동 (5초 주기 실측 push)")
+    log("[1b] 리소스 monitor 확인 — entrypoint 자동 기동분이 없을 때만 직접 기동 (5초 주기)")
     for silo in SILOS:
+        # [s] — 패턴이 이 조회를 실행하는 sh 자신의 명령줄과 맞지 않게 한다
+        running = wsl_run(["docker", "exec", silo, "sh", "-c",
+                           "pgrep -f '[s]ilo_worker.py monitor' >/dev/null"], timeout=60)
+        if running.returncode == 0:
+            continue
         silo_daemon(silo, ["monitor", "--central", CENTRAL_IN_NET, "--silo-id", silo,
                            "--interval", str(MONITOR_INTERVAL_SEC), "--count", "0"],
                     "monitor.log")
@@ -288,7 +295,7 @@ def main():
     log(f"[6] 사후 검증 — monitor 데몬 {len(SILOS)}개 생존 + 리소스 최신성")
     for silo in SILOS:
         r = wsl_run(["docker", "exec", silo, "sh", "-c",
-                     "pgrep -f 'silo_worker.py monitor' >/dev/null"], timeout=60)
+                     "pgrep -f '[s]ilo_worker.py monitor' >/dev/null"], timeout=60)
         if r.returncode != 0:
             dump_silo_log(silo, "monitor.log")
             raise SystemExit(f"E2E FAIL: {silo} monitor 데몬 사망 (장기 실행 중 종료)")

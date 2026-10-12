@@ -57,6 +57,30 @@ docker compose -f compose.dashboard.yaml up -d --build
 
 fed-platform과 동시 운영 시 `FED_PLATFORM_PORT` 또는 dashboard 포트를 분리한다.
 
+### Step 4 — 사일로 워커·수집기 (통합 기동 `platform/compose.yaml`)
+
+`platform/compose.yaml`(백엔드 + silo-1~6)로 띄우면 워커가 따로 배포할 필요 없이 들어가 있다.
+
+| 항목 | 방식 |
+|---|---|
+| 워커 `silo_worker.py` | `./backend/scripts` → `/opt/silo_scripts` 읽기 전용 마운트. 복사(`docker cp`) 불필요, 저장소 갱신 후 재기동만 하면 최신 |
+| SDK | `./backend/silo_sdk` → `/opt/silo_sdk` 읽기 전용 마운트 (`PYTHONPATH=/opt`) |
+| 수집기(monitor) | entrypoint가 기동 때 자동 시작(`FED_MONITOR_AUTOSTART=1`, 기본), 죽으면 10초 뒤 재기동. 로그 `/tmp/monitor.log` |
+| 사일로 환경 | `FED_SILO_ID`(silo-N), `FED_CENTRAL`(http://fed-backend:8000), `FED_SILO_DATA_DIR`(/srv/silo-data, 로컬 원천 파일) |
+| 수직 정렬 공유 키 | `FED_ALIGN_KEY` — `platform/.env`(권한 600, 저장소 밖)에 두고 사일로에만 전달. 백엔드에는 주지 않는다 |
+
+```bash
+# 정제 — 작업 번호 없이 내게 배정된 대기 샤드 처리
+docker exec silo-1 python3 /opt/silo_scripts/silo_worker.py clean --central http://fed-backend:8000 --silo-id silo-1
+# 정제 결과로 학습 기여 (레시피 지정)
+docker exec silo-1 python3 /opt/silo_scripts/silo_worker.py train --central http://fed-backend:8000     --silo-id silo-1 --round-id <round_id> --recipe-name silo-hvc --recipe-version 1.0.0
+# 사일로 간 수직 정렬 (컨테이너의 FED_ALIGN_KEY 사용)
+docker exec silo-4 python3 /opt/silo_scripts/silo_worker.py align --central http://fed-backend:8000     --silo-id silo-4 --alignment-id a1 --recipe-name silo-hvc --recipe-version 1.0.0
+```
+
+E2E 드라이버(`scripts/e2e_phase1.py`·`e2e_phase2.py`)도 마운트된 워커를 쓴다. 리눅스 호스트에서는
+`--distro ""`(기본)로 WSL 없이 docker를 바로 부른다.
+
 ## 3. 헬스체크
 
 ```bash

@@ -52,6 +52,7 @@ def _isolate_config(tmp_path, monkeypatch):
     monkeypatch.setattr(maint_mod, "AB_TESTS_FILE", config_dir / "ab_tests.yaml")
     monkeypatch.setattr(cln_mod, "RECIPES_FILE", config_dir / "cleaning_recipes.yaml")
     monkeypatch.setattr(cln_mod, "JOBS_FILE", config_dir / "cleaning_jobs.yaml")
+    monkeypatch.setattr(cln_mod, "ALIGNMENTS_FILE", config_dir / "alignment_jobs.yaml")
     metric_store.clear()
     resource_service.clear_samples()
     idempotency.clear()

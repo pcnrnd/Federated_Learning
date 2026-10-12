@@ -2,6 +2,10 @@
 
 반응형 메타·빈 상태·401 배너·로딩 마커 등 핵심 DOM 요소가
 템플릿/정적 자산에 존재하는지 확인한다.
+
+/dashboard 는 static/dist/index.html 이 있으면 React SPA 를, 없으면 Jinja
+dashboard.html 을 반환한다. Jinja DOM 단언은 배포 형상에 좌우되지 않도록
+`fallback_client` 픽스처로 폴백 경로를 강제한 뒤 수행한다.
 """
 from __future__ import annotations
 
@@ -18,6 +22,15 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture()
+def fallback_client(tmp_path, monkeypatch):
+    """SPA 빌드본이 없는 폴백 형상 — _BASE_DIR 을 비운 임시 경로로 돌려 Jinja 템플릿을 강제한다."""
+    import main
+
+    monkeypatch.setattr(main, "_BASE_DIR", tmp_path)
+    return TestClient(main.app)
+
+
 @pytest.mark.unit
 def test_dashboard_page_returns_html_with_responsive_viewport(client):
     """대시보드 HTML이 200이며 viewport 메타가 포함된다."""
@@ -30,9 +43,9 @@ def test_dashboard_page_returns_html_with_responsive_viewport(client):
 
 
 @pytest.mark.unit
-def test_dashboard_has_chart_canvas_and_empty_state_markers(client):
+def test_dashboard_has_chart_canvas_and_empty_state_markers(fallback_client):
     """5종 차트 canvas/div와 empty-state 문구 placeholder가 존재한다."""
-    html = client.get("/dashboard").text
+    html = fallback_client.get("/dashboard").text
     for element_id in (
         "chart-timeseries",
         "chart-histogram",
@@ -53,9 +66,9 @@ def test_dashboard_has_chart_canvas_and_empty_state_markers(client):
 
 
 @pytest.mark.unit
-def test_dashboard_has_auth_banner_and_api_key_input(client):
+def test_dashboard_has_auth_banner_and_api_key_input(fallback_client):
     """401 재시도 UI와 API Key 입력 필드가 템플릿에 포함된다."""
-    html = client.get("/dashboard").text
+    html = fallback_client.get("/dashboard").text
     assert 'id="auth-banner"' in html
     assert 'id="auth-retry-btn"' in html
     assert 'id="api-key-input"' in html
@@ -63,20 +76,39 @@ def test_dashboard_has_auth_banner_and_api_key_input(client):
 
 
 @pytest.mark.unit
-def test_dashboard_static_assets_linked(client):
+def test_dashboard_static_assets_linked(fallback_client):
     """CSS/JS 정적 자산이 링크되어 있다."""
-    html = client.get("/dashboard").text
+    html = fallback_client.get("/dashboard").text
     assert "/static/dashboard.css" in html
     assert "/static/dashboard.js" in html
 
 
 @pytest.mark.unit
-def test_dashboard_ops_panel_structure(client):
+def test_dashboard_ops_panel_structure(fallback_client):
     """운영 현황 read-only 패널 DOM 구조."""
-    html = client.get("/dashboard").text
+    html = fallback_client.get("/dashboard").text
     for ops_id in ("ops-models", "ops-groups", "ops-deployments", "ops-alerts"):
         assert f'id="{ops_id}"' in html
     assert 'data-state="idle"' in html
+
+
+@pytest.mark.unit
+def test_dashboard_serves_spa_index_when_build_exists(tmp_path, monkeypatch):
+    """SPA 빌드본이 있으면 Jinja 폴백 대신 static/dist/index.html 을 그대로 반환한다."""
+    import main
+
+    dist_dir = tmp_path / "static" / "dist"
+    dist_dir.mkdir(parents=True)
+    dist_dir.joinpath("index.html").write_text(
+        '<!doctype html><meta name="viewport" content="width=device-width"><title>SPA</title>',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main, "_BASE_DIR", tmp_path)
+
+    resp = TestClient(main.app).get("/dashboard")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "<title>SPA</title>" in resp.text
 
 
 @pytest.mark.unit

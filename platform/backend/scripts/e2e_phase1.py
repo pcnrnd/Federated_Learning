@@ -35,11 +35,10 @@ STAMP = time.strftime("%Y%m%d%H%M%S")
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase 1 E2E 중앙 드라이버")
     parser.add_argument("--base", default="http://localhost:8000", help="중앙 API 베이스 URL")
-    parser.add_argument("--distro", default="Ubuntu-24.04", help="WSL 배포판 이름")
     parser.add_argument(
-        "--repo-wsl",
-        default="/mnt/f/rnd_github/pcnrnd/Federated_Learning",
-        help="WSL에서 본 저장소 절대 경로 (docker cp 소스)",
+        "--distro",
+        default="Ubuntu-24.04" if sys.platform == "win32" else "",
+        help="WSL 배포판 이름 (빈 값이면 docker 를 네이티브로 호출)",
     )
     parser.add_argument(
         "--silos",
@@ -52,7 +51,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 ARGS = parse_args(sys.argv[1:])
 BASE = ARGS.base
-WSL = ["wsl", "-d", ARGS.distro]
+WSL = ["wsl", "-d", ARGS.distro] if ARGS.distro else []
+# 사일로 컨테이너에 읽기 전용 마운트된 워커 (compose.yaml ./backend/scripts → /opt/silo_scripts)
+WORKER = "/opt/silo_scripts/silo_worker.py"
 SILOS = [s.strip() for s in ARGS.silos.split(",") if s.strip()]
 
 log_file = open(ARGS.log, "w", encoding="utf-8")
@@ -84,7 +85,7 @@ def api(method, path, body=None, ok=(200, 201, 202)):
 
 
 def silo_exec(silo, args):
-    cmd = WSL + ["docker", "exec", silo, "python3", "/tmp/silo_worker.py"] + args
+    cmd = WSL + ["docker", "exec", silo, "python3", WORKER] + args
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=180)
     out = (r.stdout or "").strip()
     err = (r.stderr or "").strip()
@@ -96,22 +97,20 @@ def silo_exec(silo, args):
     return json.loads(out)
 
 
-def deploy_workers():
+def check_workers():
+    """워커는 마운트로 이미 들어가 있다 — 사일로마다 파일 존재만 확인한다."""
     for silo in SILOS:
-        r = subprocess.run(
-            WSL + ["docker", "cp",
-                   f"{ARGS.repo_wsl}/platform/backend/scripts/silo_worker.py",
-                   f"{silo}:/tmp/silo_worker.py"],
-            capture_output=True, text=True, timeout=120)
+        r = subprocess.run(WSL + ["docker", "exec", silo, "test", "-f", WORKER],
+                           capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
-            raise SystemExit(f"docker cp 실패: {silo}: {r.stderr}")
-    log(f"  worker 배포 완료: {', '.join(SILOS)}")
+            raise SystemExit(f"E2E FAIL: {silo}에 {WORKER} 없음 (compose 마운트 확인)")
+    log(f"  worker 마운트 확인: {', '.join(SILOS)}")
 
 
 def main():
     log(f"===== Phase 1 E2E ({STAMP}) — 정제 잡 + 실학습 FedAvg =====")
 
-    log("\n[0] 준비 — readyz 대기 + silo_worker.py 배포")
+    log("\n[0] 준비 — readyz 대기 + silo_worker.py 마운트 확인")
     for _ in range(60):
         try:
             api("GET", "/readyz")
@@ -120,7 +119,7 @@ def main():
             time.sleep(3)
     else:
         raise SystemExit("E2E FAIL: /readyz 미응답")
-    deploy_workers()
+    check_workers()
 
     log("\n[1] 사일로 그룹 보증 — " + GROUP)
     payload = {"group_id": GROUP, "description": "Phase1 E2E 루트 그룹",

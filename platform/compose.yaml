@@ -7,6 +7,9 @@
 # 본 파일이 둘을 대체한다. 원본 두 파일은 무수정 보존(참조용).
 #
 # 기동:   docker compose up -d --build          (platform/ 에서 실행)
+# 사일로 워커: ./backend/scripts 를 /opt/silo_scripts 로 읽기 전용 마운트한다 — docker cp 없이
+#         `docker exec silo-N python3 /opt/silo_scripts/silo_worker.py <모드> ...`. 수집기(monitor)는
+#         entrypoint 가 기동 때 자동 시작하고 죽으면 10초 뒤 다시 띄운다(FED_MONITOR_AUTOSTART=0 이면 끔).
 # 종료:   docker compose down
 # 포트:   FED_PLATFORM_PORT(기본 8000), 사일로 SSH 2223~2228 / Docker API 2371~2376
 #         MinIO 7001~7012 (각 사일로 내부 MinIO의 9000/9001 매핑)
@@ -14,6 +17,33 @@
 # MinIO 는 사일로마다 DinD 안에서 기동된다 — entrypoint.siloN.sh 가 컨테이너 내부에서
 # compose.minio.siloN.yaml 을 up 한다. 사일로별 데이터 격리(named volume siloN-data)를
 # 유지하기 위한 기존 설계이므로 최상위 서비스로 끌어내지 않았다.
+
+# 사일로 공통 환경 — 워커·수집기(monitor)가 쓴다. FED_ALIGN_KEY(사일로 간 수직 정렬 공유 키)는
+# 사일로에만 준다 — 백엔드에는 두지 않는다 (서버가 HMAC 다이제스트를 id로 되돌릴 수 없게).
+x-silo-env: &silo-env
+  FED_CENTRAL: http://fed-backend:8000
+  FED_API_KEY: ${FED_API_KEY:-}
+  FED_SILO_DATA_DIR: /srv/silo-data # 로컬 원천 파일 (컨테이너 안, 사일로 밖으로 나가지 않음)
+  FED_ALIGN_KEY: ${FED_ALIGN_KEY:-}
+  FED_MONITOR_AUTOSTART: ${FED_MONITOR_AUTOSTART:-1} # 1이면 기동 때 수집기 자동 시작
+x-silo-env-1: &silo-env-1
+  <<: *silo-env
+  FED_SILO_ID: silo-1
+x-silo-env-2: &silo-env-2
+  <<: *silo-env
+  FED_SILO_ID: silo-2
+x-silo-env-3: &silo-env-3
+  <<: *silo-env
+  FED_SILO_ID: silo-3
+x-silo-env-4: &silo-env-4
+  <<: *silo-env
+  FED_SILO_ID: silo-4
+x-silo-env-5: &silo-env-5
+  <<: *silo-env
+  FED_SILO_ID: silo-5
+x-silo-env-6: &silo-env-6
+  <<: *silo-env
+  FED_SILO_ID: silo-6
 
 services:
   backend:
@@ -74,6 +104,8 @@ services:
       # containerd 스냅샷 마운트 콜백(/dev/shm 등 생성)이 실패해 MinIO가 뜨지 못한다.
       - silo1-data:/var/lib/docker
       - ./backend/silo_sdk:/opt/silo_sdk:ro # PYTHONPATH=/opt → `import silo_sdk`
+      - ./backend/scripts:/opt/silo_scripts:ro # silo_worker.py — docker cp 없이 재기동만으로 최신 워커
+    environment: *silo-env-1
     networks:
       - fed-net
 
@@ -91,6 +123,8 @@ services:
     volumes:
       - silo2-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - ./backend/silo_sdk:/opt/silo_sdk:ro
+      - ./backend/scripts:/opt/silo_scripts:ro
+    environment: *silo-env-2
     networks:
       - fed-net
 
@@ -108,6 +142,8 @@ services:
     volumes:
       - silo3-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - ./backend/silo_sdk:/opt/silo_sdk:ro
+      - ./backend/scripts:/opt/silo_scripts:ro
+    environment: *silo-env-3
     networks:
       - fed-net
 
@@ -125,6 +161,8 @@ services:
     volumes:
       - silo4-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - ./backend/silo_sdk:/opt/silo_sdk:ro
+      - ./backend/scripts:/opt/silo_scripts:ro
+    environment: *silo-env-4
     networks:
       - fed-net
 
@@ -145,6 +183,8 @@ services:
     volumes:
       - silo5-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - ./backend/silo_sdk:/opt/silo_sdk:ro
+      - ./backend/scripts:/opt/silo_scripts:ro
+    environment: *silo-env-5
     networks:
       - fed-net
 
@@ -162,6 +202,8 @@ services:
     volumes:
       - silo6-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - ./backend/silo_sdk:/opt/silo_sdk:ro
+      - ./backend/scripts:/opt/silo_scripts:ro
+    environment: *silo-env-6
     networks:
       - fed-net
 

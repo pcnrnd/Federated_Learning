@@ -554,3 +554,38 @@ def test_동시_라운드_생성과_기여가_라운드를_유실하지_않는�
     stored = load_training_rounds()
     missing = [rid for rid in created if rid not in stored]
     assert not missing, f"동시 쓰기로 유실된 라운드: {missing}"
+
+
+# ---------- 정제 통계 기록 (F6) ----------
+
+
+@pytest.mark.unit
+def test_contribution_records_cleaning_stats_on_round():
+    rnd = _create_round()
+    training_round_service.submit_contribution(
+        ParameterContribution(round_id=rnd.round_id, silo_id="silo-1", sample_count=90,
+                              parameters=[1.0, 2.0], rows_before_cleaning=120,
+                              rows_after_cleaning=90, train_rmse=0.12)
+    )
+    training_round_service.submit_contribution(
+        ParameterContribution(round_id=rnd.round_id, silo_id="silo-2", sample_count=50,
+                              parameters=[1.0, 2.0])
+    )
+
+    stored = training_round_service.get_round(rnd.round_id)
+    assert stored.cleaning_stats == {
+        "silo-1": {"rows_before_cleaning": 120, "rows_after_cleaning": 90, "train_rmse": 0.12}
+    }
+    records = {r.silo_id: r for r in training_round_service.list_contributions(rnd.round_id)}
+    assert records["silo-1"].rows_after_cleaning == 90
+    assert records["silo-1"].train_rmse == 0.12
+    assert records["silo-2"].rows_before_cleaning is None
+
+
+@pytest.mark.unit
+def test_contribution_rejects_more_rows_after_than_before():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ParameterContribution(round_id="r", silo_id="silo-1", sample_count=1, parameters=[1.0],
+                              rows_before_cleaning=10, rows_after_cleaning=11)

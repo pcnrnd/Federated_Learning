@@ -45,6 +45,23 @@ else
     echo "Warning: MinIO compose file not found: $MINIO_COMPOSE"
 fi
 
-# 5. 컨테이너가 꺼지지 않도록 무한 대기 (Tail logs)
+# 5. 리소스 수집기(monitor) 자동 기동 — compose가 FED_CENTRAL·FED_SILO_ID를 주고
+#    FED_MONITOR_AUTOSTART=1일 때만. 워커는 /opt/silo_scripts 마운트(docker cp 불필요).
+#    중앙이 늦게 뜨거나 수집기가 죽으면 10초 뒤 다시 띄운다(재기동만으로 수집 재개).
+#    ponytail: 로그는 재시작마다 덮어쓰는 /tmp/monitor.log 하나 (5초 주기 1줄 ≈ 하루 2MB)
+if [ "${FED_MONITOR_AUTOSTART:-0}" = "1" ] && [ -n "$FED_CENTRAL" ] && [ -n "$FED_SILO_ID" ] \
+    && [ -f /opt/silo_scripts/silo_worker.py ]; then
+    (
+        while true; do
+            python3 /opt/silo_scripts/silo_worker.py monitor \
+                --central "$FED_CENTRAL" --silo-id "$FED_SILO_ID" \
+                --interval 5 --count 0 > /tmp/monitor.log 2>&1
+            sleep 10
+        done
+    ) &
+    echo "monitor autostart: $FED_SILO_ID -> $FED_CENTRAL"
+fi
+
+# 6. 컨테이너가 꺼지지 않도록 무한 대기 (Tail logs)
 tail -f /dev/null
 

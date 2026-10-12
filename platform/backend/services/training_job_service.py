@@ -20,7 +20,12 @@ from models.federated_schemas import (
     TrainingJobRequest,
     TrainingRoundCreate,
 )
-from services import resource_service, silo_group_service, training_round_service
+from services import (
+    cleaning_job_service,
+    resource_service,
+    silo_group_service,
+    training_round_service,
+)
 from services.model_registry import get_model
 
 logger = logging.getLogger(__name__)
@@ -84,6 +89,8 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
     # 모델·그룹 사전 검증
     get_model(request.model_name, request.version)
     silo_group_service.get_group(request.group_id)
+    if request.cleaning_job_id:
+        cleaning_job_service.get_job(request.cleaning_job_id)  # 없으면 404
 
     now = _now_iso()
     job = TrainingJob(
@@ -103,6 +110,7 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
         created_at=now,
         updated_at=now,
         notes=request.notes,
+        cleaning_job_id=request.cleaning_job_id,
     )
     # 중복 ID 검사와 저장을 같은 잠금 구간에서 — 동시 생성 요청이 서로를 덮어쓰지 않는다
     with _job_lock:
@@ -170,6 +178,7 @@ def _open_round_for_job(job_id: str) -> tuple[TrainingJob, bool]:
                 group_id=job.group_id,
                 min_contributions=job.min_contributions,
                 notes=f"auto from job={job.job_id}",
+                cleaning_job_id=job.cleaning_job_id,
             )
         )
         opened = True
