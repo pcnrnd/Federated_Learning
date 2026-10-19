@@ -10,8 +10,8 @@ from docker.errors import DockerException, NotFound
 from fastapi import HTTPException
 
 from g4_helpers import completed_live_result
-from models.packaging_schemas import DeploymentEntry, DeploymentRequest
-from services import deployment_service as deploy, model_registry as registry, training_model_service as registration
+from models.packaging_schemas import DeploymentEntry, DeploymentRequest, DeploymentTargetResult
+from services import deployment_runtime, deployment_service as deploy, model_registry as registry, training_model_service as registration
 from storage.factory import reset_repositories
 
 
@@ -23,6 +23,13 @@ def world(tmp_path, monkeypatch, request):
     entry = registration.register_completed_result(result.round_id)
     monkeypatch.setattr(deploy, "refresh_docker_hosts", lambda: None)
     monkeypatch.setattr(deploy, "get_docker_hosts", lambda: {"silo-1": {}, "silo-2": {}})
+    # 라이프사이클/잠금 경계 시험이며 실제 image/HTTP 확인은 G5 runtime 회귀가 담당한다.
+    monkeypatch.setattr(deployment_runtime, "pinned_package", lambda *_args: ("sha256:fixture", {}))
+    monkeypatch.setattr(deployment_runtime, "probe_inputs", lambda *_args: [[1, 2, 3]])
+    monkeypatch.setattr(deployment_runtime, "ensure_image", lambda *_args: None)
+    monkeypatch.setattr(deployment_runtime, "verify_target", lambda _c, container, *_args, **_kw:
+        DeploymentTargetResult(status="running", container_id=container.id, image_id="sha256:fixture",
+            verified_at=deploy._now_iso()))
     return entry
 
 
@@ -155,7 +162,8 @@ def test_durable_pending_wins_while_docker_waits_without_global_registry_lock(wo
             assert resume.wait(5)
             return SimpleNamespace(node_id=context.node_id, container_id="container-" + context.node_id)
     monkeypatch.setattr(deploy, "get_strategy", lambda _strategy: Strategy())
-    monkeypatch.setattr(deploy, "get_docker_client", lambda _node: object())
+    monkeypatch.setattr(deploy, "get_docker_client", lambda node: SimpleNamespace(
+        containers=SimpleNamespace(get=lambda _identity: SimpleNamespace(id="container-"+node)), close=lambda: None))
     with ThreadPoolExecutor(max_workers=2) as pool:
         attempt = pool.submit(deploy.create_deployment, request_for(world))
         try:

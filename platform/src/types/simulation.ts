@@ -148,6 +148,21 @@ export interface Deployment {
   intervalSec?: number
   state: DeployState
   ts: string
+  targetNodeIds?: string[]
+  env?: Record<string, string>
+  inferencePort?: number
+  probeInputs?: unknown[]
+  verifiedAt?: string
+  imageId?: string
+  targets?: Record<string, { status: 'pending' | 'launching' | 'running' | 'failed'; endpoint?: string | null;
+    image_id?: string | null; weights_checksum?: string | null; error_code?: string | null }>
+  isSchedule?: boolean
+  scheduleActive?: boolean
+  nextDueAt?: string
+  occurrence?: number
+  error?: string
+  cleanupPending?: boolean
+  previousDeploymentId?: string
 }
 
 // --- 6.6 사일로 리소스 모니터링 + 등록 ---
