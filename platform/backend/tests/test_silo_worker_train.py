@@ -130,6 +130,39 @@ def test_train_loop_with_recipe_pushes_cleaning_stats_each_round(tmp_path, monke
     assert client.metrics and 0.99 < client.metrics[0][1] <= 1.0  # 정제 데이터 R²
 
 
+@pytest.mark.parametrize("fault", ["central_503", "child_ack_loss"])
+def test_legacy_loop_explicitly_skips_live_owner_and_processes_mixed_legacy(tmp_path, monkeypatch, fault):
+    from silo_sdk.client import SiloClientError
+    from silo_sdk.training_runtime import LiveWorker
+    def forbidden(*_args):
+        if fault == "central_503":
+            raise SiloClientError(503, "transient")
+        raise TimeoutError("child ACK lost")
+    monkeypatch.setattr(LiveWorker, "attempt_round", forbidden)
+    client = _TrainClient([{"round_id": "live", "learning": {"solver": "ridge_gradient_v1"}},
+        {"round_id": "legacy", "model_name": "m", "version": "1", "contributors": []}])
+    _install(monkeypatch, client)
+    monkeypatch.setattr(silo_worker.time, "sleep", lambda _s: None)
+    silo_worker.run_train_loop(_args(tmp_path, model="m", max_rounds=1, poll_interval=0, max_idle=5))
+    assert [push["round_id"] for push in client.pushes] == ["legacy"]
+    assert client.metrics
+
+
+def test_legacy_loop_live_only_is_idle_and_exits_at_max_idle_without_listener(tmp_path, monkeypatch, capsys):
+    from silo_sdk.training_runtime import LiveWorker
+    client = _TrainClient()
+    client.list_rounds = lambda **_kwargs: [{"round_id": "live", "learning": {"solver": "ridge_gradient_v1"}}]
+    _install(monkeypatch, client)
+    monkeypatch.setattr(LiveWorker, "attempt_round", lambda *_args: pytest.fail("legacy must not own live execution"))
+    clock = iter([0.0, 0.0, 0.5, 1.5])
+    monkeypatch.setattr(silo_worker.time, "monotonic", lambda: next(clock))
+    sleeps = []
+    monkeypatch.setattr(silo_worker.time, "sleep", sleeps.append)
+    silo_worker.run_train_loop(_args(tmp_path, model="m", max_rounds=1, poll_interval=0.1, max_idle=1))
+    assert sleeps == [0.1, 0.1] and client.pushes == []
+    assert json.loads(capsys.readouterr().out.strip())["event"] == "idle_timeout"
+
+
 @pytest.mark.unit
 def test_train_edge_with_recipe_combines_cleaning_stats(tmp_path, monkeypatch, capsys):
     children = []

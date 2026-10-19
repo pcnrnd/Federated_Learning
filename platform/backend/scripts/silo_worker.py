@@ -514,11 +514,8 @@ def run_train_loop(args: argparse.Namespace) -> None:
             if round_id in contributed_rounds or args.silo_id in entry.get("contributors", []):
                 continue
             if entry.get("learning") is not None:
-                from silo_sdk.training_runtime import LiveWorker
-                if LiveWorker(client, getattr(args, "data_dir", DEFAULT_DATA_DIR)).attempt_round(entry):
-                    contributed_rounds.add(round_id)
-                    acted = True
-                    idle_deadline = time.monotonic() + args.max_idle
+                # live-loop가 6개 실제 entrypoint의 학습·HTTP inbox/outbox를 소유한다.
+                # legacy CLI는 listener 없는 별도 live 실행자를 만들지 않고 기존 라운드만 처리한다.
                 continue
             try:
                 round_rows, round_stats = inputs_for(entry)

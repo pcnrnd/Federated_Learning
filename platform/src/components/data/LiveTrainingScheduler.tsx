@@ -1,26 +1,11 @@
 import { useEffect, useState } from 'react'
-import { apiGet, apiPost, type TrainingJobApi, type TrainingRoundSummary } from '@/api/client'
+import type { TrainingRoundSummary } from '@/api/client'
+import { liveTrainingRequest } from '@/lib/liveTraining'
+import { useLiveTrainingStore } from '@/store/useLiveTrainingStore'
 import { useDataStore } from '@/store/useDataStore'
 import { useSiloStore } from '@/store/useSiloStore'
 
-export function liveTrainingRequest(draft: Record<string, string>) {
-  const features = draft.features.split(',').map((value) => value.trim()).filter(Boolean)
-  if (draft.initial.split(',').some((value) => !value.trim())) throw new Error('빈 초기 파라미터는 사용할 수 없습니다')
-  const initial = draft.initial.split(',').map((value) => Number(value.trim()))
-  const settings = { l2: Number(draft.l2), step_size: Number(draft.step_size), steps: Number(draft.steps) }
-  if (features.length + 1 !== initial.length || [...initial, ...Object.values(settings)].some((n) => !Number.isFinite(n))) {
-    throw new Error('특징 수+편향과 같은 개수의 유한한 초기값 및 학습 설정이 필요합니다')
-  }
-  if (!features.length || new Set(features).size !== features.length || features.includes(draft.target)
-      || settings.l2 < 0 || settings.step_size <= 0 || !Number.isInteger(settings.steps) || settings.steps < 1) {
-    throw new Error('특징/타깃과 학습 설정의 범위를 확인하세요')
-  }
-  return { job_id: draft.job_id, model_name: draft.model_name, version: draft.version,
-    group_id: draft.group_id, cleaning_job_id: draft.cleaning_job_id, schedule_kind: 'chain',
-    max_rounds: Number(draft.max_rounds), min_contributions: Number(draft.min_contributions),
-    learning: { solver: 'ridge_gradient_v1', features, target: draft.target,
-      initial_parameters: initial, ...settings } }
-}
+export { liveTrainingRequest } from '@/lib/liveTraining'
 
 export function LiveRoundResult({ round }: { round: TrainingRoundSummary }) {
   return round.result?.parameters?.length ? <>
@@ -42,44 +27,23 @@ export function LiveTrainingScheduler() {
   const [draft, setDraft] = useState<Record<string, string>>({ job_id: '', model_name: '', version: '1.0.0',
     group_id: '', cleaning_job_id: '', features: 'x1,x2,x3', target: 'y', initial: '0,0,0,0',
     l2: '0.001', step_size: '0.0001', steps: '1', max_rounds: '2', min_contributions: '1' })
-  const [jobs, setJobs] = useState<TrainingJobApi[]>([])
-  const [rounds, setRounds] = useState<TrainingRoundSummary[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [pending, setPending] = useState(false)
-  const [revision, setRevision] = useState(0)
-  useEffect(() => {
-    let cancelled = false
-    let inFlight = false
-    const poll = async () => {
-      if (inFlight) return
-      inFlight = true
-      try {
-        const [nextJobs, nextRounds] = await Promise.all([
-          apiGet<TrainingJobApi[]>('/api/training-jobs'), apiGet<TrainingRoundSummary[]>('/api/training-rounds'),
-        ])
-        if (!cancelled) { setJobs(nextJobs); setRounds(nextRounds); setError(null) }
-      } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason))
-      } finally { inFlight = false }
-    }
-    void poll()
-    const timer = setInterval(() => { void poll() }, 5000)
-    return () => { cancelled = true; clearInterval(timer) }
-  }, [revision])
-  const mutate = async (path: string, body?: unknown) => {
-    setPending(true)
-    try { await apiPost(path, body); setError(null); setRevision((value) => value + 1) }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
-    finally { setPending(false) }
-  }
+  const jobs = useLiveTrainingStore((state) => state.jobs)
+  const rounds = useLiveTrainingStore((state) => state.rounds)
+  const serverError = useLiveTrainingStore((state) => state.error)
+  const pending = useLiveTrainingStore((state) => state.pending)
+  const observe = useLiveTrainingStore((state) => state.observe)
+  const mutate = useLiveTrainingStore((state) => state.mutate)
+  const [formError, setFormError] = useState<string | null>(null)
+  useEffect(() => observe(), [observe])
+  const error = formError ?? serverError
   return <section className="job-scheduler" aria-label="실제 연합학습">
     <h3>정제 출력으로 연속 학습</h3>
     <p>첫 초기값에서 학습하고 다음 라운드는 직전 전역 결과를 사용합니다. 집계자도 자기 데이터로 학습하며 하위 결과는 실제 전송 후 합산합니다.</p>
     {error && <p role="alert" className="text-red">{error}</p>}
     <form className="silo-register-form" onSubmit={(event) => {
       event.preventDefault()
-      try { void mutate('/api/training-jobs', liveTrainingRequest(draft)) }
-      catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
+      try { setFormError(null); void mutate('/api/training-jobs', liveTrainingRequest(draft)) }
+      catch (reason) { setFormError(reason instanceof Error ? reason.message : String(reason)) }
     }}>
       {FIELDS.map(([key, label]) => <label className="control-group" key={key}>{label}
         <input className="model-input" required value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} />

@@ -187,6 +187,9 @@ class TrainingRound(BaseModel):
     transport_snapshot: dict[str, str] = Field(default_factory=dict)
     result: dict[str, Any] | None = None
     execution_errors: dict[str, dict[str, str]] = Field(default_factory=dict)
+    job_id: str | None = None
+    job_occurrence: int | None = None
+    opening_request_hash: str | None = None
 
 
 class AggregateResult(BaseModel):
@@ -236,6 +239,13 @@ class TrainingJobRequest(BaseModel):
     worker_endpoints: dict[str, str] = Field(default_factory=dict)
 
 
+class RoundOpeningIntent(BaseModel):
+    """라운드 저장과 YAML 잡 연결 사이를 복구하는 고정 생성 요청."""
+    round_id: str
+    occurrence: int = Field(ge=1)
+    request: TrainingRoundCreate
+
+
 class TrainingJob(BaseModel):
     job_id: str
     model_name: str
@@ -258,3 +268,4 @@ class TrainingJob(BaseModel):
     learning: LiveLearning | None = None
     worker_endpoints: dict[str, str] = Field(default_factory=dict)
     last_completed_round_id: str | None = None
+    opening_intent: RoundOpeningIntent | None = None
