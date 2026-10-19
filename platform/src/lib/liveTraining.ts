@@ -16,4 +16,3 @@ export function liveTrainingRequest(draft: Record<string, string>) {
     learning: { solver: 'ridge_gradient_v1', features, target: draft.target,
       initial_parameters: initial, ...settings } }
 }
-
