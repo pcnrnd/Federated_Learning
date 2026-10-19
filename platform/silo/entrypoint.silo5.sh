@@ -10,6 +10,22 @@ service ssh start
 #   컨테이너 시작 직후엔 dockerd·containerd가 아직 없으므로 무조건 지운다.
 rm -f /var/run/docker.pid /var/run/docker/containerd/containerd.pid
 dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 &
+DOCKERD_PID=$!
+
+# 2-1. 정상 종료 — 이 스크립트가 PID 1이라 처리기가 없으면 docker stop의 SIGTERM이 무시되고
+#      유예 시간 뒤 SIGKILL(137)로 끝나 안쪽 dockerd·컨테이너가 정리되지 않는다.
+#      수집기를 멈추고 → dockerd에 TERM을 보내 끝날 때까지 기다린 뒤(안쪽 컨테이너 정리) → 0으로 종료.
+shutdown() {
+  echo "Stop signal received — stopping monitor and dockerd..."
+  if [ -n "${MONITOR_PID:-}" ]; then
+    kill "$MONITOR_PID" 2>/dev/null
+    wait "$MONITOR_PID"
+  fi
+  kill "$DOCKERD_PID" 2>/dev/null
+  wait "$DOCKERD_PID"
+  exit 0
+}
+trap shutdown TERM INT
 
 # 3. Docker가 완전히 켜질 때까지 대기 — 상한을 넘기면 MinIO 없이 수집기 기동으로 넘어간다
 DOCKERD_WAIT_TIMEOUT="${DOCKERD_WAIT_TIMEOUT:-120}"
@@ -61,17 +77,22 @@ fi
 #    ponytail: 로그는 재시작마다 덮어쓰는 /tmp/monitor.log 하나 (5초 주기 1줄 ≈ 하루 2MB)
 if [ "${FED_MONITOR_AUTOSTART:-0}" = "1" ] && [ -n "$FED_CENTRAL" ] && [ -n "$FED_SILO_ID" ] \
     && [ -f /opt/silo_scripts/silo_worker.py ]; then
+    #    수집기·sleep을 백그라운드로 두고 wait해야 TERM을 받자마자 지금 도는 것($!)을 끄고 끝난다.
     (
+        trap 'kill $! 2>/dev/null; exit 0' TERM
         while true; do
             python3 /opt/silo_scripts/silo_worker.py monitor \
                 --central "$FED_CENTRAL" --silo-id "$FED_SILO_ID" \
-                --interval 5 --count 0 > /tmp/monitor.log 2>&1
-            sleep 10
+                --interval 5 --count 0 > /tmp/monitor.log 2>&1 &
+            wait $!
+            sleep 10 & wait $!
         done
     ) &
+    MONITOR_PID=$!
     echo "monitor autostart: $FED_SILO_ID -> $FED_CENTRAL"
 fi
 
-# 6. 컨테이너가 꺼지지 않도록 무한 대기 (Tail logs)
-tail -f /dev/null
+# 6. 컨테이너가 꺼지지 않도록 무한 대기 — 포그라운드 tail이면 trap이 돌지 않으므로 wait로 기다린다
+tail -f /dev/null &
+wait $!
 

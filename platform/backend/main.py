@@ -173,8 +173,11 @@ def readyz(response: Response) -> dict[str, object]:
 def dashboard_ui(request: Request):
     """대시보드 UI — React SPA 빌드본이 존재하면 우선 반환하고 없으면 기존 바닐라 폴백"""
     react_index = _BASE_DIR / "static" / "dist" / "index.html"
+    # 진입 HTML은 매번 재검증 — 캐시된 옛 index.html이 옛 해시 자산을 불러 새 화면이 안 보이는 문제 방지.
+    # 해시가 붙은 /assets/* 는 StaticFiles 기본 동작 그대로 둔다.
+    no_cache = {"Cache-Control": "no-cache"}
     if react_index.exists():
-        return FileResponse(str(react_index))
+        return FileResponse(str(react_index), headers=no_cache)
     if _templates is None:
         return {"error": "templates 디렉토리 없음"}
-    return _templates.TemplateResponse(request, "dashboard.html")
+    return _templates.TemplateResponse(request, "dashboard.html", headers=no_cache)
