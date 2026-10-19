@@ -83,9 +83,23 @@ def _create_job(request: CleaningJobCreate) -> CleaningJob:
             status_code=400, detail=f"그룹 '{group.group_id}'에 멤버가 없습니다"
         )
 
+    # HFL 루트의 정제 입력은 집계자 자기와 정확한 하위 데이터 보유자를 모두 덮는다.
+    # shard 목록을 생성 시 동결하므로 이후 그룹 수정이 실행 중 정제를 바꾸지 않는다.
+    members = list(group.member_node_ids)
+    if len(set(members)) != len(members):
+        raise HTTPException(status_code=409, detail="정제 참여자에 중복된 노드가 있습니다")
+    aggregators = set()
+    for cluster in silo_group_service.list_groups():
+        if cluster.aggregator_node_id in group.member_node_ids:
+            if cluster.aggregator_node_id in aggregators or set(members) & set(cluster.member_node_ids):
+                raise HTTPException(status_code=409, detail="정제 root/leaf 기원이 겹치거나 집계자 클러스터가 중복됩니다")
+            if len(set(cluster.member_node_ids)) != len(cluster.member_node_ids):
+                raise HTTPException(status_code=409, detail="정제 하위 참여자가 중복됩니다")
+            aggregators.add(cluster.aggregator_node_id)
+            members.extend(cluster.member_node_ids)
     shards = [
         ShardAssignment(shard_index=i, silo_id=silo_id, status="pending")
-        for i, silo_id in enumerate(group.member_node_ids)
+        for i, silo_id in enumerate(members)
     ]
     now = _now_iso()
     job = CleaningJob(

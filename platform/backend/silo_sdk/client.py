@@ -215,6 +215,19 @@ class SiloClient:
     def get_round(self, round_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/training-rounds/{round_id}")
 
+    def get_result(self, round_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/training-rounds/{round_id}/result")
+
+    def report_training_failure(self, round_id: str, error_code: str) -> dict[str, Any]:
+        return self._request("POST", f"/api/training-rounds/{round_id}/execution-errors",
+                             {"silo_id": self.silo_id, "error_code": error_code})
+
+    def push_live_parameters(self, envelope: dict) -> dict[str, Any]:
+        if envelope.get("silo_id") != self.silo_id:
+            raise ValueError("SDK 발신자와 대표 기여 불일치")
+        return self._request("POST", f"/api/training-rounds/{envelope['round_id']}/contributions",
+                             envelope, idempotency_key=envelope["envelope_checksum"])
+
     def list_rounds(
         self,
         *,

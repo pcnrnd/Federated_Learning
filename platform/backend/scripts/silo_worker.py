@@ -390,6 +390,8 @@ def _training_rows(args: argparse.Namespace, client: SiloClient,
     round_id = getattr(args, "round_id", None)
     if round_id and resolve_round:
         entry = client.get_round(round_id)
+        if entry.get("learning") is not None:
+            raise SystemExit("live 라운드는 전역 초기값/실제 HTTP를 사용하는 live-loop 경로로 실행하세요")
         reference = entry.get("cleaning_job_id")
         if reference:
             return _linked_output(args, client, reference, entry.get("cleaning_snapshot"))
@@ -510,6 +512,13 @@ def run_train_loop(args: argparse.Namespace) -> None:
         for entry in open_rounds:
             round_id = entry["round_id"]
             if round_id in contributed_rounds or args.silo_id in entry.get("contributors", []):
+                continue
+            if entry.get("learning") is not None:
+                from silo_sdk.training_runtime import LiveWorker
+                if LiveWorker(client, getattr(args, "data_dir", DEFAULT_DATA_DIR)).attempt_round(entry):
+                    contributed_rounds.add(round_id)
+                    acted = True
+                    idle_deadline = time.monotonic() + args.max_idle
                 continue
             try:
                 round_rows, round_stats = inputs_for(entry)
@@ -731,6 +740,19 @@ def main(argv: list[str]) -> None:
         run_with_signals(SiloClient(args.central, args.silo_id, timeout=2, retries=0), args.data_dir,
                          args.poll_interval, args.concurrency, args.max_cycles)
     continuous.set_defaults(func=run_clean_loop)
+
+    live = sub.add_parser("live-loop", help="보존 정제 출력으로 전역 피드백 ridge/실제 HTTP 계층 학습")
+    live.add_argument("--central", required=True)
+    live.add_argument("--silo-id", required=True)
+    live.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    live.add_argument("--host", default="0.0.0.0")
+    live.add_argument("--port", type=int, default=8081)
+    live.add_argument("--poll-interval", type=float, default=2)
+    def run_live(args):
+        from silo_sdk.training_runtime import run
+        run(SiloClient(args.central, args.silo_id, timeout=2, retries=0), args.data_dir,
+            args.host, args.port, args.poll_interval)
+    live.set_defaults(func=run_live)
 
     train = sub.add_parser("train", help="로컬 릿지 학습 + 기여 push")
     train.add_argument("--central", required=True)

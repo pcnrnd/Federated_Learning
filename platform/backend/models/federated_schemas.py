@@ -48,6 +48,35 @@ class SiloMemberInfo(BaseModel):
     in_servers_yaml: bool = False
 
 
+class LiveLearning(BaseModel):
+    """새 live ridge 모델 공간. 기존 learning=None 호출은 closed-form 호환이다."""
+    solver: Literal["ridge_gradient_v1"] = "ridge_gradient_v1"
+    features: list[str] = Field(default_factory=lambda: ["x1", "x2", "x3"])
+    target: str = "y"
+    l2: float = Field(default=0.001, ge=0, allow_inf_nan=False, strict=True)
+    step_size: float = Field(default=0.0001, gt=0, allow_inf_nan=False, strict=True)
+    steps: int = Field(default=1, ge=1, le=1000, strict=True)
+    initial_parameters: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+
+    @model_validator(mode="before")
+    @classmethod
+    def finite_initial(cls, value):
+        from silo_sdk.training_protocol import vector
+        if isinstance(value, dict) and "initial_parameters" in value:
+            vector(value["initial_parameters"])
+        return value
+
+    @model_validator(mode="after")
+    def space(self):
+        from silo_sdk.training_protocol import vector
+        if (not self.features or any(not f for f in self.features)
+                or len(set(self.features)) != len(self.features) or not self.target
+                or self.target in self.features):
+            raise ValueError("특징/타깃 이름은 비어 있거나 겹칠 수 없습니다")
+        self.initial_parameters = vector(self.initial_parameters, len(self.features) + 1)
+        return self
+
+
 class TrainingRoundCreate(BaseModel):
     """학습 라운드 생성 요청"""
 
@@ -59,6 +88,9 @@ class TrainingRoundCreate(BaseModel):
     cleaning_job_id: str | None = Field(
         default=None, description="학습 입력을 만든 성공 정제 작업 — 보존 출력 스냅샷 사용"
     )
+    learning: LiveLearning | None = None
+    parent_round_id: str | None = None
+    worker_endpoints: dict[str, str] = Field(default_factory=dict)
 
 
 class ParameterContribution(BaseModel):
@@ -75,6 +107,10 @@ class ParameterContribution(BaseModel):
     rows_before_cleaning: int | None = Field(default=None, ge=0)
     rows_after_cleaning: int | None = Field(default=None, ge=0)
     train_rmse: float | None = Field(default=None, ge=0, description="로컬 학습 RMSE")
+    base_checksum: str | None = None
+    space_checksum: str | None = None
+    envelope_checksum: str | None = None
+    origins: list[dict[str, Any]] | None = None
 
     @model_validator(mode="after")
     def _rows_shrink(self) -> ParameterContribution:
@@ -107,6 +143,15 @@ class ParameterContributionRecord(BaseModel):
     rows_before_cleaning: int | None = None
     rows_after_cleaning: int | None = None
     train_rmse: float | None = None
+    base_checksum: str | None = None
+    space_checksum: str | None = None
+    envelope_checksum: str | None = None
+    origins: list[dict[str, Any]] | None = None
+
+
+class TrainingExecutionFailure(BaseModel):
+    silo_id: str
+    error_code: Literal["input_missing", "invalid_model_or_input"]
 
 
 class TrainingRound(BaseModel):
@@ -134,6 +179,14 @@ class TrainingRound(BaseModel):
     cleaning_stats: dict[str, dict[str, float | int]] = Field(default_factory=dict)
     cleaning_job_id: str | None = None  # 학습 입력을 만든 정제 작업 (None = 연결 없음)
     cleaning_snapshot: dict[str, dict[str, str | int | None]] | None = None
+    learning: LiveLearning | None = None
+    parent_round_id: str | None = None
+    base_parameters: list[float] | None = None
+    base_checksum: str | None = None
+    space_checksum: str | None = None
+    transport_snapshot: dict[str, str] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    execution_errors: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class AggregateResult(BaseModel):
@@ -145,6 +198,17 @@ class AggregateResult(BaseModel):
     total_samples: int
     contributor_count: int
     aggregated_at: str
+    result_id: str | None = None
+    checksum: str | None = None
+    format: str = "parameters-v1"
+    model_name: str | None = None
+    version: str | None = None
+    features: list[str] | None = None
+    target: str | None = None
+    learning: dict[str, Any] | None = None
+    base_checksum: str | None = None
+    space_checksum: str | None = None
+    origins: list[dict[str, Any]] | None = None
 
 
 class TrainingJobRequest(BaseModel):
@@ -168,6 +232,8 @@ class TrainingJobRequest(BaseModel):
     cleaning_job_id: str | None = Field(
         default=None, description="정제 작업 — 이 잡이 여는 라운드에 그대로 기록된다"
     )
+    learning: LiveLearning | None = None
+    worker_endpoints: dict[str, str] = Field(default_factory=dict)
 
 
 class TrainingJob(BaseModel):
@@ -189,3 +255,6 @@ class TrainingJob(BaseModel):
     notes: str = ""
     error: str | None = None
     cleaning_job_id: str | None = None
+    learning: LiveLearning | None = None
+    worker_endpoints: dict[str, str] = Field(default_factory=dict)
+    last_completed_round_id: str | None = None

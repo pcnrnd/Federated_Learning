@@ -127,6 +127,36 @@ export interface TrainingRoundSummary {
   status: 'open' | 'aggregating' | 'completed' | 'failed'
   contributors: string[]
   total_samples: number
+  model_name?: string
+  version?: string
+  parent_round_id?: string | null
+  base_checksum?: string | null
+  space_checksum?: string | null
+  result?: RidgeResultApi | null
+  error?: string | null
+}
+
+export interface RidgeResultApi {
+  result_id: string
+  checksum: string
+  parameters: number[]
+  parameter_dim: number
+  total_samples: number
+  format: string
+  features: string[] | null
+  target: string | null
+}
+
+export interface TrainingJobApi {
+  job_id: string
+  model_name: string
+  version: string
+  status: 'active' | 'paused' | 'completed' | 'cancelled' | 'failed'
+  rounds_completed: number
+  max_rounds: number
+  current_round_id: string | null
+  last_completed_round_id?: string | null
+  error?: string | null
 }
 
 // --- 모델 레지스트리 · 배포 (P1 — models 탭 배선) ----------------------------

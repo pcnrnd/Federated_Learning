@@ -16,6 +16,10 @@ DOCKERD_PID=$!
 #      유예 시간 뒤 SIGKILL(137)로 끝나 안쪽 dockerd·컨테이너가 정리되지 않는다.
 #      수집기를 멈추고 → dockerd에 TERM을 보내 끝날 때까지 기다린 뒤(안쪽 컨테이너 정리) → 0으로 종료.
 shutdown() {
+  if [ -n "${TRAINING_PID:-}" ]; then
+    kill "$TRAINING_PID" 2>/dev/null
+    wait "$TRAINING_PID"
+  fi
   if [ -n "${CLEANING_PID:-}" ]; then
     kill "$CLEANING_PID" 2>/dev/null
     wait "$CLEANING_PID"
@@ -110,6 +114,21 @@ if [ "${FED_CLEANING_AUTOSTART:-0}" = "1" ] && [ -n "$FED_CENTRAL" ] && [ -n "$F
         done
     ) &
     CLEANING_PID=$!
+fi
+# live 학습 HTTP 수신/실제 optimizer. 원천/own/inbox/outbox는 같은 silo-local volume에 보존.
+if [ "${FED_TRAINING_AUTOSTART:-0}" = "1" ] && [ -n "$FED_CENTRAL" ] && [ -n "$FED_SILO_ID" ] \
+    && [ -f /opt/silo_scripts/silo_worker.py ]; then
+    (
+        trap 'kill $! 2>/dev/null; wait $! 2>/dev/null; exit 0' TERM
+        while true; do
+            python3 /opt/silo_scripts/silo_worker.py live-loop \
+                --central "$FED_CENTRAL" --silo-id "$FED_SILO_ID" \
+                --port "${FED_TRAINING_PORT:-8081}" > /tmp/training.log 2>&1 &
+            wait $!
+            sleep 10 & wait $!
+        done
+    ) &
+    TRAINING_PID=$!
 fi
 # 6. 컨테이너가 꺼지지 않도록 무한 대기 — 포그라운드 tail이면 trap이 돌지 않으므로 wait로 기다린다
 tail -f /dev/null &
