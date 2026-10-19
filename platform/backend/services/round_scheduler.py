@@ -78,7 +78,8 @@ class RoundScheduler:
     def _tick_blocking(self) -> list[str]:
         """tick의 동기 본체 — 저장소 I/O를 포함하므로 이벤트 루프에서 직접 부르지 않는다."""
         aggregated_ids: list[str] = []
-        open_rounds = training_round_service.list_rounds(status="open")
+        open_rounds = (training_round_service.list_rounds(status="open")
+                       + training_round_service.list_rounds(status="aggregating"))
         for entry in open_rounds:
             # open 라운드별 조회 — 전체 기여 이력을 매 tick 읽지 않는다
             count = len(load_round_contributions(entry.round_id))

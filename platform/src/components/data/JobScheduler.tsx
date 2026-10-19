@@ -6,6 +6,7 @@ import { useSimulationStore } from '@/store/useSimulationStore'
 import type { Job, JobState } from '@/types/simulation'
 import { PipelineRegisterForm } from './PipelineRegisterForm'
 import { LiveCleaningScheduler } from './LiveCleaningScheduler'
+import { LiveTrainingScheduler } from './LiveTrainingScheduler'
 
 const STATE_LABEL: Record<JobState, string> = {
   queued: '대기',
@@ -39,7 +40,7 @@ export function JobScheduler() {
 
   // 라이브 모드 게이트 — 목 파이프라인(타이머 진행)은 서버 상태와 무관해 오해를 부른다
   if (!mockEnabled && isLiveConfigured()) {
-    return <LiveCleaningScheduler />
+    return <><LiveCleaningScheduler /><LiveTrainingScheduler /></>
   }
 
   const siloName = (id?: number): string => {

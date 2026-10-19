@@ -27,6 +27,8 @@ x-silo-env: &silo-env
   FED_ALIGN_KEY: ${FED_ALIGN_KEY:-}
   FED_MONITOR_AUTOSTART: ${FED_MONITOR_AUTOSTART:-1} # 1이면 기동 때 수집기 자동 시작
   FED_CLEANING_AUTOSTART: ${FED_CLEANING_AUTOSTART:-1} # 예약 정제 pull worker
+  FED_TRAINING_AUTOSTART: ${FED_TRAINING_AUTOSTART:-1} # live ridge/child HTTP worker
+  FED_TRAINING_PORT: 8081 # fed-net 내부 HTTP 전용. host 포트를 공개하지 않는다.
 x-silo-env-1: &silo-env-1
   <<: *silo-env
   FED_SILO_ID: silo-1
