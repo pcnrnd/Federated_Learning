@@ -109,6 +109,15 @@ def test_dashboard_serves_spa_index_when_build_exists(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert "text/html" in resp.headers.get("content-type", "")
     assert "<title>SPA</title>" in resp.text
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+@pytest.mark.unit
+def test_dashboard_fallback_html_is_not_cached(fallback_client):
+    """Jinja 폴백 HTML도 매번 재검증하도록 Cache-Control: no-cache 를 붙인다."""
+    resp = fallback_client.get("/dashboard")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
 
 
 @pytest.mark.unit
