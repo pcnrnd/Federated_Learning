@@ -233,8 +233,8 @@ export const TAB_META: Record<TabId, { title: string; desc: string; icon: string
     icon: 'fa-chart-line',
   },
   visualization: {
-    title: '데이터 시각화',
-    desc: '사일로별 성능 추이, 라운드 참여, 사일로 비교, 연합 토폴로지, 기준 분포를 서버 실측 데이터로 한 화면에서 확인합니다.',
+    title: '연합 학습 분석',
+    desc: '사일로별 성능 추이, 라운드 참여, 사일로 비교, 연합 토폴로지, 기준 분포 — 시각화 5종을 서버 실측 데이터로 한 화면에서 확인합니다.',
     icon: 'fa-chart-column',
   },
   logs: {
