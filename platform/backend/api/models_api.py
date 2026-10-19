@@ -4,8 +4,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Header, Response
 
 from models.common_schemas import OkResponse
-from models.packaging_schemas import ModelEntry, ModelRegisterRequest
-from services import idempotency, model_registry
+from models.packaging_schemas import (
+    ModelEntry, ModelIdentityRequest, ModelRegisterRequest, RidgePredictRequest, TrainingModelRegisterRequest,
+)
+from services import idempotency, model_registry, training_model_service
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -33,10 +35,32 @@ def register_model_endpoint(
     return entry
 
 
+@router.post("/archive", response_model=ModelEntry)
+def archive_identity(payload: ModelIdentityRequest):
+    # JSON 식별자는 모델 이름의 slash/공백/Unicode를 경로 구분자로 바꾸지 않는다.
+    return model_registry.archive_model(payload.name, payload.version)
+
+
+@router.delete("", response_model=OkResponse)
+def delete_identity(payload: ModelIdentityRequest):
+    model_registry.delete_model(payload.name, payload.version)
+    return OkResponse(ok=True)
+
+
 @router.get("/{name}/versions", response_model=list[ModelEntry])
 def list_versions_endpoint(name: str) -> list[ModelEntry]:
     """특정 모델의 버전 목록 (최신순)"""
     return model_registry.list_versions(name)
+
+
+@router.post("/from-training", response_model=ModelEntry, status_code=201)
+def register_training_result(payload: TrainingModelRegisterRequest):
+    return training_model_service.register_completed_result(payload.round_id, version=payload.version)
+
+
+@router.get("/training-results")
+def registration_states():
+    return training_model_service.list_registrations()
 
 
 @router.get("/{name}/latest", response_model=ModelEntry)
@@ -56,3 +80,13 @@ def delete_model_endpoint(name: str, version: str) -> OkResponse:
     """모델 버전 제거"""
     model_registry.delete_model(name, version)
     return OkResponse(ok=True)
+
+
+@router.post("/{name}/{version}/archive", response_model=ModelEntry)
+def archive_model_endpoint(name: str, version: str):
+    return model_registry.archive_model(name, version)
+
+
+@router.post("/{name}/{version}/predict")
+def predict_model_endpoint(name: str, version: str, payload: RidgePredictRequest):
+    return model_registry.predict_model(name, version, payload.inputs)

@@ -95,6 +95,9 @@ class RoundScheduler:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("라운드 %s 집계 예외: %s", entry.round_id, exc)
+        # G4 adapter: G3 결과의 원자 게시 뒤 모델 등록. 실패/재시작은 같은 결과 원장으로 복구한다.
+        from services.training_model_service import reconcile_completed_results
+        reconcile_completed_results()
         return aggregated_ids
 
     async def tick(self) -> list[str]:

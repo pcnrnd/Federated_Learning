@@ -68,6 +68,7 @@ export function ModelRegistry() {
   const models = useModelStore((s) => s.models)
   const projectFilter = useModelStore((s) => s.projectFilter)
   const setProjectFilter = useModelStore((s) => s.setProjectFilter)
+  const liveError = useModelStore((s) => s.liveModelError)
   const [showForm, setShowForm] = useState(false)
 
   const visibleModels = useMemo(
@@ -118,6 +119,7 @@ export function ModelRegistry() {
       </div>
 
       {showForm && <NewModelForm defaultProject={defaultProject} onClose={() => setShowForm(false)} />}
+      {!showForm && liveError && <p role="alert">{liveError}</p>}
 
       <div className="model-stat-grid">
         <div className="model-stat-card">

@@ -164,10 +164,28 @@ export interface TrainingJobApi {
 export interface ModelEntryApi {
   name: string
   version: string
-  framework: 'pytorch' | 'onnx' | 'tensorflow'
+  framework: 'pytorch' | 'onnx' | 'tensorflow' | 'ridge'
   weights_path: string
   metadata: Record<string, unknown>
   created_at: string
+  status?: 'active' | 'archived'
+  package?: PackageRecordApi | null
+}
+
+export interface PackageRecordApi {
+  model_name: string
+  version: string
+  status: 'unbuilt' | 'building' | 'built' | 'failed' | 'unknown'
+  package_id?: string | null
+  image_tag?: string | null
+  image_digest?: string | null
+  base_image?: string | null
+  artifact_id?: string | null
+  weights_checksum?: string | null
+  manifest_checksum?: string | null
+  requested_at?: string | null
+  built_at?: string | null
+  error?: string | null
 }
 
 export type DeploymentStatusApi = 'pending' | 'running' | 'failed' | 'rolled_back' | 'stopped'

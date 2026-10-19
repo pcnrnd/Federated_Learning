@@ -1,4 +1,7 @@
 import { useState } from 'react'
+import { isLiveConfigured } from '@/api/client'
+import { useSimulationStore } from '@/store/useSimulationStore'
+import { LiveModelForm } from './LiveModelForm'
 import { ALGORITHM_OPTIONS } from '@/constants/simulation'
 import { MODEL_PROJECTS, useModelStore } from '@/store/useModelStore'
 import type { Algorithm } from '@/types/simulation'
@@ -9,6 +12,12 @@ interface NewModelFormProps {
 }
 
 export function NewModelForm({ defaultProject, onClose }: NewModelFormProps) {
+  const mockEnabled = useSimulationStore((state) => state.mockEnabled)
+  return !mockEnabled && isLiveConfigured() ? <LiveModelForm onClose={onClose} />
+    : <DemoModelForm defaultProject={defaultProject} onClose={onClose} />
+}
+
+function DemoModelForm({ defaultProject, onClose }: NewModelFormProps) {
   const addModel = useModelStore((s) => s.addModel)
 
   const [project, setProject] = useState(defaultProject)

@@ -1,80 +1,129 @@
-"""연합학습 모델 추론 서버 (자동 생성됨 — 직접 수정 금지)"""
+"""실제 가중치와 모델 정체성을 검증하는 패키지 추론 서버."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-MODEL_NAME = os.environ.get("MODEL_NAME", "{{ model_name }}")
-MODEL_VERSION = os.environ.get("MODEL_VERSION", "{{ version }}")
-MODEL_FRAMEWORK = os.environ.get("MODEL_FRAMEWORK", "{{ framework }}")
+EXPECTED_NAME = {{ model_name | tojson }}
+EXPECTED_VERSION = {{ version | tojson }}
+EXPECTED_FRAMEWORK = {{ framework | tojson }}
+EXPECTED_ARTIFACT = {{ artifact_id | tojson }}
+EXPECTED_MANIFEST = {{ manifest_checksum | tojson }}
+EXPECTED_WEIGHTS = {{ weights_checksum | tojson }}
+MODEL_NAME = os.environ.get("MODEL_NAME", EXPECTED_NAME)
+MODEL_VERSION = os.environ.get("MODEL_VERSION", EXPECTED_VERSION)
+MODEL_FRAMEWORK = os.environ.get("MODEL_FRAMEWORK", EXPECTED_FRAMEWORK)
 MODEL_PATH = Path(os.environ.get("MODEL_PATH", "/app/weights/{{ weights_filename }}"))
-
-app = FastAPI(title=f"{MODEL_NAME}@{MODEL_VERSION} inference")
-
-_meta_path = Path("/app/model_meta.json")
-_meta: dict[str, Any] = json.loads(_meta_path.read_text("utf-8")) if _meta_path.exists() else {}
+ARTIFACT_ROOT = Path(os.environ.get("ARTIFACT_ROOT", "/app/artifacts"))
+_meta_path = Path(os.environ.get("MODEL_META_PATH", "/app/model_meta.json"))
+_meta = json.loads(_meta_path.read_text("utf-8")) if _meta_path.exists() else {}
 _model: Any = None
+app = FastAPI(title=f"{EXPECTED_NAME}@{EXPECTED_VERSION} inference")
 
 
-def _load_model() -> Any:
-    """프레임워크별 모델 로딩 — lazy"""
+def _load_model():
     global _model
+    if (MODEL_NAME, MODEL_VERSION, MODEL_FRAMEWORK) != (EXPECTED_NAME, EXPECTED_VERSION, EXPECTED_FRAMEWORK):
+        raise RuntimeError("패키지의 모델 정체성과 환경 설정이 다릅니다")
+    if MODEL_FRAMEWORK == "ridge":
+        from ridge_artifacts import load_artifact
+        loaded = load_artifact(ARTIFACT_ROOT, EXPECTED_ARTIFACT, expected_manifest_sha256=EXPECTED_MANIFEST)
+        if loaded.weights_sha256 != EXPECTED_WEIGHTS:
+            raise RuntimeError("패키지의 weights checksum이 다릅니다")
+        if (loaded.manifest["model_name"], loaded.manifest["version"]) != (EXPECTED_NAME, EXPECTED_VERSION):
+            raise RuntimeError("실제 모델과 패키지 정체성이 다릅니다")
+        _model = loaded
+        return _model
+    if not MODEL_PATH.is_file() or MODEL_PATH.stat().st_size == 0:
+        raise RuntimeError("실제 가중치 파일이 없거나 비어 있습니다")
+    if EXPECTED_WEIGHTS and hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest() != EXPECTED_WEIGHTS:
+        raise RuntimeError("실제 가중치 checksum 불일치")
     if _model is not None:
         return _model
     if MODEL_FRAMEWORK == "pytorch":
-        import torch  # type: ignore[import-not-found]
-
-        _model = torch.load(str(MODEL_PATH), map_location="cpu")
-        if hasattr(_model, "eval"):
-            _model.eval()
+        import torch
+        try:
+            _model = torch.jit.load(str(MODEL_PATH), map_location="cpu")
+        except (RuntimeError, ValueError):
+            _model = torch.load(str(MODEL_PATH), map_location="cpu", weights_only=False)
+        if not callable(_model):
+            raise RuntimeError("실행 가능한 PyTorch 모델이 필요합니다")
+        _model.eval()
     elif MODEL_FRAMEWORK == "onnx":
-        import onnxruntime  # type: ignore[import-not-found]
-
+        import onnxruntime
         _model = onnxruntime.InferenceSession(str(MODEL_PATH))
     elif MODEL_FRAMEWORK == "tensorflow":
-        import tensorflow as tf  # type: ignore[import-not-found]
-
+        import tensorflow as tf
         _model = tf.keras.models.load_model(str(MODEL_PATH))
     else:
-        raise RuntimeError(f"지원하지 않는 framework: {MODEL_FRAMEWORK}")
+        raise RuntimeError("지원하지 않는 모델 형식입니다")
     return _model
 
 
+def _ready():
+    try:
+        return _load_model()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"가중치/모델 준비 실패 ({type(exc).__name__})") from exc
+
+
+def _identity(model):
+    values = dict(model=EXPECTED_NAME, version=EXPECTED_VERSION, framework=EXPECTED_FRAMEWORK,
+                  weights_checksum=EXPECTED_WEIGHTS)
+    if MODEL_FRAMEWORK == "ridge":
+        values.update(artifact_id=model.artifact_id, manifest_checksum=model.manifest_sha256,
+                      result_id=model.manifest["source_result"]["result_id"])
+    return values
+
+
 class PredictRequest(BaseModel):
-    inputs: list[Any]
+    inputs: list[Any] = Field(..., min_length=1)
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "model": MODEL_NAME, "version": MODEL_VERSION}
+def health():
+    model = _ready()
+    return dict(status="ok", **_identity(model))
 
 
 @app.get("/meta")
-def meta() -> dict[str, Any]:
-    return {
-        "name": MODEL_NAME,
-        "version": MODEL_VERSION,
-        "framework": MODEL_FRAMEWORK,
-        **_meta,
-    }
+def meta():
+    model = _ready()
+    return dict(_meta, **_identity(model))
+
+
+def _forward(model, inputs):
+    if MODEL_FRAMEWORK == "ridge":
+        from ridge_artifacts import predict
+        return predict(model, inputs)
+    if MODEL_FRAMEWORK == "pytorch":
+        import torch
+        with torch.no_grad():
+            return model(torch.tensor(inputs, dtype=torch.float32)).detach().cpu().tolist()
+    if MODEL_FRAMEWORK == "onnx":
+        import numpy as np
+        names = model.get_inputs()
+        if len(names) != 1:
+            raise ValueError("단일 입력 ONNX 모델이 필요합니다")
+        return [item.tolist() for item in model.run(None, {names[0].name: np.asarray(inputs, dtype=np.float32)})]
+    import numpy as np
+    return np.asarray(model(np.asarray(inputs, dtype=np.float32), training=False)).tolist()
 
 
 @app.post("/predict")
-def predict(payload: PredictRequest) -> dict[str, Any]:
-    if not MODEL_PATH.exists():
-        raise HTTPException(status_code=503, detail=f"가중치 파일 없음: {MODEL_PATH}")
+def predict_endpoint(payload: PredictRequest):
+    model = _ready()
     try:
-        _load_model()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"모델 로딩 실패: {exc}") from exc
-    # 실제 추론은 사용자 모델 시그니처에 의존 — 표준 wrapper만 제공
-    return {
-        "ok": True,
-        "input_count": len(payload.inputs),
-        "note": "실제 forward pass 로직은 모델 메타데이터에 맞춰 확장하세요.",
-    }
+        predictions = _forward(model, payload.inputs)
+        json.dumps(predictions, allow_nan=False)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail="예측 입력 형식/차원/유한 범위가 올바르지 않습니다") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"실제 예측 실패 ({type(exc).__name__})") from exc
+    return dict(ok=True, input_count=len(payload.inputs), predictions=predictions, **_identity(model))
