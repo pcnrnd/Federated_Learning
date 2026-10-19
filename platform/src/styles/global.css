@@ -3542,6 +3542,13 @@ span.dep-state-failed.dep-state-badge {
   fill: var(--primary);
 }
 
+.silo-observation, .silo-scope { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.silo-scope { margin: 4px 0 10px; font-size: 11px; }
+.silo-group-panel { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgb(var(--ink) / 0.15); }
+.silo-group-list { display: grid; gap: 10px; margin-bottom: 16px; overflow-wrap: anywhere; }
+.silo-group-members { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px; }
+.silo-group-panel fieldset { margin: 12px 0; border: 1px solid rgb(var(--ink) / 0.15); }
+
 /* 아래로 내려가는 간선이 라벨을 가로지르지 않도록 표면색 테두리로 띄운다 */
 .viz-node-label,
 .viz-node-sublabel {

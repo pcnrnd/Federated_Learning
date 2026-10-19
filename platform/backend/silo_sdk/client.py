@@ -238,25 +238,40 @@ class SiloClient:
 
     def push_resource_sample(
         self,
-        cpu_pct: float,
-        mem_pct: float,
+        cpu_pct: float | None,
+        mem_pct: float | None,
         *,
         gpu_pct: float | None = None,
         disk_pct: float | None = None,
         timestamp: str | None = None,
+        measurement_scope: dict[str, str] | None = None,
+        unavailable: dict[str, str] | None = None,
+        cpu_cores: float | None = None,
+        mem_used_bytes: int | None = None,
+        mem_limit_bytes: int | None = None,
+        capabilities: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         """리소스 사용률 스냅샷을 push (0~100 백분율)"""
         payload: dict[str, Any] = {
             "silo_id": self.silo_id,
-            "cpu_pct": float(cpu_pct),
-            "mem_pct": float(mem_pct),
+            "cpu_pct": float(cpu_pct) if cpu_pct is not None else None,
+            "mem_pct": float(mem_pct) if mem_pct is not None else None,
             "timestamp": timestamp or _now_iso(),
+            "measurement_scope": measurement_scope or {},
+            "unavailable": unavailable or {},
+            "cpu_cores": cpu_cores,
+            "mem_used_bytes": mem_used_bytes,
+            "mem_limit_bytes": mem_limit_bytes,
+            "capabilities": capabilities or {},
         }
         if gpu_pct is not None:
             payload["gpu_pct"] = float(gpu_pct)
         if disk_pct is not None:
             payload["disk_pct"] = float(disk_pct)
         return self._request("POST", "/api/resources/samples", payload)
+
+    def get_silo(self) -> dict[str, Any]:
+        return self._request("GET", f"/api/silos/{self.silo_id}")
 
     def fetch_cleaning_recipe(self, name: str, version: str) -> dict[str, Any]:
         return self._request("GET", f"/api/cleaning-recipes/{name}/{version}")

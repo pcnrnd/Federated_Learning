@@ -34,8 +34,11 @@ class _FakeClient:
             raise outcome
         return outcome
 
-    def push_resource_sample(self, cpu, mem, *, disk_pct=None):
+    def push_resource_sample(self, cpu, mem, *, disk_pct=None, **metadata):
         return self._next()
+
+    def get_silo(self):
+        return {"collect_interval_seconds": 0}
 
     def push_parameters(self, round_id, sample_count, parameters):
         return self._next()
@@ -58,9 +61,11 @@ class _FakeClient:
 
 @pytest.fixture
 def quiet_probes(monkeypatch):
-    monkeypatch.setattr(silo_worker, "_cpu_pct", lambda: 10.0)
-    monkeypatch.setattr(silo_worker, "_mem_pct", lambda: 20.0)
-    monkeypatch.setattr(silo_worker, "_disk_pct", lambda: 30.0)
+    monkeypatch.setattr(silo_worker, "sample_resources", lambda: {
+        "cpu_pct": 10.0, "mem_pct": 20.0, "disk_pct": 30.0,
+        "measurement_scope": {"cpu": "test cgroup", "mem": "test cgroup"},
+        "unavailable": {},
+    })
     monkeypatch.setattr(silo_worker.time, "sleep", lambda _s: None)
 
 

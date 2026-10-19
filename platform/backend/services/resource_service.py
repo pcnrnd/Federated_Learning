@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import threading
 import uuid
 from collections import defaultdict, deque
@@ -123,7 +124,7 @@ def _check_against_limit(
     return triggered
 
 
-_SAMPLE_COLUMNS = "silo_id, cpu_pct, mem_pct, gpu_pct, disk_pct, timestamp"
+_SAMPLE_COLUMNS = "silo_id, cpu_pct, mem_pct, gpu_pct, disk_pct, timestamp, measurement_json"
 
 
 def _persist_sqlite(sample: ResourceSample) -> None:
@@ -135,7 +136,7 @@ def _persist_sqlite(sample: ResourceSample) -> None:
 
         with connect(get_sqlite_path()) as conn:
             conn.execute(
-                f"INSERT INTO resource_samples ({_SAMPLE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO resource_samples ({_SAMPLE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     sample.silo_id,
                     sample.cpu_pct,
@@ -143,6 +144,10 @@ def _persist_sqlite(sample: ResourceSample) -> None:
                     sample.gpu_pct,
                     sample.disk_pct,
                     sample.timestamp,
+                    json.dumps(sample.model_dump(include={
+                        "measurement_scope", "unavailable", "capabilities", "cpu_cores",
+                        "mem_used_bytes", "mem_limit_bytes",
+                    })),
                 ),
             )
             conn.execute(
@@ -171,7 +176,12 @@ def _query_sqlite(where: str, params: tuple[object, ...]) -> list[ResourceSample
         sql = f"SELECT {_SAMPLE_COLUMNS} FROM resource_samples WHERE {where} ORDER BY id ASC"
         with connect(get_sqlite_path()) as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [ResourceSample(**dict(r)) for r in rows]
+        result = []
+        for row in rows:
+            payload = dict(row)
+            metadata = json.loads(payload.pop("measurement_json") or "{}")
+            result.append(ResourceSample(**payload, **metadata))
+        return result
     except Exception as exc:  # noqa: BLE001
         logger.warning("리소스 샘플 SQLite 조회 실패: %s", exc)
         return []
@@ -269,31 +279,27 @@ def clear_samples() -> None:
 
 # ---------- Batch Scheduling 게이트 ----------
 
-def is_silo_available(silo_id: str) -> bool:
-    """가장 최근 샘플이 임계값을 초과하지 않았는지 — Batch tick에서 호출"""
-    sample = latest_sample(silo_id)
-    if sample is None:
-        return True  # 데이터 없음 = 차단 안 함 (관측 X)
+def gate_status(silo_id: str) -> str:
+    """활성 감시·명시적 미지원·관측 누락을 분리한다."""
     limit = get_limit(silo_id)
     if limit is None:
-        return True
-    if limit.cpu_pct_max is not None and sample.cpu_pct > limit.cpu_pct_max:
-        return False
-    if limit.mem_pct_max is not None and sample.mem_pct > limit.mem_pct_max:
-        return False
-    if (
-        limit.gpu_pct_max is not None
-        and sample.gpu_pct is not None
-        and sample.gpu_pct > limit.gpu_pct_max
-    ):
-        return False
-    if (
-        limit.disk_pct_max is not None
-        and sample.disk_pct is not None
-        and sample.disk_pct > limit.disk_pct_max
-    ):
-        return False
-    return True
+        return "unmonitored"
+    sample = latest_sample(silo_id)
+    checks = [("cpu_pct", limit.cpu_pct_max), ("mem_pct", limit.mem_pct_max),
+              ("gpu_pct", limit.gpu_pct_max), ("disk_pct", limit.disk_pct_max)]
+    if sample is None:
+        return "unknown" if any(cap is not None for _, cap in checks) else "unmonitored"
+    active = [(metric, cap) for metric, cap in checks
+              if cap is not None and sample.capabilities.get(metric) is not False]
+    if any(getattr(sample, metric) is None for metric, _ in active):
+        return "unknown"
+    if any(getattr(sample, metric) > cap for metric, cap in active):
+        return "over_budget"
+    return "available" if active else "unmonitored"
+
+
+def is_silo_available(silo_id: str) -> bool:
+    return gate_status(silo_id) in ("available", "unmonitored")
 
 
 def group_has_pressure(member_silo_ids: list[str]) -> bool:
@@ -321,7 +327,14 @@ def usage_summary() -> list[ResourceUsageSummary]:
                 mem_pct=sample.mem_pct,
                 gpu_pct=sample.gpu_pct,
                 disk_pct=sample.disk_pct,
-                over_budget=not is_silo_available(silo_id),
+                over_budget=gate_status(silo_id) == "over_budget",
+                availability=gate_status(silo_id),
+                measurement_scope=sample.measurement_scope,
+                unavailable=sample.unavailable,
+                capabilities=sample.capabilities,
+                cpu_cores=sample.cpu_cores,
+                mem_used_bytes=sample.mem_used_bytes,
+                mem_limit_bytes=sample.mem_limit_bytes,
             )
         )
     summaries.sort(key=lambda s: s.silo_id)

@@ -33,6 +33,7 @@ from api import (
     resources,
     shadow,
     silo_groups,
+    silos,
     training_jobs,
     training_rounds,
     visualizations,
@@ -113,6 +114,7 @@ app.include_router(monitoring.router)
 
 # 사일로 링크 + 파라미터 수집 (P1)
 app.include_router(silo_groups.router)
+app.include_router(silos.router)
 app.include_router(training_rounds.router)
 
 # Batch Scheduling 자동화 (P1)

@@ -90,12 +90,18 @@ class AsyncSiloClient:
 
     async def push_resource_sample(
         self,
-        cpu_pct: float,
-        mem_pct: float,
+        cpu_pct: float | None,
+        mem_pct: float | None,
         *,
         gpu_pct: float | None = None,
         disk_pct: float | None = None,
         timestamp: str | None = None,
+        measurement_scope: dict[str, str] | None = None,
+        unavailable: dict[str, str] | None = None,
+        capabilities: dict[str, bool] | None = None,
+        cpu_cores: float | None = None,
+        mem_used_bytes: int | None = None,
+        mem_limit_bytes: int | None = None,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
             self._sync.push_resource_sample,
@@ -104,6 +110,9 @@ class AsyncSiloClient:
             gpu_pct=gpu_pct,
             disk_pct=disk_pct,
             timestamp=timestamp,
+            measurement_scope=measurement_scope, unavailable=unavailable,
+            capabilities=capabilities, cpu_cores=cpu_cores,
+            mem_used_bytes=mem_used_bytes, mem_limit_bytes=mem_limit_bytes,
         )
 
     async def push_many_metrics(

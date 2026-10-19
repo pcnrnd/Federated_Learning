@@ -51,8 +51,8 @@ export function mapUsageToSilos(
       name: u.silo_id,
       endpoint: '(실서버)',
       collectIntervalSec: 0,
-      cpu: Math.round(u.cpu_pct),
-      mem: Math.round(u.mem_pct),
+      cpu: u.cpu_pct === null ? null : Math.round(u.cpu_pct),
+      mem: u.mem_pct === null ? null : Math.round(u.mem_pct),
       disk: Math.round(u.disk_pct ?? 0),
       thresholds: {
         cpu: limit?.cpu_pct_max ?? DEFAULT_THRESHOLDS.cpu,

@@ -61,7 +61,7 @@ function isLive(): boolean {
 function liveTargetNames(strategy: DeployStrategy, targetSiloIds: number[]): string[] {
   const silos = useSiloStore.getState().silos
   const chosen = strategy === 'edge' ? silos.filter((s) => targetSiloIds.includes(s.id)) : silos
-  return chosen.map((s) => s.name)
+  return chosen.map((s) => s.serverId ?? s.name)
 }
 
 /** 실서버 배포 생성 — 결과 반영은 다음 폴링 주기가 담당 */
