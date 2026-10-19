@@ -5,6 +5,7 @@ import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { Job, JobState } from '@/types/simulation'
 import { PipelineRegisterForm } from './PipelineRegisterForm'
+import { LiveCleaningScheduler } from './LiveCleaningScheduler'
 
 const STATE_LABEL: Record<JobState, string> = {
   queued: '대기',
@@ -38,12 +39,7 @@ export function JobScheduler() {
 
   // 라이브 모드 게이트 — 목 파이프라인(타이머 진행)은 서버 상태와 무관해 오해를 부른다
   if (!mockEnabled && isLiveConfigured()) {
-    return (
-      <div className="deploy-empty">
-        실서버 모드에서는 목 파이프라인 스케줄러를 사용하지 않습니다 — 배치 학습 잡은 서버
-        스케줄러(/api/training-jobs)가 관리합니다.
-      </div>
-    )
+    return <LiveCleaningScheduler />
   }
 
   const siloName = (id?: number): string => {

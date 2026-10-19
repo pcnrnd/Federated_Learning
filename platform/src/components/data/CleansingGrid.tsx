@@ -18,6 +18,7 @@ const SHARD_STATE_META: Record<
 > = {
   pending: { label: '대기', cls: 'dep-state-pending' },
   running: { label: '정제중', cls: 'dep-state-deploying' },
+  retry_wait: { label: '재시도 대기', cls: 'dep-state-pending' },
   completed: { label: '정제 완료', cls: 'dep-state-done' },
   failed: { label: '실패', cls: 'dep-state-failed' },
 }
@@ -78,7 +79,7 @@ export function CleansingGrid({ siloData }: CleansingGridProps) {
               원본 레코드 <strong>{formatNumber(d.records)}</strong> 건
             </div>
             <div className="cleanse-progress-row">
-              <span className="cleanse-label">정제율</span>
+              <span className="cleanse-label">{liveState ? '실행 단계 진행률' : '정제율'}</span>
               <span className={`cleanse-pct ${cleanseClass(d.cleansePct)}`}>{d.cleansePct}%</span>
             </div>
             <div className="silo-bar-track">

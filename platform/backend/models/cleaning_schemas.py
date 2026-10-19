@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -17,7 +18,7 @@ from pydantic import (
 )
 
 JobStatus = Literal["pending", "running", "completed", "partial", "failed"]
-ShardStatus = Literal["pending", "running", "completed", "failed"]
+ShardStatus = Literal["pending", "running", "retry_wait", "completed", "failed"]
 StepType = Literal[
     "drop_nulls",
     "clip_outliers",
@@ -138,7 +139,29 @@ class CleaningRecipe(BaseModel):
     mapping: CleaningMapping | None = None
 
 
-class CleaningJobCreate(BaseModel):
+class CleaningExecutionOptions(BaseModel):
+    scheduled_at: str | None = None
+    interval_seconds: int | None = Field(default=None, ge=1)
+    max_occurrences: int | None = Field(default=None, ge=1)
+    depends_on: list[str] = Field(default_factory=list)
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    retry_backoff_seconds: int = Field(default=5, ge=0, le=3600)
+    timeout_seconds: int = Field(default=300, ge=1, le=86400)
+    partitions: int = Field(default=4, ge=1, le=32)
+    parallelism: int = Field(default=2, ge=1, le=8)
+
+    @field_validator("scheduled_at")
+    @classmethod
+    def _time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("실행 시각에는 시간대가 필요합니다")
+        return parsed.astimezone(timezone.utc).isoformat()
+
+
+class CleaningJobCreate(CleaningExecutionOptions):
     """잡 생성 요청 — 그룹 멤버 사일로마다 1 샤드를 자동 배정"""
 
     job_id: str = Field(..., min_length=1, max_length=64)
@@ -168,9 +191,23 @@ class ShardAssignment(BaseModel):
     completed_at: str | None = None
     error: str | None = None
     schema_fingerprint: Fingerprint | None = None
+    attempt: int = 0
+    attempt_id: str | None = None
+    claim_id: str | None = None
+    deadline_at: str | None = None
+    next_attempt_at: str | None = None
+    attempts: list[dict[str, Any]] = Field(default_factory=list)
+    processed_units: int = 0
+    total_units: int = 0
+    stage: str = "waiting"
+    output_id: Fingerprint | None = None
+    output_hash: Fingerprint | None = None
+    source_hash: Fingerprint | None = None
+    recipe_hash: Fingerprint | None = None
+    report_digest: Fingerprint | None = None
 
 
-class CleaningJob(BaseModel):
+class CleaningJob(CleaningExecutionOptions):
     job_id: str
     recipe_name: str
     recipe_version: str
@@ -184,6 +221,11 @@ class CleaningJob(BaseModel):
     created_at: str
     updated_at: str
     notes: str = ""
+    schedule_id: str | None = None
+    occurrence: int = 1
+    generation: int = 0
+    blocked_reason: str | None = None
+    events: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ShardReport(BaseModel):
@@ -201,6 +243,24 @@ class ShardReport(BaseModel):
     schema_fingerprint: Fingerprint | None = Field(
         default=None, description="정제 결과 공통 스키마 지문 (정렬된 컬럼:형식의 sha256)"
     )
+    attempt_id: str | None = None
+    retryable: bool = False
+    output_id: Fingerprint | None = None
+    output_hash: Fingerprint | None = None
+    source_hash: Fingerprint | None = None
+    recipe_hash: Fingerprint | None = None
+
+
+class ShardProgress(BaseModel):
+    silo_id: str
+    attempt_id: str
+    processed_units: int = Field(..., ge=0)
+    total_units: int = Field(..., ge=1)
+    stage: str = Field(default="processing", max_length=64)
+
+
+class CleaningReschedule(CleaningExecutionOptions):
+    scheduled_at: str
 
 
 class SchemaConsistency(BaseModel):
@@ -229,3 +289,7 @@ class AssignedShard(BaseModel):
     dataset_label: str
     job_status: JobStatus
     created_at: str
+    generation: int = 0
+    partitions: int = 4
+    parallelism: int = 2
+    timeout_seconds: int = 300

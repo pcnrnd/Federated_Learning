@@ -26,6 +26,9 @@ class _TrainClient:
         assert (name, version) == ("silo-hvc", "1.0.0")
         return RECIPE
 
+    def get_round(self, round_id):
+        return next((r for r in self.rounds if r["round_id"] == round_id), {"round_id": round_id})
+
     def push_parameters(self, round_id, sample_count, parameters, **kwargs):
         self.pushes.append({"round_id": round_id, "sample_count": sample_count,
                             "parameters": parameters, **kwargs})
@@ -192,6 +195,13 @@ def test_client_payload_adds_cleaning_stats_only_when_given(monkeypatch):
 
 @pytest.mark.unit
 def test_train_loop_uses_recipe_of_round_linked_cleaning_job(tmp_path, monkeypatch):
+    from silo_sdk import cleaning_output
+    synthetic.write_sources("silo-3", tmp_path)
+    manifest = cleaning_output.execute(str(tmp_path), "silo-3",
+        {"job_id": "c1", "dataset_label": "silo-sources"},
+        {"shard_index": 0, "attempt_id": "linked"}, RECIPE)
+    # 성공 스냅샷 뒤 원천 변경: 연결 학습은 기존 결과를 사용해야 한다.
+    (tmp_path / "period_a.csv").write_text("changed source", encoding="utf-8")
     rounds = [
         {"round_id": "r1", "model_name": "m", "version": "1", "contributors": [],
          "cleaning_job_id": "c1"},
@@ -203,7 +213,8 @@ def test_train_loop_uses_recipe_of_round_linked_cleaning_job(tmp_path, monkeypat
 
         def get_cleaning_job(self, job_id):
             self.jobs_fetched.append(job_id)
-            return {"job_id": job_id, "recipe_name": "silo-hvc", "recipe_version": "1.0.0"}
+            return {"job_id": job_id, "status": "completed", "shards": [
+                {**manifest, "silo_id": "silo-3", "status": "completed"}]}
 
     client = _LinkedClient(rounds)
     _install(monkeypatch, client)
@@ -240,6 +251,29 @@ def test_train_loop_survives_transient_error_fetching_linked_job(tmp_path, monke
     events = [json.loads(x).get("event") for x in capsys.readouterr().out.strip().splitlines()]
     assert "transient_error" in events and events[-1] == "idle_timeout"
     assert client.pushes == []
+
+
+def test_linked_snapshot_needs_no_original_sources_or_eager_fallback_recipe(tmp_path, monkeypatch):
+    from silo_sdk import cleaning_output
+    files = synthetic.write_sources("silo-3", tmp_path)
+    manifest = cleaning_output.execute(str(tmp_path), "silo-3",
+        {"job_id": "c1", "dataset_label": "silo-sources"},
+        {"shard_index": 0, "attempt_id": "linked"}, RECIPE)
+    for path in files.values():
+        path.unlink()
+    class Linked(_TrainClient):
+        def get_cleaning_job(self, _identity):
+            return {"status": "completed", "shards": [{**manifest, "silo_id": "silo-3", "status": "completed"}]}
+
+    client = Linked([{"round_id": "r1", "model_name": "m", "version": "1",
+                      "contributors": [], "cleaning_job_id": "c1"}])
+    _install(monkeypatch, client)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("연결 출력 학습 전에 원천을 읽거나 재정제하면 안 됨")
+    monkeypatch.setattr(silo_worker, "clean_local", forbidden)
+    silo_worker.run_train_loop(_args(tmp_path, model="m", max_rounds=1, poll_interval=0, max_idle=1))
+    assert client.pushes[0]["sample_count"] == manifest["rows_out"]
+    assert not any(path.exists() for path in files.values())
 
 
 @pytest.mark.unit

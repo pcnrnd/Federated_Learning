@@ -16,6 +16,10 @@ DOCKERD_PID=$!
 #      유예 시간 뒤 SIGKILL(137)로 끝나 안쪽 dockerd·컨테이너가 정리되지 않는다.
 #      수집기를 멈추고 → dockerd에 TERM을 보내 끝날 때까지 기다린 뒤(안쪽 컨테이너 정리) → 0으로 종료.
 shutdown() {
+  if [ -n "${CLEANING_PID:-}" ]; then
+    kill "$CLEANING_PID" 2>/dev/null
+    wait "$CLEANING_PID"
+  fi
   echo "Stop signal received — stopping monitor and dockerd..."
   if [ -n "${MONITOR_PID:-}" ]; then
     kill "$MONITOR_PID" 2>/dev/null
@@ -92,6 +96,21 @@ if [ "${FED_MONITOR_AUTOSTART:-0}" = "1" ] && [ -n "$FED_CENTRAL" ] && [ -n "$FE
     echo "monitor autostart: $FED_SILO_ID -> $FED_CENTRAL"
 fi
 
+# 저장된 예약·DAG 정제는 각 사일로의 로컬 파일과 결과 스냅샷만 사용한다.
+if [ "${FED_CLEANING_AUTOSTART:-0}" = "1" ] && [ -n "$FED_CENTRAL" ] && [ -n "$FED_SILO_ID" ] \
+    && [ -f /opt/silo_scripts/silo_worker.py ]; then
+    (
+        trap 'kill $! 2>/dev/null; exit 0' TERM
+        while true; do
+            python3 /opt/silo_scripts/silo_worker.py clean-loop \
+                --central "$FED_CENTRAL" --silo-id "$FED_SILO_ID" \
+                > /tmp/cleaning.log 2>&1 &
+            wait $!
+            sleep 10 & wait $!
+        done
+    ) &
+    CLEANING_PID=$!
+fi
 # 6. 컨테이너가 꺼지지 않도록 무한 대기 — 포그라운드 tail이면 trap이 돌지 않으므로 wait로 기다린다
 tail -f /dev/null &
 wait $!

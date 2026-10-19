@@ -181,7 +181,7 @@ export interface SiloData {
   /** 원본 레코드 수 */
   records: number
   /** 실서버 정제 샤드 상태. undefined면 목 시드 데이터 */
-  cleanseStatus?: 'pending' | 'running' | 'completed' | 'failed'
+  cleanseStatus?: 'pending' | 'running' | 'retry_wait' | 'completed' | 'failed'
   /** 실서버 step별 정제 카운터 (해당 사일로 샤드분) */
   stepCounters?: Record<string, number>
 }
@@ -201,6 +201,15 @@ export interface CleaningJobSummary {
   /** step별 합산 카운터 (예: {drop_nulls: 20}) */
   counters: Record<string, number>
   updatedAt: string
+  scheduledAt?: string | null
+  intervalSeconds?: number | null
+  dependsOn?: string[]
+  occurrence?: number
+  generation?: number
+  progress?: number
+  attempts?: string
+  errors?: string[]
+  events?: Array<{ event_id: string; message: string; at: string; kind: string }>
 }
 
 // --- 6.5 배치 스케줄러 · 데이터 파이프라인 ---

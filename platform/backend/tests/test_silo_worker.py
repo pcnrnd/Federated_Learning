@@ -224,6 +224,9 @@ class _RecordingClient:
     def __init__(self) -> None:
         self.pushed: dict = {}
 
+    def get_round(self, round_id):
+        return {"round_id": round_id}
+
     def push_parameters(self, round_id, sample_count, parameters, *,
                         aggregated_from=None, **_kw):
         self.pushed = {
@@ -339,6 +342,9 @@ def test_flat_train_path_sends_no_aggregated_from(monkeypatch, capsys):
     captured: dict = {}
 
     class _FlatClient:
+        def get_round(self, round_id):
+            return {"round_id": round_id}
+
         def push_parameters(self, round_id, sample_count, parameters, **kwargs):
             captured.update(
                 {"sample_count": sample_count, "kwargs": kwargs}

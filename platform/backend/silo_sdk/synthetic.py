@@ -222,9 +222,11 @@ def write_sources(silo_id: str, data_dir: str | Path) -> dict[str, Path]:
 
 
 def ensure_sources(silo_id: str, data_dir: str | Path) -> dict[str, Path]:
-    """원천 파일이 모두 있으면 그대로 두고, 하나라도 없으면 새로 쓴다."""
+    """빈 디렉터리만 fixture 초기화. 부분 원천을 묵시적으로 덮어쓰지 않는다."""
     base = Path(data_dir)
     paths = {name: base / fname for name, fname in SOURCE_FILES.items()}
     if all(p.is_file() for p in paths.values()):
         return paths
+    if any(p.exists() for p in paths.values()):
+        raise FileNotFoundError("일부 로컬 원천이 없습니다. 기존 파일은 보존했습니다")
     return write_sources(silo_id, base)

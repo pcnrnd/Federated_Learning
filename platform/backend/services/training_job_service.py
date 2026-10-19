@@ -90,7 +90,7 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
     get_model(request.model_name, request.version)
     silo_group_service.get_group(request.group_id)
     if request.cleaning_job_id:
-        cleaning_job_service.get_job(request.cleaning_job_id)  # 없으면 404
+        cleaning_job_service.get_job(request.cleaning_job_id)  # 예약은 허용, 실행 시 성공 출력 검사
 
     now = _now_iso()
     job = TrainingJob(
@@ -287,6 +287,14 @@ def tick(max_concurrent_rounds: int = DEFAULT_MAX_CONCURRENT_ROUNDS) -> list[str
             continue
         if not _is_due(job):
             continue
+        if job.cleaning_job_id:
+            from services.cleaning_execution import require_training_output
+            try:
+                require_training_output(job.cleaning_job_id)
+            except HTTPException as exc:
+                # 대기/실패 선행은 실제 학습 라운드를 만들거나 실패 횟수를 소비하지 않는다.
+                _update_job(job.job_id, lambda fresh: fresh.model_copy(update={"error": str(exc.detail)}))
+                continue
         # 자원 게이트 — 그룹 멤버 중 한 노드라도 임계값 초과면 다음 라운드 보류
         try:
             group = silo_group_service.get_group(job.group_id)

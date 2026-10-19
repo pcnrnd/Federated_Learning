@@ -57,7 +57,7 @@ class TrainingRoundCreate(BaseModel):
     min_contributions: int = Field(default=2, ge=1, description="집계 시작 최소 기여수")
     notes: str = ""
     cleaning_job_id: str | None = Field(
-        default=None, description="학습 입력을 만든 정제 작업 — 사일로가 그 레시피로 정제해 학습"
+        default=None, description="학습 입력을 만든 성공 정제 작업 — 보존 출력 스냅샷 사용"
     )
 
 
@@ -133,6 +133,7 @@ class TrainingRound(BaseModel):
     # 사일로별 정제 통계 — 정제 전후 행 수·학습 오차 (레시피로 정제해 학습한 기여만)
     cleaning_stats: dict[str, dict[str, float | int]] = Field(default_factory=dict)
     cleaning_job_id: str | None = None  # 학습 입력을 만든 정제 작업 (None = 연결 없음)
+    cleaning_snapshot: dict[str, dict[str, str | int | None]] | None = None
 
 
 class AggregateResult(BaseModel):

@@ -12,7 +12,8 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Iterable, Callable
 
 from . import integration
 from .integration import CleaningError
@@ -211,6 +212,9 @@ def apply_recipe(
     steps: list[dict[str, Any]],
     *,
     mapping: dict[str, Any] | None = None,
+    partitions: int = 1,
+    parallelism: int = 1,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> tuple[list[Row], dict[str, int]]:
     """레시피 step 리스트를 순차 적용. (cleaned_rows, 카운터) 반환.
 
@@ -227,13 +231,19 @@ def apply_recipe(
     else:
         tables, current = {"rows": list(data)}, "rows"
     counters: dict[str, int] = {}
-    for step in steps:
+    for step_index, step in enumerate(steps):
         step_type = step["type"]
         params = step.get("params", {})
         if step_type in _MULTI_SOURCE_STEPS:
             mapping = integration.require_mapping(mapping, step_type)
-            _merge(counters, _MULTI_SOURCE_STEPS[step_type](tables, params, mapping))
+            if step_type == "map_schema" and partitions > 1:
+                _merge(counters, _parallel_map(tables, params, mapping, partitions, parallelism))
+            else:
+                # 키 결합/중복/충돌 해소는 전체 표 barrier에서 실행해 serial 의미를 유지한다.
+                _merge(counters, _MULTI_SOURCE_STEPS[step_type](tables, params, mapping))
             current = params.get("into", current)
+            if on_progress:
+                on_progress(step_index + 1, len(steps), step_type)
             continue
         if step_type == "validate_schema":
             mapping = integration.require_mapping(mapping, step_type)
@@ -241,13 +251,48 @@ def apply_recipe(
             rows = _current(tables, current, step_type)
             tables[current], extra = integration.validate_schema(rows, mapping)
             _merge(counters, extra)
+            if on_progress:
+                on_progress(step_index + 1, len(steps), step_type)
             continue
         if step_type not in _SINGLE_TABLE_STEPS:
             raise ValueError(f"지원하지 않는 step: {step_type}")
         rows = _current(tables, current, step_type)
-        tables[current], n = _SINGLE_TABLE_STEPS[step_type](rows, params)
+        if partitions > 1 and step_type not in ("normalize", "dedupe"):
+            with ThreadPoolExecutor(max_workers=max(1, min(parallelism, 8))) as pool:
+                results = list(pool.map(lambda chunk: _SINGLE_TABLE_STEPS[step_type](chunk, params),
+                                        _partitions(rows, partitions)))
+            tables[current] = [row for chunk, _ in results for row in chunk]
+            n = sum(count for _, count in results)
+        else:
+            tables[current], n = _SINGLE_TABLE_STEPS[step_type](rows, params)
         counters[step_type] = counters.get(step_type, 0) + n
+        if on_progress:
+            on_progress(step_index + 1, len(steps), step_type)
     return _current(tables, current, "결과"), counters
+
+
+def _partitions(rows: list[Row], count: int) -> list[list[Row]]:
+    """안정된 원래 행 순서/구간. 키를 사용하는 전역 단계는 이 분할에 적용하지 않는다."""
+    width = max(1, math.ceil(len(rows) / max(1, min(count, 32))))
+    return [rows[i:i + width] for i in range(0, len(rows), width)] or [[]]
+
+
+def _parallel_map(tables, params, mapping, partitions, parallelism):
+    def convert(item):
+        source, rows = item
+        local = {source: rows}
+        counts = integration.map_schema(local, {"sources": [source]}, mapping)
+        return source, local[source], counts
+    work = [(source, chunk) for source in params["sources"]
+            for chunk in _partitions(integration.require_table(tables, source), partitions)]
+    combined = {source: [] for source in params["sources"]}
+    counters: dict[str, int] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(parallelism, 8))) as pool:
+        for source, rows, extra in pool.map(convert, work):
+            combined[source].extend(rows)
+            _merge(counters, extra)
+    tables.update(combined)
+    return counters
 
 
 def _current(tables: dict[str, list[Row]], current: str | None, step_type: str) -> list[Row]:

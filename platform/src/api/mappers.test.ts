@@ -185,6 +185,19 @@ const cleaningJob = (overrides: Partial<CleaningJobApi> = {}): CleaningJobApi =>
 })
 
 describe('mapCleaningJobs', () => {
+  test('uses real stage progress, retry status, partitions and distinct registered silo identities', () => {
+    const input = cleaningJob({ status: 'running', partitions: 4, occurrence: 2, generation: 1,
+      depends_on: ['pre'], events: [{ event_id: 'failed:1', kind: 'failed', at: 'now', message: '최종 실패' }],
+      shards: [{ shard_index: 0, silo_id: 'silo-1', status: 'running', rows_in: 0, rows_out: 0,
+        step_counters: {}, processed_units: 2, total_units: 4, attempt: 1 },
+      { shard_index: 1, silo_id: 'silo-01', status: 'retry_wait', rows_in: 0, rows_out: 0,
+        step_counters: {}, processed_units: 0, total_units: 4, attempt: 2, error: '일시 실패' }] })
+    const result = mapCleaningJobs([input])
+    expect(Object.keys(result.dataBySilo)).toHaveLength(2)
+    expect(Object.values(result.dataBySilo).map((s) => s.cleansePct).sort()).toEqual([0, 50])
+    expect(Object.values(result.dataBySilo).every((s) => s.shardCount === 4)).toBe(true)
+    expect(result.jobs[0]).toMatchObject({ progress: 25, occurrence: 2, generation: 1, dependsOn: ['pre'], errors: ['silo-01: 일시 실패'], events: input.events })
+  })
   test('maps shard status/counters into per-silo data and job summaries', () => {
     const { dataBySilo, jobs } = mapCleaningJobs([cleaningJob()])
 
@@ -197,7 +210,7 @@ describe('mapCleaningJobs', () => {
     })
     expect(dataBySilo[2]).toMatchObject({ cleansePct: 0, cleanseStatus: 'running' })
 
-    expect(jobs).toEqual([
+    expect(jobs).toMatchObject([
       {
         jobId: 'job-1',
         recipe: 'basic@1.0.0',
