@@ -315,7 +315,7 @@ export function VisualizationView() {
   if (!isLive) {
     return (
       <div className="tab-pane">
-        <VizCard icon="fa-chart-column" title="데이터 시각화" desc="Federated learning visualizations from live server data.">
+        <VizCard icon="fa-chart-column" title="연합 학습 분석" desc="Federated learning visualizations from live server data.">
           <Empty>
             {mockEnabled
               ? '설정에서 「목 데이터 시뮬레이션」을 끄면 서버 실측 데이터로 시각화가 표시됩니다.'

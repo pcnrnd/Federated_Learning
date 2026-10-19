@@ -5,15 +5,25 @@ service ssh start
 
 # 2. Docker 데몬 시작 (백그라운드)
 # - host 설정을 통해 내부 socket과 외부 TCP 포트(2375) 모두 엽니다.
+# - 강제 종료(exit 137)된 컨테이너를 docker start 하면 이전 pid 파일이 남아 있고, 새 컨테이너에서
+#   같은 PID를 다른 프로세스가 쓰면 dockerd가 "still running"으로 시작을 거부한다.
+#   컨테이너 시작 직후엔 dockerd·containerd가 아직 없으므로 무조건 지운다.
+rm -f /var/run/docker.pid /var/run/docker/containerd/containerd.pid
 dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 &
 
-# 3. Docker가 완전히 켜질 때까지 잠시 대기
+# 3. Docker가 완전히 켜질 때까지 대기 — 상한을 넘기면 MinIO 없이 수집기 기동으로 넘어간다
+DOCKERD_WAIT_TIMEOUT="${DOCKERD_WAIT_TIMEOUT:-120}"
 echo "Waiting for Docker daemon to start..."
+dockerd_deadline=$((SECONDS + DOCKERD_WAIT_TIMEOUT))
 while (! docker stats --no-stream > /dev/null 2>&1); do
+  if [ "$SECONDS" -ge "$dockerd_deadline" ]; then
+    echo "Error: dockerd did not respond within ${DOCKERD_WAIT_TIMEOUT}s — check 'docker logs' and /var/run/docker.pid; continuing without Docker" >&2
+    break
+  fi
   # Docker가 아직 안 켜졌으면 1초 대기
   sleep 1
 done
-echo "Docker daemon started!"
+docker info > /dev/null 2>&1 && echo "Docker daemon started!"
 
 # 4. MinIO 설치 및 실행 (Silo 6)
 SILO_NUM=6
