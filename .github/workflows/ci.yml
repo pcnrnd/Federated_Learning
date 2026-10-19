@@ -1,7 +1,7 @@
 # GitHub Actions — 연합컴퓨팅 플랫폼 CI
 #
 # 백엔드(platform/backend, FastAPI)와 프론트엔드(platform/, Vite+React) 두 갈래.
-# 게이트: pytest(커버리지 ≥80%) · 스모크 · ruff check · tsc · vitest · build.
+# 게이트: pytest(커버리지 ≥80%) · 스모크 · ruff check · tsc · vitest · build · 사일로 스크립트 bash -n·shellcheck.
 # `ruff format --check`는 게이트에서 제외 — 전 파일 일괄 포맷은 diff 추적성을 해치므로
 # 별도 결정 후 도입한다 (platform/backend/ci/ruff.toml 참조).
 
@@ -18,6 +18,7 @@ on:
       - 'platform/tsconfig*.json'
       - 'platform/vite.config.ts'
       - 'platform/compose.yaml'
+      - 'platform/silo/**'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main, master]
@@ -29,6 +30,7 @@ on:
       - 'platform/tsconfig*.json'
       - 'platform/vite.config.ts'
       - 'platform/compose.yaml'
+      - 'platform/silo/**'
       - '.github/workflows/ci.yml'
 
 jobs:
@@ -132,3 +134,16 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  silo-scripts:
+    name: silo entrypoint syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # bash -n 은 파일을 하나씩만 검사한다(뒤 인자는 $1로 넘어감).
+      - name: bash -n
+        run: for f in platform/silo/*.sh; do echo "$f"; bash -n "$f"; done
+
+      - name: shellcheck (error)
+        run: shellcheck -S error platform/silo/*.sh
