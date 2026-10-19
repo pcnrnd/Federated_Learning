@@ -62,12 +62,12 @@ def _common_labels(
     strategy: str,
 ) -> dict[str, str]:
     labels = {
+        **request.labels,
         "fed.deployment_id": deployment_id,
         "fed.model": request.model_name,
         "fed.version": request.version,
         "fed.strategy": strategy,
     }
-    labels.update(request.labels)
     return labels
 
 

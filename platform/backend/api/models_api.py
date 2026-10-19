@@ -5,7 +5,8 @@ from fastapi import APIRouter, Header, Response
 
 from models.common_schemas import OkResponse
 from models.packaging_schemas import (
-    ModelEntry, ModelIdentityRequest, ModelRegisterRequest, RidgePredictRequest, TrainingModelRegisterRequest,
+    ModelEntry, ModelIdentityRequest, ModelRegisterRequest, RidgeIdentityPredictRequest,
+    RidgePredictRequest, TrainingModelRegisterRequest,
 )
 from services import idempotency, model_registry, training_model_service
 
@@ -45,6 +46,11 @@ def archive_identity(payload: ModelIdentityRequest):
 def delete_identity(payload: ModelIdentityRequest):
     model_registry.delete_model(payload.name, payload.version)
     return OkResponse(ok=True)
+
+
+@router.post("/predict")
+def predict_identity(payload: RidgeIdentityPredictRequest):
+    return model_registry.predict_model(payload.name, payload.version, payload.inputs)
 
 
 @router.get("/{name}/versions", response_model=list[ModelEntry])

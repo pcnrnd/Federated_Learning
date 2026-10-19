@@ -177,9 +177,9 @@ def _check_references(name, version):
     for identity, value in deployments.items():
         referenced = value.get("status") in ("running", "pending") or identity in rollback_ids
         # 실패 응답이어도 실제 컨테이너가 남은 배포는 삭제/보관으로 숨기지 않는다.
-        referenced = referenced or (value.get("status") == "failed" and bool(value.get("container_map")))
+        referenced = referenced or bool(value.get("container_map")) or value.get("cleanup_pending") or value.get("launch_pending")
         if referenced and value.get("model_name") == name and value.get("version") == version:
-            raise HTTPException(status_code=409, detail="실행 중이거나 rollback에 참조된 모델 버전입니다")
+            raise HTTPException(status_code=409, detail="실행/미확인 정리 또는 rollback에 참조된 모델 버전입니다")
     entry = get_model(name, version)
     from services.packaging_service import get_package
     if entry.package and get_package(name, version).status == "building":
