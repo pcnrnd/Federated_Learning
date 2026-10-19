@@ -11,6 +11,13 @@ import pytest
 from services import ridge_artifacts as artifacts
 from silo_sdk import training_protocol as wire
 
+@pytest.fixture
+def artifact_root(tmp_path):
+    # 공용 conftest의 config와 artifact 파일의 게시/부재 단언을 서로 분리한다.
+    directory = tmp_path / "artifacts"
+    directory.mkdir()
+    return directory
+
 
 @pytest.fixture
 def completed_result():
@@ -38,9 +45,9 @@ def completed_result():
     return result
 
 
-def test_roundtrip_preserves_actual_weights_and_g3_identity(tmp_path, completed_result):
-    stored = artifacts.save_artifact(tmp_path, completed_result, version="1.0.1")
-    reloaded = artifacts.load_artifact(tmp_path, stored.artifact_id,
+def test_roundtrip_preserves_actual_weights_and_g3_identity(artifact_root, completed_result):
+    stored = artifacts.save_artifact(artifact_root, completed_result, version="1.0.1")
+    reloaded = artifacts.load_artifact(artifact_root, stored.artifact_id,
                                       expected_manifest_sha256=stored.manifest_sha256)
     assert reloaded.parameters == (2.0, -3.0, 4.0, 5.0)
     assert reloaded.features == ("x1", "x2", "x3")
@@ -52,64 +59,64 @@ def test_roundtrip_preserves_actual_weights_and_g3_identity(tmp_path, completed_
     snapshot = reloaded.manifest
     snapshot["source_result"]["parameters"][0] = 999
     assert reloaded.manifest["source_result"]["parameters"][0] == 2.0
-    assert not list(tmp_path.glob(".ridge-stage-*"))
+    assert not list(artifact_root.glob(".ridge-stage-*"))
 
 
-def test_real_prediction_uses_ordered_features_weights_and_bias(tmp_path, completed_result):
-    model = artifacts.save_artifact(tmp_path, completed_result)
+def test_real_prediction_uses_ordered_features_weights_and_bias(artifact_root, completed_result):
+    model = artifacts.save_artifact(artifact_root, completed_result)
     # 독립 손계산: 2*1-3*2+4*3+5=13, 2*(-1)-3*0+4*2+5=11.
     assert artifacts.predict(model, [[1, 2, 3], [-1, 0, 2]]) == [13.0, 11.0]
     assert artifacts.predict(model, [{"x3": 3, "x1": 1, "x2": 2}]) == [13.0]
     assert artifacts.predict(model, [[0, 0, 0]]) == [5.0]
 
 
-def test_duplicate_completion_is_immutable_and_ignores_origin_order_and_delivery_time(tmp_path, completed_result):
-    first = artifacts.save_artifact(tmp_path, completed_result)
+def test_duplicate_completion_is_immutable_and_ignores_origin_order_and_delivery_time(artifact_root, completed_result):
+    first = artifacts.save_artifact(artifact_root, completed_result)
     files = {path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in first.directory.iterdir()}
     duplicate = copy.deepcopy(completed_result)
     duplicate["origins"].reverse()
     duplicate["aggregated_at"] = "later-delivery"
-    again = artifacts.save_artifact(tmp_path, duplicate)
+    again = artifacts.save_artifact(artifact_root, duplicate)
     assert again.artifact_id == first.artifact_id
     assert {path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in again.directory.iterdir()} == files
 
 
-def test_concurrent_same_completion_publishes_one_artifact(tmp_path, completed_result):
+def test_concurrent_same_completion_publishes_one_artifact(artifact_root, completed_result):
     with ThreadPoolExecutor(max_workers=4) as executor:
-        values = list(executor.map(lambda _: artifacts.save_artifact(tmp_path, completed_result), range(8)))
+        values = list(executor.map(lambda _: artifacts.save_artifact(artifact_root, completed_result), range(8)))
     assert len({value.artifact_id for value in values}) == 1
-    assert [path.name for path in tmp_path.iterdir()] == [values[0].artifact_id]
+    assert [path.name for path in artifact_root.iterdir()] == [values[0].artifact_id]
 
 
 @pytest.mark.parametrize("filename", ["weights.json", "manifest.json"])
-def test_missing_or_corrupt_files_are_not_silently_repaired(tmp_path, completed_result, filename):
-    model = artifacts.save_artifact(tmp_path, completed_result)
+def test_missing_or_corrupt_files_are_not_silently_repaired(artifact_root, completed_result, filename):
+    model = artifacts.save_artifact(artifact_root, completed_result)
     path = model.directory / filename
     path.unlink()
     with pytest.raises(FileNotFoundError):
-        artifacts.load_artifact(tmp_path, model.artifact_id)
+        artifacts.load_artifact(artifact_root, model.artifact_id)
     with pytest.raises(FileNotFoundError):
-        artifacts.save_artifact(tmp_path, completed_result)
+        artifacts.save_artifact(artifact_root, completed_result)
     path.write_bytes(b"corrupt")
     with pytest.raises(ValueError):
-        artifacts.load_artifact(tmp_path, model.artifact_id)
+        artifacts.load_artifact(artifact_root, model.artifact_id)
     assert path.read_bytes() == b"corrupt"
 
 
-def test_expected_manifest_checksum_is_required_to_match_registry_reference(tmp_path, completed_result):
-    model = artifacts.save_artifact(tmp_path, completed_result)
+def test_expected_manifest_checksum_is_required_to_match_registry_reference(artifact_root, completed_result):
+    model = artifacts.save_artifact(artifact_root, completed_result)
     with pytest.raises(ValueError, match="manifest checksum"):
-        artifacts.load_artifact(tmp_path, model.artifact_id, expected_manifest_sha256="0" * 64)
+        artifacts.load_artifact(artifact_root, model.artifact_id, expected_manifest_sha256="0" * 64)
 
 
-def test_empty_weights_never_become_placeholder_success(tmp_path, completed_result):
-    model = artifacts.save_artifact(tmp_path, completed_result)
+def test_empty_weights_never_become_placeholder_success(artifact_root, completed_result):
+    model = artifacts.save_artifact(artifact_root, completed_result)
     model.weights_path.write_bytes(b"")
     with pytest.raises(ValueError, match="weights"):
-        artifacts.load_artifact(tmp_path, model.artifact_id)
+        artifacts.load_artifact(artifact_root, model.artifact_id)
 
 
-def test_failed_manifest_write_publishes_nothing_then_retry_recovers(tmp_path, completed_result, monkeypatch):
+def test_failed_manifest_write_publishes_nothing_then_retry_recovers(artifact_root, completed_result, monkeypatch):
     original = artifacts._write
     def fail_manifest(path, content):
         if path.name == "manifest.json":
@@ -117,30 +124,30 @@ def test_failed_manifest_write_publishes_nothing_then_retry_recovers(tmp_path, c
         original(path, content)
     monkeypatch.setattr(artifacts, "_write", fail_manifest)
     with pytest.raises(OSError, match="injected"):
-        artifacts.save_artifact(tmp_path, completed_result)
-    assert list(tmp_path.iterdir()) == []
+        artifacts.save_artifact(artifact_root, completed_result)
+    assert list(artifact_root.iterdir()) == []
     monkeypatch.setattr(artifacts, "_write", original)
-    recovered = artifacts.save_artifact(tmp_path, completed_result)
+    recovered = artifacts.save_artifact(artifact_root, completed_result)
     assert artifacts.predict(recovered, [[0, 0, 0]]) == [5.0]
 
 
-def test_failed_rename_does_not_publish_partial_artifact(tmp_path, completed_result, monkeypatch):
+def test_failed_rename_does_not_publish_partial_artifact(artifact_root, completed_result, monkeypatch):
     original = artifacts.os.rename
     def fail_rename(_source, _destination):
         raise OSError("injected before publication")
     monkeypatch.setattr(artifacts.os, "rename", fail_rename)
     with pytest.raises(OSError, match="injected"):
-        artifacts.save_artifact(tmp_path, completed_result)
-    assert list(tmp_path.iterdir()) == []
+        artifacts.save_artifact(artifact_root, completed_result)
+    assert list(artifact_root.iterdir()) == []
     monkeypatch.setattr(artifacts.os, "rename", original)
-    assert artifacts.save_artifact(tmp_path, completed_result).weights_path.is_file()
+    assert artifacts.save_artifact(artifact_root, completed_result).weights_path.is_file()
 
 
-def test_abandoned_staging_is_not_loaded_or_overwritten(tmp_path, completed_result):
-    abandoned = tmp_path / ".ridge-stage-abandoned"
+def test_abandoned_staging_is_not_loaded_or_overwritten(artifact_root, completed_result):
+    abandoned = artifact_root / ".ridge-stage-abandoned"
     abandoned.mkdir()
     (abandoned / "weights.json").write_bytes(b"partial")
-    model = artifacts.save_artifact(tmp_path, completed_result)
+    model = artifacts.save_artifact(artifact_root, completed_result)
     assert (abandoned / "weights.json").read_bytes() == b"partial"
     assert model.directory != abandoned
 
@@ -163,11 +170,11 @@ def test_abandoned_staging_is_not_loaded_or_overwritten(tmp_path, completed_resu
     lambda r: r["learning"].update(step_size=0),
     lambda r: r["learning"].update(features=["x2", "x1", "x3"]),
 ])
-def test_invalid_or_unbound_results_fail_before_any_file_write(tmp_path, completed_result, change):
+def test_invalid_or_unbound_results_fail_before_any_file_write(artifact_root, completed_result, change):
     change(completed_result)
     with pytest.raises(ValueError):
-        artifacts.save_artifact(tmp_path, completed_result)
-    assert list(tmp_path.iterdir()) == []
+        artifacts.save_artifact(artifact_root, completed_result)
+    assert list(artifact_root.iterdir()) == []
 
 
 @pytest.mark.parametrize("inputs", [
@@ -175,29 +182,29 @@ def test_invalid_or_unbound_results_fail_before_any_file_write(tmp_path, complet
     [[float("nan"), 2, 3]], [[1, float("inf"), 3]], [[None, 2, 3]],
     [{"x1": 1, "x2": 2}], [{"x1": 1, "x2": 2, "x3": 3, "y": 4}],
 ])
-def test_prediction_rejects_invalid_or_mismatched_inputs(tmp_path, completed_result, inputs):
-    model = artifacts.save_artifact(tmp_path, completed_result)
+def test_prediction_rejects_invalid_or_mismatched_inputs(artifact_root, completed_result, inputs):
+    model = artifacts.save_artifact(artifact_root, completed_result)
     with pytest.raises(ValueError):
         artifacts.predict(model, inputs)
 
 
-def test_prediction_overflow_fails_with_no_raw_value_in_error(tmp_path, completed_result):
-    model = artifacts.save_artifact(tmp_path, completed_result)
+def test_prediction_overflow_fails_with_no_raw_value_in_error(artifact_root, completed_result):
+    model = artifacts.save_artifact(artifact_root, completed_result)
     with pytest.raises(ValueError) as failure:
         artifacts.predict(model, [[1e308, -1e308, 1e308]])
     assert "1e+308" not in str(failure.value)
 
 
 @pytest.mark.parametrize("identity", ["../outside", "a/../b", "x"*64, "A"*64, ""])
-def test_artifact_lookup_rejects_path_escape(tmp_path, identity):
+def test_artifact_lookup_rejects_path_escape(artifact_root, identity):
     with pytest.raises(ValueError):
-        artifacts.load_artifact(tmp_path, identity)
+        artifacts.load_artifact(artifact_root, identity)
 
 
-def test_duplicate_json_fields_are_rejected(tmp_path, completed_result):
-    model = artifacts.save_artifact(tmp_path, completed_result)
+def test_duplicate_json_fields_are_rejected(artifact_root, completed_result):
+    model = artifacts.save_artifact(artifact_root, completed_result)
     path = model.directory / "manifest.json"
     text = path.read_text()
     path.write_text('{"artifact_id":"'+model.artifact_id+'",'+text[1:])
     with pytest.raises(ValueError, match="중복 JSON"):
-        artifacts.load_artifact(tmp_path, model.artifact_id)
+        artifacts.load_artifact(artifact_root, model.artifact_id)
