@@ -111,12 +111,15 @@ export function mapModelsToVersions(
       id: modelKey(m.name, m.version),
       project: m.name,
       version: m.version,
-      status: running.has(modelKey(m.name, m.version)) ? 'deployed' : 'experimental',
+      status: m.status === 'archived' ? 'archived' : running.has(modelKey(m.name, m.version)) ? 'deployed' : 'experimental',
       // 서버 metadata.accuracy는 0~1 스케일 가정 (지표 API와 동일) → UI %
       accuracy: Math.round((metaNumber(meta, 'accuracy') ?? 0) * 10000) / 100,
       algorithm,
       rounds: metaNumber(meta, 'rounds') ?? 0,
       createdAt: m.created_at.slice(0, 10),
+      ...(typeof meta.artifact_id === 'string' ? { artifactId: meta.artifact_id } : {}),
+      ...(typeof meta.result_id === 'string' ? { resultId: meta.result_id } : {}),
+      ...(typeof meta.weights_sha256 === 'string' ? { weightsChecksum: meta.weights_sha256 } : {}),
       ...note,
     }
   })

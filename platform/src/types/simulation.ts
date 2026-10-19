@@ -102,10 +102,21 @@ export interface ModelVersion {
   rounds: number
   createdAt: string
   note?: string
+  artifactId?: string
+  resultId?: string
+  weightsChecksum?: string
+}
+
+export interface LiveModelDraft {
+  mode: 'training' | 'artifact'
+  round_id: string
+  version: string
+  name: string
+  weights_path: string
 }
 
 /** 모델 패키징(컨테이너화) 진행 상태 */
-export type PackageState = 'idle' | 'building' | 'built'
+export type PackageState = 'idle' | 'building' | 'built' | 'failed' | 'unknown'
 
 /** 배포 전략: 일괄 / 실시간 / 에지 */
 export type DeployStrategy = 'batch' | 'realtime' | 'edge'
@@ -119,6 +130,10 @@ export interface ModelPackage {
   runtime: string
   imageTag: string
   builtAt?: string
+  imageDigest?: string
+  artifactId?: string
+  weightsChecksum?: string
+  error?: string
 }
 
 export interface Deployment {

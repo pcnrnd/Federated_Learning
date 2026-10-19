@@ -7,6 +7,7 @@ import {
   type DeploymentEntryApi,
   type MetricSample,
   type ModelEntryApi,
+  type PackageRecordApi,
   type Paginated,
   type ResourceLimit,
   type ResourceUsageSummary,
@@ -54,8 +55,9 @@ export function useLivePolling(): void {
       inFlight = true
       const store = useSimulationStore.getState()
       const siloEpoch = useSiloStore.getState().mutationEpoch
+      const modelEpoch = useModelStore.getState().mutationEpoch
       try {
-        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs, models, deployments, registrations, groups] = await Promise.all([
+        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs, models, deployments, registrations, groups, packages] = await Promise.all([
           apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
           apiGet<ResourceLimit[]>('/api/resources/limits'),
           apiGet<Paginated<MetricSample>>(
@@ -73,6 +75,7 @@ export function useLivePolling(): void {
           apiGet<DeploymentEntryApi[]>('/api/deployments'),
           apiGet<SiloRegistrationApi[]>('/api/silos'),
           apiGet<SiloGroupApi[]>('/api/silo-groups'),
+          apiGet<PackageRecordApi[]>('/api/packaging'),
         ])
         if (cancelled) return
 
@@ -83,9 +86,9 @@ export function useLivePolling(): void {
         const cleaning = mapCleaningJobs(cleaningJobs)
         useDataStore.getState().applyLiveCleaning(cleaning.dataBySilo, cleaning.jobs)
 
-        useModelStore
-          .getState()
-          .applyLiveModels(mapModelsToVersions(models, deployments), mapApiDeployments(deployments))
+        if (modelEpoch === useModelStore.getState().mutationEpoch) {
+          useModelStore.getState().applyLiveModels(mapModelsToVersions(models, deployments), mapApiDeployments(deployments), packages)
+        }
 
         const chartPoints = mapMetricsToChartPoints(accuracy.items)
         const monitorPoints = mapMetricsToMonitorPoints(throughput.items, latency.items)

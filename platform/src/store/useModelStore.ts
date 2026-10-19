@@ -1,11 +1,17 @@
 import { create } from 'zustand'
 import {
+  apiGet,
+  apiMutation,
   apiPost,
   isLiveConfigured,
   type DeploymentEntryApi,
   type DeploymentRequestApi,
+  type ModelEntryApi,
+  type PackageRecordApi,
+  type TrainingRoundSummary,
 } from '@/api/client'
-import { parseModelKey } from '@/api/mappers'
+import { mapApiDeployments, mapModelsToVersions, parseModelKey } from '@/api/mappers'
+import { liveModelRequest, mapLivePackages } from '@/lib/liveModels'
 import { DEPLOY_STRATEGY_META, DEPLOY_TIMINGS, RUNTIME_OPTIONS } from '@/constants/simulation'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
@@ -18,6 +24,7 @@ import type {
   ModelPackage,
   ModelStatus,
   ModelVersion,
+  LiveModelDraft,
 } from '@/types/simulation'
 
 /** 모델 생성 폼에서 선택 가능한 프로젝트 목록 (목 데이터) */
@@ -55,6 +62,37 @@ function logToConsole(kind: LogKind, message: string): void {
 /** 라이브 모드 여부 — 목 off + VITE_API_BASE 설정 */
 function isLive(): boolean {
   return !useSimulationStore.getState().mockEnabled && isLiveConfigured()
+}
+
+async function refreshLiveCatalog(): Promise<void> {
+  const epoch = useModelStore.getState().mutationEpoch
+  const [models, deployments, packages] = await Promise.all([
+    apiGet<ModelEntryApi[]>('/api/models'), apiGet<DeploymentEntryApi[]>('/api/deployments'),
+    apiGet<PackageRecordApi[]>('/api/packaging'),
+  ])
+  if (isLive() && epoch === useModelStore.getState().mutationEpoch) {
+    useModelStore.getState().applyLiveModels(mapModelsToVersions(models, deployments), mapApiDeployments(deployments), packages)
+  }
+}
+
+async function liveModelMutation(operation: () => Promise<unknown>, label: string): Promise<boolean> {
+  if (!isLive() || useModelStore.getState().liveModelPending) return false
+  useModelStore.setState((state) => ({ liveModelPending: true, liveModelError: null, mutationEpoch: state.mutationEpoch + 1 }))
+  try {
+    await operation()
+    useModelStore.setState((state) => ({ mutationEpoch: state.mutationEpoch + 1 }))
+    if (!isLive()) return false
+    await refreshLiveCatalog()
+    logToConsole('success', label)
+    return true
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    useModelStore.setState((state) => ({ liveModelError: detail, mutationEpoch: state.mutationEpoch + 1 }))
+    logToConsole('error', `${label} 실패 — ${detail}`)
+    return false
+  } finally {
+    useModelStore.setState({ liveModelPending: false })
+  }
 }
 
 /** 배포 대상 노드 이름 목록 — edge는 선택 사일로, 그 외 전략은 전체 사일로 */
@@ -146,6 +184,14 @@ export interface ModelStore {
   deployments: Deployment[]
   /** 패키징·배포 섹션에서 현재 선택된 대상 모델 (레지스트리에서 교차 설정) */
   deployTargetId: string | null
+  mutationEpoch: number
+  liveModelDraft: LiveModelDraft
+  liveModelResults: TrainingRoundSummary[]
+  liveModelPending: boolean
+  liveModelError: string | null
+  patchLiveModelDraft: (patch: Partial<LiveModelDraft>) => void
+  loadLiveModelResults: () => Promise<void>
+  createLiveModel: () => Promise<boolean>
 
   setProjectFilter: (filter: ProjectFilter) => void
   setDeployTarget: (id: string | null) => void
@@ -167,7 +213,7 @@ export interface ModelStore {
   /** 목 on — 초기 시드로 복원한다 */
   reseed: () => void
   /** 라이브 모드 — 서버 폴링 결과(레지스트리·배포 기록)를 반영한다 */
-  applyLiveModels: (models: ModelVersion[], deployments: Deployment[]) => void
+  applyLiveModels: (models: ModelVersion[], deployments: Deployment[], packages?: PackageRecordApi[]) => void
 }
 
 /** 단일 배포 상태를 불변 갱신 */
@@ -213,33 +259,44 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   packages: seedPackages(INITIAL_MODELS),
   deployments: [],
   deployTargetId: null,
+  mutationEpoch: 0,
+  liveModelDraft: { mode: 'training', round_id: '', version: '', name: '', weights_path: '' },
+  liveModelResults: [],
+  liveModelPending: false,
+  liveModelError: null,
+
+  patchLiveModelDraft: (patch) => set((state) => ({ liveModelDraft: { ...state.liveModelDraft, ...patch } })),
+  loadLiveModelResults: async () => {
+    try {
+      const results = await apiGet<TrainingRoundSummary[]>('/api/training-rounds?status=completed')
+      if (isLive()) set({ liveModelResults: results.filter((round) => round.status === 'completed'
+        && round.result?.format === 'ridge-v1' && !!round.result.result_id) })
+    } catch (error) {
+      set({ liveModelError: error instanceof Error ? error.message : String(error) })
+    }
+  },
+  createLiveModel: async () => {
+    try {
+      const request = liveModelRequest(get().liveModelDraft)
+      return await liveModelMutation(() => apiPost(request.endpoint, request.body), '실제 모델 등록 반영')
+    } catch (error) {
+      set({ liveModelError: error instanceof Error ? error.message : String(error) })
+      return false
+    }
+  },
 
   setProjectFilter: (projectFilter) => set({ projectFilter }),
   setDeployTarget: (deployTargetId) => set({ deployTargetId }),
 
   clearAll: () =>
-    set({ models: [], packages: {}, deployments: [], deployTargetId: null }),
+    set((state) => ({ models: [], packages: {}, deployments: [], deployTargetId: null,
+      liveModelResults: [], liveModelError: null, mutationEpoch: state.mutationEpoch + 1 })),
 
-  applyLiveModels: (models, deployments) =>
+  applyLiveModels: (models, deployments, packages = []) =>
     set((state) => ({
       models,
       deployments,
-      // 실서버 배포는 백엔드가 이미지 태그를 스스로 보정하므로 전 모델을 '패키징 완료'로 취급
-      packages: Object.fromEntries(
-        models.map((m) => {
-          const { name, version } = parseModelKey(m.id)
-          return [
-            m.id,
-            {
-              modelId: m.id,
-              state: 'built' as const,
-              runtime: RUNTIME_OPTIONS[0],
-              imageTag: `fed-model-${name}:${version}`,
-              builtAt: m.createdAt,
-            },
-          ]
-        }),
-      ),
+      packages: mapLivePackages(packages),
       // 선택 모델이 서버 목록에서 사라졌으면 해제
       deployTargetId: models.some((m) => m.id === state.deployTargetId)
         ? state.deployTargetId
@@ -304,7 +361,8 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     const target = get().models.find((m) => m.id === id)
     if (!target) return
     if (isLive()) {
-      logToConsole('system', '실서버 모드에서는 보관 처리를 지원하지 않습니다.')
+      const { name, version } = parseModelKey(id)
+      void liveModelMutation(() => apiPost('/api/models/archive', { name, version }), '서버 모델 보관 반영')
       return
     }
     set((state) => ({
@@ -317,7 +375,8 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     const target = get().models.find((m) => m.id === id)
     if (!target) return
     if (isLive()) {
-      logToConsole('system', '실서버 모드에서는 화면 삭제를 지원하지 않습니다 — DELETE /api/models를 사용하세요.')
+      const { name, version } = parseModelKey(id)
+      void liveModelMutation(() => apiMutation('DELETE', '/api/models', { name, version }), '서버 모델 삭제 반영')
       return
     }
     set((state) => {
@@ -336,8 +395,9 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     const target = get().models.find((m) => m.id === modelId)
     if (!target) return
     if (isLive()) {
-      // 라이브 모드 패키지는 applyLiveModels가 built로 채운다 — 목 타이머로 덮어쓰지 않는다
-      logToConsole('system', '실서버 모드의 패키징은 배포 시 백엔드가 이미지 태그를 처리합니다.')
+      const { name, version } = parseModelKey(modelId)
+      void liveModelMutation(() => apiPost('/api/packaging/request',
+        { model_name: name, version, base_image: runtime }), '서버 이미지 빌드 요청 반영')
       return
     }
     const imageTag = buildImageTag(target.project, target.version)

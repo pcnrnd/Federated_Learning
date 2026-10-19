@@ -3,13 +3,26 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from functools import wraps
+from pathlib import Path
+from threading import RLock
 
 from fastapi import HTTPException
 
-from config.registry_manager import load_models, save_models
-from models.packaging_schemas import ModelEntry, ModelRegisterRequest
+from config.registry_manager import load_deployments, load_models, save_models
+from models.packaging_schemas import ModelEntry, ModelRegisterRequest, PackageRecord
+from services import ridge_artifacts
 
 logger = logging.getLogger(__name__)
+REGISTRY_LOCK = RLock()
+
+
+def _locked(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with REGISTRY_LOCK:
+            return function(*args, **kwargs)
+    return wrapped
 
 
 def _now_iso() -> str:
@@ -21,6 +34,7 @@ def _semver_tuple(version: str) -> tuple[int, int, int]:
     return (int(major), int(minor), int(patch))
 
 
+@_locked
 def list_models() -> list[ModelEntry]:
     """등록된 모든 모델/버전 평탄화 목록"""
     registry = load_models()
@@ -34,6 +48,7 @@ def list_models() -> list[ModelEntry]:
     return entries
 
 
+@_locked
 def list_versions(name: str) -> list[ModelEntry]:
     """특정 모델명의 버전 목록 (SemVer 정렬, 최신 우선)"""
     registry = load_models()
@@ -48,6 +63,7 @@ def list_versions(name: str) -> list[ModelEntry]:
     return entries
 
 
+@_locked
 def get_model(name: str, version: str) -> ModelEntry:
     """모델 버전 단건 조회"""
     registry = load_models()
@@ -59,6 +75,7 @@ def get_model(name: str, version: str) -> ModelEntry:
     return ModelEntry(name=name, version=version, **registry[name][version])
 
 
+@_locked
 def register_model(request: ModelRegisterRequest) -> ModelEntry:
     """신규 모델 버전 등록"""
     registry = load_models()
@@ -69,6 +86,13 @@ def register_model(request: ModelRegisterRequest) -> ModelEntry:
             detail=f"'{request.name}@{request.version}'은 이미 등록되어 있습니다",
         )
 
+    metadata = dict(request.metadata)
+    if request.framework == "ridge":
+        metadata.update(_ridge_metadata(request))
+        from services.training_model_service import assert_version_binding
+        assert_version_binding(request.name, request.version, metadata["result_id"])
+        if any(entry.metadata.get("result_id") == metadata["result_id"] for entry in list_models()):
+            raise HTTPException(status_code=409, detail="이 확정 학습 결과는 이미 등록되어 있습니다")
     entry = ModelEntry(
         name=request.name,
         version=request.version,
@@ -76,7 +100,7 @@ def register_model(request: ModelRegisterRequest) -> ModelEntry:
         weights_path=request.weights_path,
         input_schema=request.input_schema,
         output_schema=request.output_schema,
-        metadata=request.metadata,
+        metadata=metadata,
         created_at=_now_iso(),
     )
     payload = entry.model_dump()
@@ -88,8 +112,14 @@ def register_model(request: ModelRegisterRequest) -> ModelEntry:
     return entry
 
 
+@_locked
 def delete_model(name: str, version: str) -> None:
-    """모델 버전 제거 (배포 중인 버전은 사전 점검 필요 — 호출 측 책임)"""
+    """사용 중/복구 참조를 검사하고 삭제 의도를 먼저 영속한다. 불변 파일은 보존한다."""
+    entry = get_model(name, version)
+    _check_references(name, version)
+    if entry.framework == "ridge" and entry.metadata.get("result_id"):
+        from services.training_model_service import suppress_result
+        suppress_result(entry)
     registry = load_models()
     if name not in registry or version not in registry[name]:
         raise HTTPException(
@@ -107,3 +137,84 @@ def latest_version(name: str) -> ModelEntry:
     """SemVer 최신 버전"""
     versions = list_versions(name)
     return versions[0]
+
+
+def get_ridge_artifact(entry):
+    if entry.framework != "ridge":
+        raise HTTPException(status_code=422, detail="ridge 모델이 아닙니다")
+    path = Path(entry.weights_path)
+    try:
+        if path.name != "weights.json":
+            raise ValueError("ridge weights 경로 계약 불일치")
+        artifact = ridge_artifacts.load_artifact(path.parent.parent, path.parent.name,
+            expected_manifest_sha256=entry.metadata.get("manifest_sha256"))
+        manifest = artifact.manifest
+        if manifest["model_name"] != entry.name or manifest["version"] != entry.version:
+            raise ValueError("모델/버전과 artifact 정체성 불일치")
+        for key, actual in (("artifact_id", artifact.artifact_id), ("weights_sha256", artifact.weights_sha256),
+                            ("result_id", manifest["source_result"]["result_id"])):
+            if entry.metadata.get(key) not in (None, actual):
+                raise ValueError("등록 정체성과 실제 artifact 불일치")
+        return artifact
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="ridge 가중치/manifest가 없거나 무결성이 일치하지 않습니다") from exc
+
+
+def _ridge_metadata(request):
+    temporary = ModelEntry(**request.model_dump(), created_at=_now_iso())
+    artifact = get_ridge_artifact(temporary)
+    return dict(artifact_id=artifact.artifact_id, weights_sha256=artifact.weights_sha256,
+                manifest_sha256=artifact.manifest_sha256,
+                result_id=artifact.manifest["source_result"]["result_id"],
+                derived_from_round_id=artifact.manifest["source_result"]["round_id"],
+                features=list(artifact.features), target=artifact.target, format="ridge-v1")
+
+
+def _check_references(name, version):
+    deployments = load_deployments()
+    active = [value for value in deployments.values() if value.get("status") in ("running", "pending")]
+    rollback_ids = {value.get("previous_deployment_id") for value in active}
+    for identity, value in deployments.items():
+        referenced = value.get("status") in ("running", "pending") or identity in rollback_ids
+        # 실패 응답이어도 실제 컨테이너가 남은 배포는 삭제/보관으로 숨기지 않는다.
+        referenced = referenced or (value.get("status") == "failed" and bool(value.get("container_map")))
+        if referenced and value.get("model_name") == name and value.get("version") == version:
+            raise HTTPException(status_code=409, detail="실행 중이거나 rollback에 참조된 모델 버전입니다")
+    entry = get_model(name, version)
+    from services.packaging_service import get_package
+    if entry.package and get_package(name, version).status == "building":
+        raise HTTPException(status_code=409, detail="이미지 빌드 중인 모델 버전입니다")
+
+
+@_locked
+def archive_model(name, version):
+    _check_references(name, version)
+    registry = load_models()
+    registry[name][version]["status"] = "archived"
+    save_models(registry)
+    return get_model(name, version)
+
+
+@_locked
+def update_package(name, version, record: PackageRecord):
+    get_model(name, version)
+    if record.model_name != name or record.version != version:
+        raise ValueError("패키지 모델/버전 계약 불일치")
+    registry = load_models()
+    registry[name][version]["package"] = record.model_dump()
+    save_models(registry)
+    return record
+
+
+def predict_model(name, version, inputs):
+    entry = get_model(name, version)
+    if entry.status != "active":
+        raise HTTPException(status_code=409, detail="보관한 모델은 추론할 수 없습니다")
+    artifact = get_ridge_artifact(entry)
+    try:
+        outputs = ridge_artifacts.predict(artifact, inputs)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return dict(model=name, version=version, artifact_id=artifact.artifact_id,
+                weights_checksum=artifact.weights_sha256, result_id=artifact.manifest["source_result"]["result_id"],
+                predictions=outputs)

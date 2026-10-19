@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-Framework = Literal["pytorch", "onnx", "tensorflow"]
+Framework = Literal["pytorch", "onnx", "tensorflow", "ridge"]
 DeploymentStrategyName = Literal["realtime", "batch", "edge"]
 DeploymentStatus = Literal["pending", "running", "failed", "rolled_back", "stopped"]
 
@@ -30,6 +30,43 @@ class ModelRegisterRequest(BaseModel):
         return value
 
 
+class PackageRecord(BaseModel):
+    model_name: str
+    version: str
+    status: Literal["unbuilt", "building", "built", "failed", "unknown"] = "unbuilt"
+    package_id: str | None = None
+    image_tag: str | None = None
+    base_image: str | None = None
+    image_digest: str | None = None
+    image_size_bytes: int | None = None
+    artifact_id: str | None = None
+    weights_checksum: str | None = None
+    manifest_checksum: str | None = None
+    requested_at: str | None = None
+    built_at: str | None = None
+    error: str | None = None
+    builder_instance: str | None = None
+
+
+class TrainingModelRegisterRequest(BaseModel):
+    round_id: str = Field(..., min_length=1)
+    version: str | None = None
+
+    @field_validator("version")
+    @classmethod
+    def _check_version(cls, value):
+        return ModelRegisterRequest._check_semver(value) if value is not None else None
+
+
+class RidgePredictRequest(BaseModel):
+    inputs: list[Any] = Field(..., min_length=1)
+
+
+class ModelIdentityRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    version: str
+
+
 class ModelEntry(BaseModel):
     """모델 레지스트리 엔트리"""
 
@@ -41,6 +78,8 @@ class ModelEntry(BaseModel):
     output_schema: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str
+    status: Literal["active", "archived"] = "active"
+    package: PackageRecord | None = None
 
 
 class PackagingRequest(BaseModel):
@@ -64,6 +103,13 @@ class PackagingResult(BaseModel):
     image_tag: str
     image_size_bytes: int
     built_at: str
+    status: Literal["built"] = "built"
+    package_id: str | None = None
+    image_digest: str | None = None
+    artifact_id: str | None = None
+    weights_checksum: str | None = None
+    manifest_checksum: str | None = None
+    base_image: str | None = None
 
 
 class DeploymentRequest(BaseModel):
