@@ -32,7 +32,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import csv
 import json
 import math
@@ -44,7 +43,7 @@ import time
 from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
 from silo_sdk.resources import sample_resources
 from silo_sdk.alignment import align_rows, hash_ids, load_align_key, order_digest
-from silo_sdk.client import SiloClientError
+from silo_sdk.client import SiloClientError, is_transient_error
 from silo_sdk.edge import combine
 from silo_sdk.integration import load_sources, schema_fingerprint, CleaningError
 
@@ -300,9 +299,7 @@ def _is_transient(exc: BaseException) -> bool:
     그 외 4xx(잘못된 payload 등)와 코딩 오류는 다시 보내도 같은 결과이므로 영구 오류로
     본다 — 즉시 종료해 원인이 로그에 드러나게 한다.
     """
-    if isinstance(exc, SiloClientError):
-        return exc.status == 429 or exc.status >= 500
-    return isinstance(exc, (TimeoutError, OSError))  # urllib URLError ⊂ OSError
+    return is_transient_error(exc)
 
 
 def run_monitor(args: argparse.Namespace) -> None:
@@ -729,9 +726,10 @@ def main(argv: list[str]) -> None:
     continuous.add_argument("--concurrency", type=int, default=2)
     continuous.add_argument("--max-cycles", type=int, default=0)
     def run_clean_loop(args):
-        from silo_sdk.cleaning_runtime import run
-        asyncio.run(run(SiloClient(args.central, args.silo_id), args.data_dir,
-                        args.poll_interval, args.concurrency, args.max_cycles))
+        from silo_sdk.cleaning_runtime import run_with_signals
+        # 종료 때 metadata I/O가 긴 SDK 재시도를 기다리지 않도록 단일 요청 한도를 둔다.
+        run_with_signals(SiloClient(args.central, args.silo_id, timeout=2, retries=0), args.data_dir,
+                         args.poll_interval, args.concurrency, args.max_cycles)
     continuous.set_defaults(func=run_clean_loop)
 
     train = sub.add_parser("train", help="로컬 릿지 학습 + 기여 push")

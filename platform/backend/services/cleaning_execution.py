@@ -54,8 +54,9 @@ def save_shard(job: CleaningJob, index: int, shard: ShardAssignment) -> Cleaning
     running = any(s.status == "running" for s in shards)
     changed = job.model_copy(update={"shards": shards, "updated_at": now().isoformat(),
                                      "status": "running" if running else "pending"})
-    jobs._save(changed)
-    return jobs._maybe_finalize(changed)
+    finalized = jobs._finalized(changed)
+    jobs._save(finalized)  # 마지막 shard와 completed/통계/event를 한 번에 게시한다.
+    return finalized
 
 
 def start(job_id: str, index: int, silo_id: str, claim_id: str | None) -> CleaningJob:
@@ -108,7 +109,7 @@ def report(payload: ShardReport) -> CleaningJob:
         shard = owned(job, payload.shard_index, payload.silo_id)
         check_token(job, shard, payload.attempt_id)
         if payload.attempt_id and shard.report_digest == digest:
-            return job
+            return jobs._maybe_finalize(job)  # 이전 버전 중단 레코드도 같은 보고로 복구.
         if shard.status not in ("running", "pending") or not ready(job):
             raise HTTPException(status_code=409, detail="현재 샤드 실행권한으로 보고할 수 없습니다")
         if shard.deadline_at and due(shard.deadline_at):
@@ -157,6 +158,12 @@ def tick() -> list[str]:
     changed_ids: list[str] = []
     with jobs._lock:
         for job in jobs.list_jobs():
+            if job.status not in ("pending", "running"):
+                continue
+            recovered = jobs._maybe_finalize(job)
+            if recovered is not job:
+                changed_ids.append(job.job_id)
+                job = recovered
             if job.status not in ("pending", "running"):
                 continue
             bad = [d for d in job.depends_on if jobs.get_job(d).status in ("failed", "partial")

@@ -100,7 +100,7 @@ fi
 if [ "${FED_CLEANING_AUTOSTART:-0}" = "1" ] && [ -n "$FED_CENTRAL" ] && [ -n "$FED_SILO_ID" ] \
     && [ -f /opt/silo_scripts/silo_worker.py ]; then
     (
-        trap 'kill $! 2>/dev/null; exit 0' TERM
+        trap 'kill $! 2>/dev/null; wait $! 2>/dev/null; exit 0' TERM
         while true; do
             python3 /opt/silo_scripts/silo_worker.py clean-loop \
                 --central "$FED_CENTRAL" --silo-id "$FED_SILO_ID" \
