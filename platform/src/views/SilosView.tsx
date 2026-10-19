@@ -3,13 +3,14 @@ import { SiloCard } from '@/components/silos/SiloCard'
 import { SiloRegisterForm } from '@/components/silos/SiloRegisterForm'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
-import { exceedsThreshold } from '@/lib/siloResources'
+import { exceedsThreshold, siloActionKey, siloDraftKey } from '@/lib/siloResources'
 import { SiloGroups } from '@/components/silos/SiloGroups'
 import { SiloResourceHistory } from '@/components/silos/SiloResourceHistory'
 
 export function SilosView() {
   const silos = useSiloStore((s) => s.silos)
   const error = useSiloStore((s) => s.mutationError)
+  const pollError = useSiloStore((s) => s.pollError)
   const isLive = !useSimulationStore((s) => s.mockEnabled)
   const [showForm, setShowForm] = useState(false)
 
@@ -36,6 +37,7 @@ export function SilosView() {
         <div className="card-body">
           <p className="silo-observation">{isLive ? '실서버 모드 · 등록과 설정을 서버에 저장합니다.' : '데모 모드 · 화면 안의 예시 상태입니다.'}</p>
           {error && <p role="alert" className="text-red">서버 변경 실패: {error}</p>}
+          {isLive && pollError && <p role="alert" className="text-red">서버 연결 실패: {pollError}. 값은 마지막 관측이며 현재 판정을 확인할 수 없습니다.</p>}
           <div className="model-toolbar">
             <div className="silo-summary">
               <span className="lbl">등록 사일로</span>
@@ -56,7 +58,7 @@ export function SilosView() {
           ) : (
             <div className="silo-grid">
               {silos.map((silo) => (
-                <SiloCard key={silo.id} silo={silo} />
+                <SiloCard key={siloDraftKey(siloActionKey(silo))} silo={silo} />
               ))}
             </div>
           )}

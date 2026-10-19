@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +12,11 @@ from config import settings
 from models.resource_schemas import ResourceLimit, ResourceSample
 from services import resource_service, silo_registration_service
 from silo_sdk import resources
+
+
+@pytest.fixture(autouse=True)
+def resource_clock(monkeypatch):
+    monkeypatch.setattr(resource_service, "_now_utc", lambda: datetime(2026, 10, 19, 0, 0, 1, tzinfo=timezone.utc))
 
 
 @pytest.fixture
@@ -74,7 +80,7 @@ def test_group_and_limits_reload_preserve_round_member_snapshot(client, tmp_path
     assert resource_service.is_silo_available("silo-1") is False
     assert resource_service.gate_status("silo-1") == "unknown"
     resource_service.ingest_sample(ResourceSample(silo_id="silo-1", cpu_pct=50,
-        timestamp="2026-10-19T00:00:00Z"))
+        timestamp="2026-10-19T00:00:00Z", measurement_scope={"cpu": "own cgroup"}))
     assert resource_service.is_silo_available("silo-1") is True
     assert resource_service.gate_status("silo-1") == "available"
 
@@ -132,6 +138,7 @@ def test_unknown_monitored_value_blocks_but_unsupported_devices_are_not_required
     resource_service.set_limit(ResourceLimit(silo_id="silo-1", cpu_pct_max=80,
         disk_pct_max=90, gpu_pct_max=80))
     resource_service.ingest_sample(unknown.model_copy(update={"cpu_pct": 10,
+        "measurement_scope": {"cpu": "own cgroup"},
         "capabilities": {"disk_pct": False, "gpu_pct": False}}))
     assert resource_service.is_silo_available("silo-1") is True
 
@@ -159,3 +166,42 @@ def test_sqlite_migration_preserves_legacy_rows_and_unavailable_metadata(monkeyp
     assert restored.measurement_scope == {"cpu": "own cgroup"}
     history, total = resource_service.list_samples("silo-1", start_time="2026-10-19T00:00:01Z")
     assert total == 1 and history[0] == sample
+
+
+def test_G1_F3_legacy_raw_is_preserved_but_gate_and_resource_bar_wait_for_verified_sample(monkeypatch):
+    from storage.settings import get_sqlite_path
+    from storage.sqlite_store import connect
+    from services import visualization_service
+    monkeypatch.setenv("FED_STORAGE", "sqlite")
+    db = get_sqlite_path()
+    with sqlite3.connect(db) as conn:
+        conn.execute("""CREATE TABLE resource_samples (id INTEGER PRIMARY KEY AUTOINCREMENT,
+            silo_id TEXT NOT NULL, cpu_pct REAL NOT NULL, mem_pct REAL NOT NULL,
+            gpu_pct REAL, disk_pct REAL, timestamp TEXT NOT NULL)""")
+        conn.execute("INSERT INTO resource_samples VALUES (1,'silo-1',10,20,NULL,NULL,'2026-10-19T00:00:00Z')")
+    resource_service.set_limit(ResourceLimit(silo_id="silo-1", cpu_pct_max=80))
+    assert resource_service.latest_sample("silo-1").cpu_pct == 10
+    assert resource_service.gate_status("silo-1") == "unknown"
+    assert resource_service.is_silo_available("silo-1") is False
+    assert visualization_service.silo_bar_resource_usage().payload["items"] == []
+    with connect(db) as conn:
+        row = conn.execute("SELECT cpu_pct,mem_pct,measurement_json FROM resource_samples WHERE id=1").fetchone()
+        assert tuple(row) == (10, 20, "{}")
+    # 새 스키마에 들어온 legacy 요청도 수용과 관측 인증을 분리한다.
+    resource_service.ingest_sample(ResourceSample(silo_id="silo-1", cpu_pct=50,
+        timestamp="2026-10-19T00:00:00Z"))
+    assert resource_service.gate_status("silo-1") == "unknown"
+    resource_service.ingest_sample(ResourceSample(silo_id="silo-1", cpu_pct=50,
+        timestamp="2026-10-19T00:00:01Z", measurement_scope={"cpu": "own cgroup"}))
+    assert resource_service.gate_status("silo-1") == "available"
+    assert visualization_service.silo_bar_resource_usage().payload["items"] == [{"silo_id": "silo-1", "value": 50.0}]
+
+
+@pytest.mark.parametrize("timestamp", ["2026-10-18T00:00:00Z", "2026-10-19T00:02:00Z", "2026-10-19T00:00:00", "not-a-time"])
+def test_G1_F3_scope_without_confirmed_freshness_is_unknown_and_not_a_bar(timestamp):
+    from services import visualization_service
+    resource_service.set_limit(ResourceLimit(silo_id="silo-1", cpu_pct_max=80))
+    resource_service.ingest_sample(ResourceSample(silo_id="silo-1", cpu_pct=10,
+        timestamp=timestamp, measurement_scope={"cpu": "own cgroup"}))
+    assert resource_service.gate_status("silo-1") == "unknown"
+    assert visualization_service.silo_bar_resource_usage().payload["items"] == []

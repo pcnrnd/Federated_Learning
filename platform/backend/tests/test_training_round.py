@@ -505,6 +505,45 @@ def test_proxy_submission_provenance_survives_listing():
     assert records[0].aggregated_from == ["silo-3"]
 
 
+@pytest.mark.parametrize("change", ["edit", "delete"])
+def test_G1_F2_old_cluster_snapshot_accepts_original_children_after_group_change(change):
+    _make_cluster("c1", "silo-1", ["silo-3", "silo-4"])
+    old_round = _create_round()
+    if change == "edit":
+        silo_group_service.update_group("c1", SiloGroupRequest(
+            group_id="c1", aggregator_node_id="silo-1", member_node_ids=["silo-3"]))
+    else:
+        silo_group_service.delete_group("c1")
+    new_round = _create_round()
+    accepted = _contribute(old_round.round_id, "silo-1", 40, [4.0],
+                          aggregated_from=["silo-3", "silo-4"])
+    assert accepted.aggregated_from == ["silo-3", "silo-4"]
+    with pytest.raises(HTTPException) as exc:
+        _contribute(new_round.round_id, "silo-1", 40, [4.0],
+                    aggregated_from=["silo-3", "silo-4"])
+    assert exc.value.status_code == (422 if change == "edit" else 403)
+
+
+def test_G1_F2_empty_snapshot_does_not_borrow_cluster_added_mid_round():
+    old_round = _create_round()
+    _make_cluster("c1", "silo-1", ["silo-3"])
+    with pytest.raises(HTTPException) as exc:
+        _contribute(old_round.round_id, "silo-1", 10, [1.0], aggregated_from=["silo-3"])
+    assert exc.value.status_code == 403
+    assert _contribute(_create_round().round_id, "silo-1", 10, [1.0],
+                       aggregated_from=["silo-3"]).aggregated_from == ["silo-3"]
+
+
+def test_G1_F2_only_missing_cluster_snapshot_uses_explicit_legacy_fallback():
+    _make_cluster("c1", "silo-1", ["silo-3"])
+    legacy_round = _create_round()
+    rows = load_training_rounds()
+    rows[legacy_round.round_id].pop("cluster_snapshot")
+    save_training_rounds(rows)
+    assert _contribute(legacy_round.round_id, "silo-1", 10, [1.0],
+                       aggregated_from=["silo-3"]).aggregated_from == ["silo-3"]
+
+
 @pytest.mark.unit
 def test_create_round의_저장은_round_lock으로_직렬화된다():
     """라운드 파일 쓰기 경합 회귀 테스트 — 잠금 없이 쓰면 동시 기여/집계의

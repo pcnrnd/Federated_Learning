@@ -95,9 +95,10 @@ def silo_bar_resource_usage(metric: str = "cpu_pct") -> ChartEnvelope:
     items: list[SiloBarItem] = []
     label_map = {"cpu_pct": "CPU %", "mem_pct": "Memory %", "gpu_pct": "GPU %", "disk_pct": "Disk %"}
     for s in summaries:
-        value = getattr(s, metric, None)
-        if value is None:
+        sample = resource_service.latest_sample(s.silo_id)
+        if sample is None or not resource_service.observation_is_valid(sample, metric):
             continue
+        value = getattr(sample, metric)
         items.append(SiloBarItem(silo_id=s.silo_id, value=float(value)))
     data = SiloBarData(items=items)
     return ChartEnvelope(

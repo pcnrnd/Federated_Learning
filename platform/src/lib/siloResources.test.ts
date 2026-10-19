@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { exceedsThreshold, mapRegisteredSilos, registeredSiloNumber, resourceHistory } from '@/lib/siloResources'
+import { exceedsThreshold, mapRegisteredSilos, registeredSiloNumber, resourceHistory, siloActionKey, siloDraftKey } from '@/lib/siloResources'
 import type { ResourceUsageSummary, SiloRegistrationApi } from '@/api/client'
 
 const registered: SiloRegistrationApi[] = [
@@ -14,10 +14,22 @@ const observation: ResourceUsageSummary = {
 }
 
 describe('live silo resource mapping', () => {
+  test('G1-F1 keeps valid leading-zero IDs, large IDs and exact action keys distinct', () => {
+    const ids = ['silo-1', 'silo-01', 'silo-9007199254740992', 'silo-9007199254740993', 'hospital-A']
+    const registrations = ids.map((silo_id) => ({ ...registered[0], silo_id }))
+    const mapped = mapRegisteredSilos(registrations, [], [], [])
+    expect(new Set(mapped.map((s) => s.id)).size).toBe(ids.length)
+    expect(mapped.map(siloActionKey)).toEqual(ids)
+    expect(new Set(mapped.map((s) => siloDraftKey(siloActionKey(s)))).size).toBe(ids.length)
+    const reversed = mapRegisteredSilos([...registrations].reverse(), [], [], [])
+    for (const silo of mapped) expect(reversed.find((s) => s.serverId === silo.serverId)?.id).toBe(silo.id)
+    expect(siloDraftKey('1')).not.toBe(siloDraftKey(1))
+  })
   test('retains registered nodes before collection, exact server identity and stored settings', () => {
     const silos = mapRegisteredSilos(registered, [observation], [], [{ group_id: 'edge', description: '', aggregator_node_id: 'silo-1', member_node_ids: ['hospital-A'] }], Date.parse(observation.last_sample_at))
     expect(silos[0]).toMatchObject({ name: '첫 기관', serverId: 'silo-1', endpoint: 'tcp://silo-1:2375', cpu: 0.12, mem: null, memUsedBytes: 1048576, sampleState: 'fresh' })
     expect(silos[1]).toMatchObject({ serverId: 'hospital-A', cpu: null, sampleState: 'uncollected', parentId: 1 })
+    expect(silos[1].parentServerId).toBe('silo-1')
     expect(silos[0].thresholds).toEqual({ cpu: null, mem: null, disk: null })
     expect(registeredSiloNumber('hospital-A')).toBe(silos[1].id)
   })

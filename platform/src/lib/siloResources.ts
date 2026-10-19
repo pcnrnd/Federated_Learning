@@ -1,13 +1,39 @@
 import type { ResourceLimit, ResourceSampleApi, ResourceUsageSummary, SiloGroupApi, SiloRegistrationApi } from '@/api/client'
 import type { Silo, SiloThresholds, ResourceHistoryMetric } from '@/types/simulation'
 
-/** 표시용 숫자 ID. 서버 요청은 항상 원래 serverId를 사용한다. */
+// 숫자 ID는 기존 표시/선택 코드와의 호환 별칭이다. 실제 액션 키는 serverId다.
+const numericAliases = new Map<string, number>()
+let nextAlias = -1
+
 export function registeredSiloNumber(id: string): number {
-  const match = /^silo-(\d+)$/.exec(id)
-  if (match) return Number(match[1])
-  let hash = 2166136261
-  for (const ch of id) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619)
-  return -(Math.abs(hash) + 1)
+  const existing = numericAliases.get(id)
+  if (existing !== undefined) return existing
+  const match = /^silo-(0|[1-9]\d*)$/.exec(id)
+  const canonical = match ? Number(match[1]) : NaN
+  const alias = Number.isSafeInteger(canonical) ? canonical : nextAlias--
+  numericAliases.set(id, alias)
+  return alias
+}
+
+export function siloActionKey(silo: Silo): string | number {
+  return silo.serverId ?? silo.id
+}
+
+export function siloDraftKey(key: string | number): string {
+  return `${typeof key === 'string' ? 'server' : 'demo'}:${key}`
+}
+
+export function refreshSiloObservation(silo: Silo, now = Date.now(), connectionFailed = false): Silo {
+  if (!silo.serverId) return silo
+  const age = silo.lastSampleAt ? now - Date.parse(silo.lastSampleAt) : NaN
+  const hasValues = silo.cpu !== null || silo.mem !== null || silo.cpuCores != null || silo.memUsedBytes != null
+  const sampleState = !Number.isFinite(age) ? 'uncollected'
+    : age < 0 || age > Math.max(silo.collectIntervalSec * 3, 60) * 1000 ? 'stale'
+    : hasValues ? 'fresh'
+    : silo.capabilities?.cpu_pct === false && silo.capabilities?.mem_pct === false ? 'unsupported' : 'unverified'
+  return { ...silo, sampleState,
+    resourceGate: connectionFailed || sampleState !== 'fresh'
+      ? silo.resourceGate === 'unmonitored' ? 'unmonitored' : 'unknown' : silo.resourceGate }
 }
 
 export function mapRegisteredSilos(
@@ -23,24 +49,21 @@ export function mapRegisteredSilos(
     const parent = groups.find((g) => g.aggregator_node_id && g.member_node_ids.includes(r.silo_id))
     const value = (metric: keyof SiloThresholds) => sample?.measurement_scope?.[metric]
       ? sample[`${metric}_pct`] : null
-    const age = sample ? now - Date.parse(sample.last_sample_at) : NaN
-    const state = !Number.isFinite(age) ? 'uncollected'
-      : age > Math.max(r.collect_interval_seconds * 3, 60) * 1000 ? 'stale'
-      : value('cpu') === null && value('mem') === null
-        && sample?.cpu_cores == null && sample?.mem_used_bytes == null ? 'unsupported' : 'fresh'
-    return {
+    return refreshSiloObservation({
       id: registeredSiloNumber(r.silo_id), serverId: r.silo_id,
       name: r.label, endpoint: r.base_url, collectIntervalSec: r.collect_interval_seconds,
       cpu: value('cpu'), mem: value('mem'), disk: value('disk'),
       thresholds: { cpu: limit?.cpu_pct_max ?? null, mem: limit?.mem_pct_max ?? null, disk: limit?.disk_pct_max ?? null },
       ...(parent?.aggregator_node_id ? { parentId: registeredSiloNumber(parent.aggregator_node_id) } : {}),
-      lastSampleAt: sample?.last_sample_at, sampleState: state,
+      parentServerId: parent?.aggregator_node_id ?? undefined,
+      lastSampleAt: sample?.last_sample_at,
       measurementScope: sample?.measurement_scope ?? {}, unavailable: sample?.unavailable ?? {},
-      cpuCores: sample?.cpu_cores, memUsedBytes: sample?.mem_used_bytes,
+      cpuCores: sample?.measurement_scope?.cpu_cores ? sample.cpu_cores : null,
+      memUsedBytes: sample?.measurement_scope?.mem_used_bytes ? sample.mem_used_bytes : null,
       capabilities: sample?.capabilities,
       resourceGate: sample?.availability ?? (limit ? 'unknown' : 'unmonitored'),
       gpuThreshold: limit?.gpu_pct_max ?? null,
-    }
+    }, now)
   })
 }
 

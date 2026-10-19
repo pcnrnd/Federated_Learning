@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { apiGet, apiMutation, apiPost, type Paginated, type ResourceLimit, type ResourceSampleApi, type ResourceUsageSummary, type SiloGroupApi, type SiloRegistrationApi } from '@/api/client'
-import { mapRegisteredSilos } from '@/lib/siloResources'
+import { mapRegisteredSilos, refreshSiloObservation, siloDraftKey } from '@/lib/siloResources'
 import { SILO_SEEDS } from '@/constants/simulation'
 import { createNode } from '@/lib/nodeFactory'
 import { useDataStore } from '@/store/useDataStore'
@@ -13,6 +13,11 @@ const nextSiloId = (): number => siloSeq++
 
 function logToConsole(kind: LogKind, message: string): void {
   useSimulationStore.getState().log(kind, message)
+}
+
+function actionTarget(silos: Silo[], key: string | number): Silo | undefined {
+  return silos.find((silo) => typeof key === 'string'
+    ? silo.serverId === key : !silo.serverId && silo.id === key)
 }
 
 const DEFAULT_THRESHOLDS: SiloThresholds = { cpu: 85, mem: 80, disk: 90 }
@@ -43,12 +48,15 @@ export interface NewSiloInput {
 export interface SiloStore {
   silos: Silo[]
   addSilo: (input: NewSiloInput) => Promise<boolean>
-  updateThreshold: (id: number, partial: Partial<SiloThresholds>) => Promise<boolean>
-  removeSilo: (id: number) => Promise<boolean>
+  updateThreshold: (key: string | number, partial: Partial<SiloThresholds>) => Promise<boolean>
+  removeSilo: (key: string | number) => Promise<boolean>
   groups: SiloGroupApi[]
   pending: boolean
   mutationEpoch: number
   mutationError: string | null
+  pollError: string | null
+  recordPollFailure: (error: string, now?: number) => void
+  refreshObservationState: (now?: number) => void
   applyLiveSilos: (silos: Silo[], groups: SiloGroupApi[]) => void
   refreshLive: () => Promise<void>
   saveGroup: (group: SiloGroupApi, existing: boolean) => Promise<boolean>
@@ -59,8 +67,8 @@ export interface SiloStore {
   historyMetric: ResourceHistoryMetric
   selectHistory: (siloId: string, metric?: ResourceHistoryMetric) => void
   loadHistory: (siloId: string) => Promise<void>
-  thresholdDrafts: Record<number, SiloThresholds>
-  editThreshold: (id: number, partial: Partial<SiloThresholds>) => void
+  thresholdDrafts: Record<string, SiloThresholds>
+  editThreshold: (key: string | number, partial: Partial<SiloThresholds>) => void
   groupDraft: SiloGroupApi
   editingGroupId: string | null
   editGroup: (group: SiloGroupApi | null) => void
@@ -78,7 +86,11 @@ export interface SiloStore {
 
 export const useSiloStore = create<SiloStore>((set, get) => ({
   silos: seedSilos(),
-  groups: [], pending: false, mutationEpoch: 0, mutationError: null,
+  groups: [], pending: false, mutationEpoch: 0, mutationError: null, pollError: null,
+  recordPollFailure: (pollError, now = Date.now()) => set((s) => ({ pollError,
+    silos: s.silos.map((silo) => refreshSiloObservation(silo, now, true)) })),
+  refreshObservationState: (now = Date.now()) => set((s) => ({
+    silos: s.silos.map((silo) => refreshSiloObservation(silo, now, s.pollError !== null)) })),
   groupDraft: { group_id: '', description: '', member_node_ids: [], aggregator_node_id: null },
   editingGroupId: null,
   editGroup: (group) => set({ editingGroupId: group?.group_id ?? null, groupDraft: group ? { ...group, member_node_ids: [...group.member_node_ids] } : { group_id: '', description: '', member_node_ids: [], aggregator_node_id: null } }),
@@ -88,18 +100,26 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
   registrationDraft: { name: '', siloId: '', endpoint: '', collectIntervalSec: 15, parentId: '' },
   patchRegistration: (partial) => set((s) => ({ registrationDraft: { ...s.registrationDraft, ...partial } })),
   clearRegistration: () => set({ registrationDraft: { name: '', siloId: '', endpoint: '', collectIntervalSec: 15, parentId: '' } }),
-  editThreshold: (id, partial) => {
-    const thresholds = get().thresholdDrafts[id] ?? get().silos.find((s) => s.id === id)?.thresholds
-    if (thresholds) set((s) => ({ thresholdDrafts: { ...s.thresholdDrafts, [id]: { ...thresholds, ...partial } } }))
+  editThreshold: (key, partial) => {
+    const draftKey = siloDraftKey(key)
+    const thresholds = get().thresholdDrafts[draftKey] ?? actionTarget(get().silos, key)?.thresholds
+    if (thresholds) set((s) => ({ thresholdDrafts: { ...s.thresholdDrafts, [draftKey]: { ...thresholds, ...partial } } }))
   },
-  applyLiveSilos: (silos, groups) => { if (!get().pending) set({ silos, groups }) },
+  applyLiveSilos: (silos, groups) => { if (!get().pending) set({ silos, groups, pollError: null }) },
   refreshLive: async () => {
-    const [registrations, usage, limits, groups] = await Promise.all([
-      apiGet<SiloRegistrationApi[]>('/api/silos'), apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
-      apiGet<ResourceLimit[]>('/api/resources/limits'), apiGet<SiloGroupApi[]>('/api/silo-groups'),
-    ])
-    if (useSimulationStore.getState().mockEnabled) return
-    set({ silos: mapRegisteredSilos(registrations, usage, limits, groups), groups })
+    try {
+      const [registrations, usage, limits, groups] = await Promise.all([
+        apiGet<SiloRegistrationApi[]>('/api/silos'), apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
+        apiGet<ResourceLimit[]>('/api/resources/limits'), apiGet<SiloGroupApi[]>('/api/silo-groups'),
+      ])
+      if (useSimulationStore.getState().mockEnabled) return
+      set({ silos: mapRegisteredSilos(registrations, usage, limits, groups), groups, pollError: null })
+    } catch (error) {
+      if (!useSimulationStore.getState().mockEnabled) {
+        get().recordPollFailure(error instanceof Error ? error.message : String(error))
+      }
+      throw error
+    }
   },
   saveGroup: async (group, existing) => {
     if (get().pending) return false
@@ -135,8 +155,8 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
     }
   },
 
-  clearAll: () => set({ silos: [], groups: [], histories: {}, mutationError: null, thresholdDrafts: {} }),
-  reseed: () => set({ silos: seedSilos(), groups: [], histories: {}, mutationError: null, thresholdDrafts: {} }),
+  clearAll: () => set({ silos: [], groups: [], histories: {}, mutationError: null, pollError: null, thresholdDrafts: {} }),
+  reseed: () => set({ silos: seedSilos(), groups: [], histories: {}, mutationError: null, pollError: null, thresholdDrafts: {} }),
   setSilos: (silos) => set({ silos }),
 
   addSilo: async (input) => {
@@ -197,8 +217,8 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
     return true
   },
 
-  updateThreshold: async (id, partial) => {
-    const target = get().silos.find((s) => s.id === id)
+  updateThreshold: async (key, partial) => {
+    const target = actionTarget(get().silos, key)
     if (!target) return false
     if (!useSimulationStore.getState().mockEnabled) {
       if (!target.serverId || get().pending) return false
@@ -207,7 +227,7 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
       try {
         await apiPost('/api/resources/limits', { silo_id: target.serverId, cpu_pct_max: thresholds.cpu, mem_pct_max: thresholds.mem, disk_pct_max: thresholds.disk, gpu_pct_max: target.gpuThreshold ?? null })
         await get().refreshLive()
-        set((s) => { const drafts = { ...s.thresholdDrafts }; delete drafts[id]; return { thresholdDrafts: drafts } })
+        set((s) => { const drafts = { ...s.thresholdDrafts }; delete drafts[siloDraftKey(key)]; return { thresholdDrafts: drafts } })
         return true
       } catch (error) {
         set({ mutationError: error instanceof Error ? error.message : String(error) })
@@ -216,15 +236,15 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
     }
     set((state) => ({
       silos: state.silos.map((s) =>
-        s.id === id ? { ...s, thresholds: { ...s.thresholds, ...partial } } : s,
+        s.id === key ? { ...s, thresholds: { ...s.thresholds, ...partial } } : s,
       ),
     }))
     logToConsole('system', `[${target.name}] 리소스 임계값을 갱신했습니다.`)
     return true
   },
 
-  removeSilo: async (id) => {
-    const target = get().silos.find((s) => s.id === id)
+  removeSilo: async (key) => {
+    const target = actionTarget(get().silos, key)
     if (!target) return false
     if (!useSimulationStore.getState().mockEnabled) {
       if (!target.serverId || get().pending) return false
@@ -243,9 +263,9 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
       logToConsole('error', `[${target.name}]은(는) 1단 사일로이므로 해제할 수 없습니다.`)
       return false
     }
-    set((state) => ({ silos: state.silos.filter((s) => s.id !== id) }))
-    useDataStore.getState().removeSiloData(id)
-    useSimulationStore.getState().removeNode(id)
+    set((state) => ({ silos: state.silos.filter((s) => s.id !== target.id) }))
+    useDataStore.getState().removeSiloData(target.id)
+    useSimulationStore.getState().removeNode(target.id)
     logToConsole('error', `[${target.name}] 하위 노드 등록을 해제했습니다.`)
     return true
   },

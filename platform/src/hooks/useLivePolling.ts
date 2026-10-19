@@ -49,6 +49,7 @@ export function useLivePolling(): void {
     let inFlight = false
 
     const poll = async () => {
+      useSiloStore.getState().refreshObservationState()
       if (inFlight) return // 이전 주기 요청이 아직 진행 중 — 겹침 방지
       inFlight = true
       const store = useSimulationStore.getState()
@@ -102,8 +103,9 @@ export function useLivePolling(): void {
         }
       } catch (error: unknown) {
         if (cancelled) return
+        const detail = error instanceof Error ? error.message : String(error)
+        useSiloStore.getState().recordPollFailure(detail)
         if (wasHealthy !== false) {
-          const detail = error instanceof Error ? error.message : String(error)
           store.log('error', `실서버 폴링 실패 — ${detail}. ${LIVE_POLL_INTERVAL_MS / 1000}초 후 재시도.`)
           wasHealthy = false
         }
