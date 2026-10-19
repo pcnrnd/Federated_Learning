@@ -15,6 +15,7 @@ import type {
   TrainingRoundSummary,
 } from '@/api/client'
 import type { SiloDataFields } from '@/store/useDataStore'
+import { registeredSiloNumber } from '@/lib/siloResources'
 import type {
   Algorithm,
   ChartPoint,
@@ -145,14 +146,13 @@ export interface LiveCleaningMapped {
  */
 export function mapCleaningJobs(jobs: readonly CleaningJobApi[]): LiveCleaningMapped {
   const dataBySilo: Record<number, SiloDataFields> = {}
-  let fallbackIndex = 0
   for (const job of jobs) {
     for (const shard of job.shards) {
-      const id = siloIdToNumber(shard.silo_id, fallbackIndex++)
+      const id = registeredSiloNumber(shard.silo_id)
       if (dataBySilo[id]) continue // 더 최신 잡의 샤드가 이미 반영됨
       dataBySilo[id] = {
-        cleansePct: shard.status === 'completed' ? 100 : 0,
-        shardCount: 1, // 현 백엔드는 잡당 사일로 1샤드
+        cleansePct: shard.status === 'completed' ? 100 : Math.min(99, Math.floor(100 * (shard.processed_units ?? 0) / Math.max(1, shard.total_units ?? 0))),
+        shardCount: job.partitions ?? 1,
         records: shard.rows_in,
         cleanseStatus: shard.status,
         stepCounters: shard.step_counters,
@@ -170,6 +170,12 @@ export function mapCleaningJobs(jobs: readonly CleaningJobApi[]): LiveCleaningMa
       totalRowsOut: j.total_rows_out,
       counters: j.aggregated_counters,
       updatedAt: j.updated_at,
+      scheduledAt: j.scheduled_at, intervalSeconds: j.interval_seconds,
+      dependsOn: j.depends_on ?? [], occurrence: j.occurrence ?? 1, generation: j.generation ?? 0,
+      progress: Math.floor(j.shards.reduce((sum, shard) => sum + (shard.status === 'completed' ? 100
+        : Math.min(99, 100 * (shard.processed_units ?? 0) / Math.max(1, shard.total_units ?? 0))), 0) / Math.max(1, j.shards.length)),
+      attempts: j.shards.map((s) => `${s.silo_id}: ${s.attempt ?? 0}회 (${s.stage ?? s.status})`).join(' · '),
+      errors: j.shards.filter((s) => s.error).map((s) => `${s.silo_id}: ${s.error}`), events: j.events ?? [],
     })),
   }
 }

@@ -286,11 +286,12 @@ class SiloClient:
     def get_cleaning_job(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/cleaning-jobs/{job_id}")
 
-    def start_cleaning_shard(self, job_id: str, shard_index: int) -> dict[str, Any]:
+    def start_cleaning_shard(self, job_id: str, shard_index: int,
+                             claim_id: str | None = None) -> dict[str, Any]:
         return self._request(
             "POST",
             f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/start",
-            {"silo_id": self.silo_id},
+            {"silo_id": self.silo_id, "claim_id": claim_id},
         )
 
     def report_cleaning_shard(
@@ -305,6 +306,12 @@ class SiloClient:
         completed_at: str | None = None,
         error: str | None = None,
         schema_fingerprint: str | None = None,
+        attempt_id: str | None = None,
+        retryable: bool = False,
+        output_id: str | None = None,
+        output_hash: str | None = None,
+        source_hash: str | None = None,
+        recipe_hash: str | None = None,
     ) -> dict[str, Any]:
         """정제 샤드 처리 결과 보고 — 통계만, 원시 데이터 없음.
 
@@ -323,11 +330,19 @@ class SiloClient:
         }
         if schema_fingerprint is not None:
             payload["schema_fingerprint"] = schema_fingerprint
+        payload.update(attempt_id=attempt_id, retryable=retryable, output_id=output_id,
+                       output_hash=output_hash, source_hash=source_hash, recipe_hash=recipe_hash)
         return self._request(
             "POST",
             f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/report",
             payload,
         )
+
+    def cleaning_progress(self, job_id: str, shard_index: int, attempt_id: str,
+                          processed_units: int, total_units: int, stage: str) -> dict[str, Any]:
+        return self._request("POST", f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/progress",
+            {"silo_id": self.silo_id, "attempt_id": attempt_id, "processed_units": processed_units,
+             "total_units": total_units, "stage": stage})
 
     # ---------- 사일로 간 수직 정렬 (HMAC 다이제스트만 — 원본 id 없음) ----------
 

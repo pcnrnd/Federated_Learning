@@ -112,6 +112,14 @@ class RoundScheduler:
             logger.error("잡 tick 오류: %s", exc)
             return []
 
+    async def tick_cleaning(self) -> list[str]:
+        from services import cleaning_execution
+        try:
+            return await asyncio.to_thread(cleaning_execution.tick)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("정제 tick 오류: %s", exc)
+            return []
+
     async def _loop(self) -> None:
         assert self._stop_event is not None
         while not self._stop_event.is_set():
@@ -119,7 +127,7 @@ class RoundScheduler:
                 # 1. 충분히 모인 라운드 집계 (잡 reconcile 전에 수행해야 카운터 정확)
                 await self.tick()
                 # 2. 잡 진행 — 완료된 라운드 reconcile + 다음 라운드 open
-                await self.tick_jobs()
+                await asyncio.gather(self.tick_jobs(), self.tick_cleaning())
                 # 3. running/pending 배포 상태를 Docker 실제 상태와 동기화
                 try:
                     await asyncio.to_thread(deployment_service.reconcile_all_active)

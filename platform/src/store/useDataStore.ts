@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { JOB_STEP_MS, SILO_SEEDS } from '@/constants/simulation'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { CleaningShardStatus } from '@/api/client'
+import { apiGet, apiPost, type CleaningJobApi } from '@/api/client'
+import { mapCleaningJobs } from '@/api/mappers'
 import type { CleaningJobSummary, Job, LogKind } from '@/types/simulation'
 
 function logToConsole(kind: LogKind, message: string): void {
@@ -56,6 +58,14 @@ export interface DataStore {
   jobs: Job[]
   /** 실서버 정제 잡 현황 (라이브 폴링이 채운다 — 목 모드에서는 항상 빈 배열) */
   liveCleaningJobs: CleaningJobSummary[]
+  liveDraft: Record<string, string>
+  patchLiveDraft: (patch: Record<string, string>) => void
+  livePending: boolean
+  liveError: string | null
+  deliveredEvents: string[]
+  createLiveJob: () => Promise<boolean>
+  rescheduleLiveJob: (jobId: string, at: string) => Promise<boolean>
+  refreshLiveCleaning: () => Promise<void>
 
   // 사일로 등록/해제 전파 (useSiloStore가 호출)
   ensureSiloData: (siloId: number) => void
@@ -93,13 +103,58 @@ export const useDataStore = create<DataStore>((set, get) => ({
   dataBySilo: seedDataBySilo(),
   jobs: seedJobs(),
   liveCleaningJobs: [],
+  liveDraft: { job_id: '', recipe_name: '', recipe_version: '1.0.0', group_id: '',
+    dataset_label: 'silo-sources', scheduled_at: '', interval_seconds: '', max_occurrences: '',
+    depends_on: '', max_attempts: '3', retry_backoff_seconds: '5', timeout_seconds: '300',
+    partitions: '4', parallelism: '2' },
+  patchLiveDraft: (patch) => set((s) => ({ liveDraft: { ...s.liveDraft, ...patch } })),
+  livePending: false, liveError: null, deliveredEvents: [],
+  refreshLiveCleaning: async () => {
+    const mapped = mapCleaningJobs(await apiGet<CleaningJobApi[]>('/api/cleaning-jobs'))
+    if (!useSimulationStore.getState().mockEnabled) get().applyLiveCleaning(mapped.dataBySilo, mapped.jobs)
+  },
+  createLiveJob: async () => {
+    if (get().livePending) return false
+    set({ livePending: true, liveError: null })
+    try {
+      const d = get().liveDraft
+      const saved = Object.fromEntries(Object.entries(d).filter(([key]) => !key.startsWith('reschedule:')))
+      const body = { ...saved, scheduled_at: d.scheduled_at ? new Date(d.scheduled_at).toISOString() : null,
+        depends_on: d.depends_on.split(',').map((s) => s.trim()).filter(Boolean),
+        interval_seconds: d.interval_seconds ? Number(d.interval_seconds) : null,
+        max_occurrences: d.max_occurrences ? Number(d.max_occurrences) : null,
+        max_attempts: Number(d.max_attempts), retry_backoff_seconds: Number(d.retry_backoff_seconds),
+        timeout_seconds: Number(d.timeout_seconds), partitions: Number(d.partitions), parallelism: Number(d.parallelism) }
+      await apiPost('/api/cleaning-jobs', body)
+      await get().refreshLiveCleaning()
+      return true
+    } catch (error) { set({ liveError: error instanceof Error ? error.message : String(error) }); return false }
+    finally { set({ livePending: false }) }
+  },
+  rescheduleLiveJob: async (jobId, at) => {
+    if (get().livePending) return false
+    set({ livePending: true, liveError: null })
+    try {
+      await apiPost(`/api/cleaning-jobs/${encodeURIComponent(jobId)}/reschedule`, { scheduled_at: new Date(at).toISOString() })
+      await get().refreshLiveCleaning()
+      return true
+    } catch (error) { set({ liveError: error instanceof Error ? error.message : String(error) }); return false }
+    finally { set({ livePending: false }) }
+  },
 
   clearAll: () => set({ dataBySilo: {}, jobs: [], liveCleaningJobs: [] }),
   reseed: () =>
     set({ dataBySilo: seedDataBySilo(), jobs: seedJobs(), liveCleaningJobs: [] }),
 
-  applyLiveCleaning: (dataBySilo, liveCleaningJobs) =>
-    set({ dataBySilo, liveCleaningJobs }),
+  applyLiveCleaning: (dataBySilo, liveCleaningJobs) => {
+    const delivered = new Set(get().deliveredEvents)
+    for (const job of liveCleaningJobs) for (const event of job.events ?? []) {
+      if (delivered.has(event.event_id)) continue
+      delivered.add(event.event_id)
+      logToConsole('error', `[정제 ${job.jobId}] ${event.message} (${event.at})`)
+    }
+    set({ dataBySilo, liveCleaningJobs, deliveredEvents: [...delivered] })
+  },
 
   ensureSiloData: (siloId) => {
     if (get().dataBySilo[siloId]) return

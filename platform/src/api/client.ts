@@ -164,7 +164,7 @@ export interface DeploymentRequestApi {
 
 // --- 정제 잡 (P3 — data 탭 배선) -------------------------------------------
 
-export type CleaningShardStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type CleaningShardStatus = 'pending' | 'running' | 'retry_wait' | 'completed' | 'failed'
 
 export interface CleaningShardApi {
   shard_index: number
@@ -173,6 +173,12 @@ export interface CleaningShardApi {
   rows_in: number
   rows_out: number
   step_counters: Record<string, number>
+  processed_units?: number
+  total_units?: number
+  attempt?: number
+  stage?: string
+  error?: string | null
+  output_hash?: string | null
 }
 
 export interface CleaningJobApi {
@@ -186,6 +192,13 @@ export interface CleaningJobApi {
   aggregated_counters: Record<string, number>
   dataset_label: string
   updated_at: string
+  scheduled_at?: string | null
+  interval_seconds?: number | null
+  depends_on?: string[]
+  occurrence?: number
+  generation?: number
+  partitions?: number
+  events?: Array<{ event_id: string; message: string; at: string; kind: string }>
 }
 
 // --- 시각화 5종 (/api/visualizations · 기준 분포 목록) -------------------------

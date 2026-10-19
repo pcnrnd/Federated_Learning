@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import csv
 import json
 import math
@@ -45,7 +46,7 @@ from silo_sdk.resources import sample_resources
 from silo_sdk.alignment import align_rows, hash_ids, load_align_key, order_digest
 from silo_sdk.client import SiloClientError
 from silo_sdk.edge import combine
-from silo_sdk.integration import load_sources, schema_fingerprint
+from silo_sdk.integration import load_sources, schema_fingerprint, CleaningError
 
 FEATURES = ["x1", "x2", "x3"]
 # 사일로 로컬 원천 파일 위치 (컨테이너 안 — 사일로 밖으로 나가지 않는다)
@@ -132,7 +133,23 @@ def _clean_shard(client: SiloClient, args: argparse.Namespace, job_id: str, shar
     형식과 메시지(통계·컬럼명)뿐이다 — 원시 행은 담지 않는다.
     """
     recipe = client.fetch_cleaning_recipe(recipe_name, recipe_version)
-    client.start_cleaning_shard(job_id, shard_index)
+    claimed = client.start_cleaning_shard(job_id, shard_index)
+    if claimed.get("shards"):
+        from silo_sdk.cleaning_output import execute
+        shard = claimed["shards"][shard_index]
+        try:
+            manifest = execute(getattr(args, "data_dir", DEFAULT_DATA_DIR), args.silo_id,
+                               claimed, shard, recipe)
+            fields = {key: manifest[key] for key in ("rows_in", "rows_out", "step_counters",
+                "schema_fingerprint", "output_id", "output_hash", "source_hash", "recipe_hash")}
+            client.report_cleaning_shard(job_id, shard_index, **fields, attempt_id=shard["attempt_id"])
+            return True
+        except Exception as exc:  # noqa: BLE001
+            client.report_cleaning_shard(job_id, shard_index, rows_in=0, rows_out=0, step_counters={},
+                attempt_id=shard["attempt_id"], retryable=isinstance(exc, (OSError, TimeoutError)),
+                error=(str(exc)[:MAX_ERROR_CHARS] if isinstance(exc, CleaningError)
+                       else f"로컬 정제 실행 실패: {type(exc).__name__}"))
+            return False
 
     try:
         rows_in, cleaned, counters = clean_local(
@@ -370,8 +387,15 @@ def _local_accuracy(rows: list[dict], parameters: list[float]) -> float:
 _STAT_KEYS = ("rows_before_cleaning", "rows_after_cleaning", "train_rmse")
 
 
-def _training_rows(args: argparse.Namespace, client: SiloClient) -> tuple[list[dict], dict]:
+def _training_rows(args: argparse.Namespace, client: SiloClient,
+                   *, resolve_round: bool = True) -> tuple[list[dict], dict]:
     """학습 입력 행과 정제 통계 — 레시피를 지정하면 로컬 원천 정제 결과, 아니면 기존 합성 행."""
+    round_id = getattr(args, "round_id", None)
+    if round_id and resolve_round:
+        entry = client.get_round(round_id)
+        reference = entry.get("cleaning_job_id")
+        if reference:
+            return _linked_output(args, client, reference, entry.get("cleaning_snapshot"))
     name = getattr(args, "recipe_name", None)
     version = getattr(args, "recipe_version", None)
     if not name and not version:
@@ -383,6 +407,23 @@ def _training_rows(args: argparse.Namespace, client: SiloClient) -> tuple[list[d
         args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
     )
     return cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
+
+
+def _linked_output(args, client, job_id, snapshot=None):
+    from silo_sdk.cleaning_output import load_output
+    if snapshot is not None:
+        if args.silo_id not in snapshot:
+            raise ValueError("라운드 정제 출력 스냅샷에 사일로가 없습니다")
+        rows, manifest = load_output(getattr(args, "data_dir", DEFAULT_DATA_DIR), snapshot[args.silo_id])
+        return rows, {"rows_before_cleaning": manifest["rows_in"], "rows_after_cleaning": len(rows)}
+    job = client.get_cleaning_job(job_id)
+    if job["status"] != "completed":
+        raise ValueError("선행 정제 성공 전 학습 불가")
+    shard = next((s for s in job["shards"] if s["silo_id"] == args.silo_id), None)
+    if shard is None or shard["status"] != "completed" or not shard.get("output_id"):
+        raise ValueError("이 사일로의 보존 정제 출력이 없습니다")
+    rows, manifest = load_output(getattr(args, "data_dir", DEFAULT_DATA_DIR), shard)
+    return rows, {"rows_before_cleaning": manifest["rows_in"], "rows_after_cleaning": len(rows)}
 
 
 def _rmse(rows: list[dict], parameters: list[float]) -> float:
@@ -423,25 +464,22 @@ def run_train_loop(args: argparse.Namespace) -> None:
     없으면 잔여 라운드 없이 종료된 것으로 보고 현황을 남기고 빠져나온다.
     """
     client = SiloClient(args.central, args.silo_id)
-    rows, stats = _training_rows(args, client)
-    explicit = bool(getattr(args, "recipe_name", None))
-    linked: dict[str, tuple[list[dict], dict]] = {}
+    fallback: tuple[list[dict], dict] | None = None
+    linked: dict[tuple[str, str | None], tuple[list[dict], dict]] = {}
 
     def inputs_for(entry: dict) -> tuple[list[dict], dict]:
-        """라운드에 정제 작업이 연결돼 있으면(레시피 미지정 시) 그 레시피로 정제한 행."""
-        job_ref = None if explicit else entry.get("cleaning_job_id")
+        """연결 출력은 즉시 로드. 비연결 라운드의 입력만 필요할 때 준비한다."""
+        nonlocal fallback
+        job_ref = entry.get("cleaning_job_id")
         if not job_ref:
-            return rows, stats
-        if job_ref not in linked:
-            job = client.get_cleaning_job(job_ref)
-            recipe = client.fetch_cleaning_recipe(job["recipe_name"], job["recipe_version"])
-            rows_in, cleaned, _ = clean_local(
-                args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
-            )
-            linked[job_ref] = (
-                cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
-            )
-        return linked[job_ref]
+            if fallback is None:
+                fallback = _training_rows(args, client, resolve_round=False)
+            return fallback
+        snapshot = entry.get("cleaning_snapshot")
+        identity = (job_ref, snapshot.get(args.silo_id, {}).get("output_id") if snapshot is not None else None)
+        if identity not in linked:
+            linked[identity] = _linked_output(args, client, job_ref, snapshot)
+        return linked[identity]
 
     contributed_rounds: set[str] = set()
     idle_deadline = time.monotonic() + args.max_idle
@@ -682,6 +720,19 @@ def main(argv: list[str]) -> None:
     clean.add_argument("--recipe-version")
     clean.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
     clean.set_defaults(func=run_clean)
+
+    continuous = sub.add_parser("clean-loop", help="실제 예약 정제 지속 pull worker")
+    continuous.add_argument("--central", required=True)
+    continuous.add_argument("--silo-id", required=True)
+    continuous.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    continuous.add_argument("--poll-interval", type=float, default=2)
+    continuous.add_argument("--concurrency", type=int, default=2)
+    continuous.add_argument("--max-cycles", type=int, default=0)
+    def run_clean_loop(args):
+        from silo_sdk.cleaning_runtime import run
+        asyncio.run(run(SiloClient(args.central, args.silo_id), args.data_dir,
+                        args.poll_interval, args.concurrency, args.max_cycles))
+    continuous.set_defaults(func=run_clean_loop)
 
     train = sub.add_parser("train", help="로컬 릿지 학습 + 기여 push")
     train.add_argument("--central", required=True)

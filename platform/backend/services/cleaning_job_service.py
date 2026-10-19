@@ -19,6 +19,7 @@ from models.cleaning_schemas import (
     AssignedShard,
     CleaningJob,
     CleaningJobCreate,
+    CleaningExecutionOptions,
     SchemaConsistency,
     ShardAssignment,
     ShardReport,
@@ -27,7 +28,7 @@ from services import cleaning_recipe_service, silo_group_service
 
 logger = logging.getLogger(__name__)
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 def _now_iso() -> str:
@@ -57,10 +58,19 @@ def get_job(job_id: str) -> CleaningJob:
 
 
 def create_job(request: CleaningJobCreate) -> CleaningJob:
+    with _lock:
+        return _create_job(request)
+
+
+def _create_job(request: CleaningJobCreate) -> CleaningJob:
     """그룹 멤버 사일로마다 1개 샤드를 자동 배정"""
     jobs = load_jobs()
     if request.job_id in jobs:
         raise HTTPException(status_code=409, detail=f"잡 '{request.job_id}' 중복")
+    if request.job_id in request.depends_on:
+        raise HTTPException(status_code=422, detail="정제 작업은 자기 자신에 의존할 수 없습니다")
+    for dependency in request.depends_on:
+        get_job(dependency)
 
     # 레시피 + 그룹 사전 검증
     cleaning_recipe_service.get_recipe(request.recipe_name, request.recipe_version)
@@ -86,6 +96,8 @@ def create_job(request: CleaningJobCreate) -> CleaningJob:
         created_at=now,
         updated_at=now,
         notes=request.notes,
+        **request.model_dump(include=set(CleaningExecutionOptions.model_fields)),
+        schedule_id=request.job_id,
     )
     _save(job)
     logger.info(
@@ -99,84 +111,18 @@ def create_job(request: CleaningJobCreate) -> CleaningJob:
     return job
 
 
-def start_shard(job_id: str, shard_index: int, silo_id: str) -> CleaningJob:
-    """사일로가 샤드 작업 시작을 알림"""
-    with _lock:
-        job = get_job(job_id)
-        if shard_index >= len(job.shards):
-            raise HTTPException(status_code=400, detail="유효하지 않은 shard_index")
-        shard = job.shards[shard_index]
-        if shard.silo_id != silo_id:
-            raise HTTPException(
-                status_code=403,
-                detail=f"사일로 '{silo_id}'는 샤드 {shard_index}에 배정되지 않음",
-            )
-        if shard.status != "pending":
-            raise HTTPException(
-                status_code=409,
-                detail=f"샤드 상태 '{shard.status}'에서 start 불가",
-            )
-        updated_shard = shard.model_copy(
-            update={"status": "running", "started_at": _now_iso()}
-        )
-        new_shards = list(job.shards)
-        new_shards[shard_index] = updated_shard
-        updated_job = job.model_copy(
-            update={
-                "shards": new_shards,
-                "status": "running" if job.status == "pending" else job.status,
-                "updated_at": _now_iso(),
-            }
-        )
-        _save(updated_job)
-        return updated_job
+def start_shard(job_id: str, shard_index: int, silo_id: str,
+                claim_id: str | None = None) -> CleaningJob:
+    from services.cleaning_execution import start
+    return start(job_id, shard_index, silo_id, claim_id)
 
 
 def report_shard(report: ShardReport) -> CleaningJob:
-    """사일로가 샤드 처리 결과를 push (통계만)"""
-    if report.rows_out > report.rows_in:
-        raise HTTPException(
-            status_code=400, detail="rows_out > rows_in 은 불가능합니다"
-        )
-    with _lock:
-        job = get_job(report.job_id)
-        if report.shard_index >= len(job.shards):
-            raise HTTPException(status_code=400, detail="유효하지 않은 shard_index")
-        shard = job.shards[report.shard_index]
-        if shard.silo_id != report.silo_id:
-            raise HTTPException(
-                status_code=403,
-                detail=f"사일로 '{report.silo_id}'는 샤드 {report.shard_index}에 배정되지 않음",
-            )
-        if shard.status not in ("running", "pending"):
-            raise HTTPException(
-                status_code=409,
-                detail=f"샤드 상태 '{shard.status}'에서 report 불가",
-            )
-
-        new_status = "failed" if report.error else "completed"
-        updated_shard = shard.model_copy(
-            update={
-                "status": new_status,
-                "rows_in": report.rows_in,
-                "rows_out": report.rows_out,
-                "step_counters": dict(report.step_counters),
-                "started_at": shard.started_at or report.started_at,
-                "completed_at": report.completed_at,
-                "error": report.error,
-                "schema_fingerprint": report.schema_fingerprint,
-            }
-        )
-        new_shards = list(job.shards)
-        new_shards[report.shard_index] = updated_shard
-        updated_job = job.model_copy(update={"shards": new_shards, "updated_at": _now_iso()})
-        _save(updated_job)
-        finalized = _maybe_finalize(updated_job)
-        return finalized
-
+    from services.cleaning_execution import report as accept_report
+    return accept_report(report)
 
 def _maybe_finalize(job: CleaningJob) -> CleaningJob:
-    if any(s.status in ("pending", "running") for s in job.shards):
+    if any(s.status in ("pending", "running", "retry_wait") for s in job.shards):
         return job
     failed = sum(1 for s in job.shards if s.status == "failed")
     completed = sum(1 for s in job.shards if s.status == "completed")
@@ -205,6 +151,11 @@ def _maybe_finalize(job: CleaningJob) -> CleaningJob:
             "updated_at": _now_iso(),
         }
     )
+    if new_status in ("failed", "partial"):
+        event_id = f"{job.job_id}:{job.generation}:final_failure"
+        if not any(e["event_id"] == event_id for e in finalized.events):
+            finalized.events.append({"event_id": event_id, "kind": "failed", "at": _now_iso(),
+                                     "message": job.blocked_reason or "정제 시도 소진 또는 최종 실패"})
     _save(finalized)
     logger.info(
         "잡 %s 종료: status=%s rows %d→%d",
@@ -244,6 +195,9 @@ def list_assigned_shards(silo_id: str, status: str | None = None) -> list[Assign
     """사일로에 배정된 샤드 (오래된 잡 먼저). status로 샤드 상태를 거른다."""
     out: list[AssignedShard] = []
     for job in sorted(list_jobs(), key=lambda j: j.created_at):
+        from services.cleaning_execution import ready
+        if status == "pending" and not ready(job):
+            continue
         for shard in job.shards:
             if shard.silo_id != silo_id or (status and shard.status != status):
                 continue
@@ -258,6 +212,8 @@ def list_assigned_shards(silo_id: str, status: str | None = None) -> list[Assign
                     dataset_label=job.dataset_label,
                     job_status=job.status,
                     created_at=job.created_at,
+                    generation=job.generation, partitions=job.partitions,
+                    parallelism=job.parallelism, timeout_seconds=job.timeout_seconds,
                 )
             )
     return out
