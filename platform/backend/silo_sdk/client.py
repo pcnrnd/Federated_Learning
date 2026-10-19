@@ -25,6 +25,13 @@ class SiloClientError(Exception):
         self.body = body
 
 
+def is_transient_error(exc: BaseException) -> bool:
+    """통신/작업 정책 공통 분류. 응답 본문은 재시도 판정에 쓰지 않는다."""
+    if isinstance(exc, SiloClientError):
+        return exc.status == 429 or 500 <= exc.status < 600
+    return isinstance(exc, (TimeoutError, OSError))
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -101,9 +108,9 @@ class SiloClient:
                     return parsed
             except urllib.error.HTTPError as exc:
                 body_text = exc.read().decode("utf-8", errors="replace")
-                if 400 <= exc.code < 500:
-                    raise SiloClientError(exc.code, body_text) from exc
                 last_exc = SiloClientError(exc.code, body_text)
+                if not is_transient_error(last_exc):
+                    raise last_exc from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 last_exc = exc
             if attempt < self.retries:

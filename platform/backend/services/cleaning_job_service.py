@@ -36,13 +36,15 @@ def _now_iso() -> str:
 
 
 def _save(job: CleaningJob) -> None:
-    jobs = load_jobs()
-    jobs[job.job_id] = job.model_dump()
-    save_jobs(jobs)
+    with _lock:
+        jobs = load_jobs()
+        jobs[job.job_id] = job.model_dump()
+        save_jobs(jobs)
 
 
 def list_jobs(status: str | None = None) -> list[CleaningJob]:
-    raw = load_jobs()
+    with _lock:
+        raw = load_jobs()
     jobs = [CleaningJob(**v) for v in raw.values()]
     if status:
         jobs = [j for j in jobs if j.status == status]
@@ -51,7 +53,8 @@ def list_jobs(status: str | None = None) -> list[CleaningJob]:
 
 
 def get_job(job_id: str) -> CleaningJob:
-    raw = load_jobs()
+    with _lock:
+        raw = load_jobs()
     if job_id not in raw:
         raise HTTPException(status_code=404, detail=f"잡 '{job_id}' 없음")
     return CleaningJob(**raw[job_id])
@@ -121,7 +124,8 @@ def report_shard(report: ShardReport) -> CleaningJob:
     from services.cleaning_execution import report as accept_report
     return accept_report(report)
 
-def _maybe_finalize(job: CleaningJob) -> CleaningJob:
+def _finalized(job: CleaningJob) -> CleaningJob:
+    """저장 부수효과 없이 terminal shard들에서 완전한 job을 도출한다."""
     if any(s.status in ("pending", "running", "retry_wait") for s in job.shards):
         return job
     failed = sum(1 for s in job.shards if s.status == "failed")
@@ -142,28 +146,32 @@ def _maybe_finalize(job: CleaningJob) -> CleaningJob:
         for k, v in s.step_counters.items():
             aggregated[k] = aggregated.get(k, 0) + v
 
-    finalized = job.model_copy(
+    events = list(job.events)
+    if new_status in ("failed", "partial"):
+        event_id = f"{job.job_id}:{job.generation}:final_failure"
+        if not any(e["event_id"] == event_id for e in events):
+            events.append({"event_id": event_id, "kind": "failed", "at": _now_iso(),
+                           "message": job.blocked_reason or "정제 시도 소진 또는 최종 실패"})
+    if (job.status == new_status and job.total_rows_in == total_in
+            and job.total_rows_out == total_out and job.aggregated_counters == aggregated
+            and job.events == events):
+        return job
+    return job.model_copy(
         update={
             "status": new_status,
             "total_rows_in": total_in,
             "total_rows_out": total_out,
             "aggregated_counters": aggregated,
             "updated_at": _now_iso(),
+            "events": events,
         }
     )
-    if new_status in ("failed", "partial"):
-        event_id = f"{job.job_id}:{job.generation}:final_failure"
-        if not any(e["event_id"] == event_id for e in finalized.events):
-            finalized.events.append({"event_id": event_id, "kind": "failed", "at": _now_iso(),
-                                     "message": job.blocked_reason or "정제 시도 소진 또는 최종 실패"})
-    _save(finalized)
-    logger.info(
-        "잡 %s 종료: status=%s rows %d→%d",
-        job.job_id,
-        new_status,
-        total_in,
-        total_out,
-    )
+
+
+def _maybe_finalize(job: CleaningJob) -> CleaningJob:
+    finalized = _finalized(job)
+    if finalized is not job:
+        _save(finalized)
     return finalized
 
 
