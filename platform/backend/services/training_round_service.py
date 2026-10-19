@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import threading
@@ -71,7 +72,25 @@ def get_round(round_id: str) -> TrainingRound:
     return TrainingRound(**raw)
 
 
-def create_round(request: TrainingRoundCreate) -> TrainingRound:
+def create_round(request: TrainingRoundCreate, *, opening_id: str | None = None,
+                 job_id: str | None = None, occurrence: int | None = None) -> TrainingRound:
+    """고정 opening identity의 재시도는 기존 동결 라운드를 그대로 반환한다."""
+    request_hash = hashlib.sha256(json.dumps(request.model_dump(mode="json"), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    with _round_lock:
+        if opening_id:
+            existing = get_training_round(opening_id)
+            if existing is not None:
+                entry = TrainingRound(**existing)
+                if (entry.job_id != job_id or entry.job_occurrence != occurrence
+                        or entry.opening_request_hash != request_hash):
+                    raise HTTPException(status_code=409, detail="고정 회차와 기존 라운드의 생성 정체성 불일치")
+                return entry
+        return _create_round(request, opening_id=opening_id, job_id=job_id,
+                             occurrence=occurrence, request_hash=request_hash)
+
+
+def _create_round(request, *, opening_id, job_id, occurrence, request_hash) -> TrainingRound:
     """학습 라운드 생성 — 모델/그룹 존재 사전 검증"""
     get_model(request.model_name, request.version)
     group = silo_group_service.get_group(request.group_id)
@@ -136,7 +155,7 @@ def create_round(request: TrainingRoundCreate) -> TrainingRound:
         raise HTTPException(status_code=422, detail="전역 피드백에는 live learning 계약이 필요합니다")
 
     entry = TrainingRound(
-        round_id=uuid.uuid4().hex,
+        round_id=opening_id or uuid.uuid4().hex,
         model_name=request.model_name,
         version=request.version,
         group_id=request.group_id,
@@ -151,6 +170,9 @@ def create_round(request: TrainingRoundCreate) -> TrainingRound:
         cluster_snapshot=clusters,
         cleaning_job_id=request.cleaning_job_id,
         cleaning_snapshot=outputs,
+        job_id=job_id,
+        job_occurrence=occurrence,
+        opening_request_hash=request_hash if opening_id else None,
         **live,
     )
     # 라운드 파일의 모든 쓰기는 _round_lock으로 직렬화한다 — 잠금 없이 쓰면
