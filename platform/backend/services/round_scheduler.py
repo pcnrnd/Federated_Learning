@@ -134,6 +134,8 @@ class RoundScheduler:
                 await asyncio.gather(self.tick_jobs(), self.tick_cleaning())
                 # 3. running/pending 배포 상태를 Docker 실제 상태와 동기화
                 try:
+                    from services.deployment_scheduling import tick as tick_deployments
+                    await asyncio.to_thread(tick_deployments)
                     await asyncio.to_thread(deployment_service.reconcile_all_active)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("배포 reconcile 실패: %s", exc)

@@ -2,18 +2,20 @@
 
 배포 추상화:
   * realtime — 즉시 컨테이너 기동, restart=always
-  * batch    — 일괄/지연 기동 (created 상태로 만들고 라벨 부여)
+  * batch    — 영속 일정 서비스가 도래한 회차만 기동
   * edge     — role=client 노드 대상 + edge 라벨 부여
 각 전략은 동일한 인터페이스를 가지며, 노드별로 컨테이너를 생성한다.
 """
 from __future__ import annotations
 
 import logging
+import hashlib
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
 import docker
-from docker.errors import APIError, DockerException, ImageNotFound
+from docker.errors import APIError, DockerException, ImageNotFound, NotFound
 from fastapi import HTTPException
 
 from models.packaging_schemas import DeploymentRequest
@@ -52,8 +54,9 @@ class DeploymentStrategy(Protocol):
 
 
 def _container_name(prefix: str, model: str, version: str, deployment_id: str) -> str:
-    short = deployment_id[:8]
-    return f"{prefix}-{model}-{version.replace('.', '_')}-{short}"
+    safe_prefix = re.sub(r"[^a-zA-Z0-9_.-]", "-", prefix)[:40].strip(".-") or "fed-model"
+    identity = hashlib.sha256(f"{model}\0{version}".encode()).hexdigest()[:16]
+    return f"{safe_prefix}-{identity}-{deployment_id}"
 
 
 def _common_labels(
@@ -110,17 +113,32 @@ def _run_container(
         deployment_id,
     )
     labels = _common_labels(request, deployment_id, strategy)
+    custom_port = {} if request.inference_port == 8501 else {
+        "command": ["uvicorn", "inference_server:app", "--host", "0.0.0.0", "--port", str(request.inference_port)],
+        "healthcheck": {"test": ["CMD", "python", "-c",
+            f"import urllib.request; urllib.request.urlopen('http://127.0.0.1:{request.inference_port}/health')"]},
+    }
     try:
-        container = ctx.docker_client.containers.create(
-            image=image_tag,
-            name=name,
-            environment=request.env,
-            labels=labels,
-            ports={f"{request.inference_port}/tcp": None},
-            restart_policy=restart_policy,
-            detach=True,
-        )
-        if autostart:
+        try:
+            container = ctx.docker_client.containers.get(name)
+        except NotFound:
+            container = ctx.docker_client.containers.create(
+                image=image_tag,
+                name=name,
+                environment=request.env,
+                labels=labels,
+                ports={f"{request.inference_port}/tcp": None},
+                restart_policy=restart_policy,
+                detach=True,
+                **custom_port,
+            )
+        else:
+            actual_labels = container.labels or {}
+            if (container.image.id != image_tag or any(actual_labels.get(key) != labels[key]
+                    for key in ("fed.deployment_id", "fed.model", "fed.version", "fed.strategy"))):
+                raise HTTPException(status_code=409, detail="같은 실행 이름의 컨테이너 정체성이 다릅니다")
+        container.reload()
+        if autostart and container.status != "running":
             container.start()
     except APIError as exc:
         raise HTTPException(
@@ -159,7 +177,7 @@ class RealtimeStrategy:
 
 
 class BatchStrategy:
-    """일괄 배포: 컨테이너를 created 상태로 두고 라벨에 'batch=pending' 표시."""
+    """일정 서비스가 due 회차에서 호출한다. 실제 실행·검증 전에는 running이 아니다."""
 
     name = "batch"
 
@@ -170,15 +188,15 @@ class BatchStrategy:
         deployment_id: str,
     ) -> StrategyResult:
         request_with_label = request.model_copy(
-            update={"labels": {**request.labels, "fed.batch": "pending"}},
+            update={"labels": {**request.labels, "fed.batch": "scheduled-occurrence"}},
         )
         return _run_container(
             ctx,
             request_with_label,
             deployment_id,
             self.name,
-            autostart=False,
-            restart_policy=None,
+            autostart=True,
+            restart_policy={"Name": "unless-stopped"},
         )
 
 

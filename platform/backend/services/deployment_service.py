@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from threading import RLock
 
@@ -12,8 +12,8 @@ from fastapi import HTTPException
 
 from config.registry_manager import load_deployments, save_deployments
 from models.common_schemas import DeploymentReconcileResult
-from models.packaging_schemas import DeploymentEntry, DeploymentRequest
-from services import model_registry
+from models.packaging_schemas import DeploymentEntry, DeploymentRequest, DeploymentTargetResult
+from services import deployment_runtime, model_registry
 from services.deployment_strategies import (
     NodeDeployContext,
     get_strategy,
@@ -68,13 +68,13 @@ def _latest_active_for(model_name: str) -> DeploymentEntry | None:
     """동일 모델의 가장 최근 running/pending 배포를 반환"""
     candidates = [
         d for d in list_deployments()
-        if d.model_name == model_name and d.status in {"running", "pending"}
+        if d.model_name == model_name and d.status == "running" and d.verified_at and not d.is_schedule
     ]
     candidates.sort(key=lambda d: d.created_at, reverse=True)
     return candidates[0] if candidates else None
 
 
-def create_deployment(request: DeploymentRequest) -> DeploymentEntry:
+def create_deployment(request: DeploymentRequest, *, defer=False) -> DeploymentEntry:
     """배포를 생성한다.
 
     1. 모델 레지스트리에서 메타 검증
@@ -83,6 +83,14 @@ def create_deployment(request: DeploymentRequest) -> DeploymentEntry:
     4. 결과를 deployments.yaml에 기록
     """
     # 모델 존재 검증
+    if request.request_id:
+        with model_registry.REGISTRY_LOCK:
+            for previous_request in list_deployments():
+                saved = previous_request.configuration
+                if saved and saved.request_id == request.request_id and previous_request.schedule_parent_id is None:
+                    if saved.model_dump() != request.model_dump():
+                        raise HTTPException(status_code=409, detail="같은 배포 요청 ID의 다른 실행 설정입니다")
+                    return previous_request
     _require_active(request)
 
     refresh_docker_hosts()
@@ -106,13 +114,34 @@ def create_deployment(request: DeploymentRequest) -> DeploymentEntry:
         # 모델의 active 확인과 영속 pending 참조 예약은 archive/delete와 같은 임계구간이다.
         # Docker는 이 잠금을 해제한 뒤 실행한다. 예약 쓰기 실패면 기동하지 않는다.
         with model_registry.REGISTRY_LOCK:
-            _require_active(request)
+            # 동시 동일 request_id의 최초 예약도 같은 잠금 안에서 다시 확인한다.
+            if request.request_id:
+                for previous_request in list_deployments():
+                    saved = previous_request.configuration
+                    if saved and saved.request_id == request.request_id and previous_request.schedule_parent_id is None:
+                        if saved.model_dump() != request.model_dump():
+                            raise HTTPException(status_code=409, detail="같은 배포 요청 ID의 다른 실행 설정입니다")
+                        return previous_request
+            model = _require_active(request)
+            try:
+                image_id, identity = deployment_runtime.pinned_package(model, request)
+                deployment_runtime.probe_inputs(model, request)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             previous = _latest_active_for(request.model_name)
+            scheduled = request.strategy == "batch"
+            created_at = _now_iso()
             entry = DeploymentEntry(deployment_id=deployment_id, model_name=request.model_name,
-                version=request.version, image_tag=image_tag, strategy=request.strategy,
-                target_node_ids=list(request.target_node_ids), status="pending", created_at=_now_iso(),
-                previous_deployment_id=previous.deployment_id if previous else None, launch_pending=True)
+                version=request.version, image_tag=request.image_tag or image_id, strategy=request.strategy, configuration=request.model_copy(deep=True),
+                target_node_ids=list(request.target_node_ids), status="pending", created_at=created_at,
+                previous_deployment_id=previous.deployment_id if previous else None, launch_pending=not scheduled,
+                expected_image_id=image_id, expected_identity=identity, is_schedule=scheduled, schedule_active=scheduled,
+                interval_seconds=request.interval_seconds,
+                next_due_at=(datetime.fromisoformat(created_at)+timedelta(seconds=request.interval_seconds)).isoformat() if scheduled else None,
+                target_results={node: DeploymentTargetResult() for node in request.target_node_ids})
             _save(entry)
+        if scheduled or defer:
+            return entry
         return _launch(entry, request_resolved, hosts, strategy)
 
 
@@ -124,54 +153,75 @@ def _require_active(request):
 
 
 def _launch(entry, request_resolved, hosts, strategy):
-    deployment_id = entry.deployment_id
-
-    container_map: dict[str, str] = {}
-    try:
-        for node_id in entry.target_node_ids:
+    if entry.configuration is None or not entry.expected_image_id:
+        raise HTTPException(status_code=409, detail="복구 가능한 실행 설정/이미지 snapshot이 없습니다")
+    model = _require_active(entry.configuration)
+    request_resolved = entry.configuration.model_copy(update={"image_tag": entry.expected_image_id})
+    container_map = dict(entry.container_map)
+    results = dict(entry.target_results)
+    for node_id in entry.target_node_ids:
+        client = None
+        results[node_id] = DeploymentTargetResult(status="launching", container_id=container_map.get(node_id))
+        entry = entry.model_copy(update={"target_results": dict(results), "launch_pending": True})
+        _save(entry)  # 실제 create 전에 대상 실행 의도를 영속한다.
+        try:
             client = get_docker_client(node_id)
+            deployment_runtime.ensure_image(client, entry.expected_image_id, entry.expected_identity)
             ctx = NodeDeployContext(
                 node_id=node_id,
                 docker_client=client,
                 node_info=hosts[node_id],
             )
-            result = strategy.deploy_to_node(ctx, request_resolved, deployment_id)
+            result = strategy.deploy_to_node(ctx, request_resolved, entry.deployment_id)
             container_map[result.node_id] = result.container_id
             entry = entry.model_copy(update={"container_map": dict(container_map)})
             _save(entry)
-    except (HTTPException, DockerException, OSError) as exc:
-        entry = entry.model_copy(
-            update={
-                "status": "failed",
-                "container_map": container_map,
-                "error": f"배포 기동/게시 미확인 ({type(exc).__name__})",
-                "launch_pending": True,
-            }
-        )
+            container = client.containers.get(result.container_id)
+            results[node_id] = deployment_runtime.verify_target(client, container, hosts[node_id], entry, model, request_resolved)
+        except (HTTPException, DockerException, OSError, ValueError, TypeError, KeyError) as exc:
+            # 독립된 다른 대상은 계속 시도한다. response body/env/입력 행은 저장하지 않는다.
+            results[node_id] = DeploymentTargetResult(status="failed", container_id=container_map.get(node_id),
+                                                       error_code=type(exc).__name__)
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except (DockerException, OSError):
+                    pass
+        entry = entry.model_copy(update={"container_map": dict(container_map), "target_results": dict(results)})
         _save(entry)
-        if isinstance(exc, HTTPException):
-            raise
-        raise HTTPException(status_code=500, detail=entry.error) from exc
-
-    entry = entry.model_copy(
-        update={"status": "running", "container_map": container_map, "launch_pending": False},
-    )
+    failed = any(result.status != "running" for result in results.values())
+    entry = entry.model_copy(update={"status": "failed" if failed else "running",
+        "launch_pending": failed, "verified_at": None if failed else _now_iso(),
+        "error": "일부 대상의 실제 기동/예측 검증 실패" if failed else None})
     _save(entry)
-    logger.info(
-        "배포 완료: id=%s strategy=%s model=%s@%s nodes=%s",
-        deployment_id,
-        entry.strategy,
-        entry.model_name,
-        entry.version,
-        list(container_map.keys()),
-    )
     return entry
+
+
+@_serialized_operation
+def retry_deployment(deployment_id):
+    entry = get_deployment(deployment_id)
+    if entry.is_schedule:
+        from services.deployment_scheduling import retry_schedule
+        return retry_schedule(entry)
+    if entry.status in ("stopped", "rolled_back"):
+        raise HTTPException(status_code=409, detail="정지한 실행은 새 배포 요청으로 시작하세요")
+    if entry.cleanup_pending:
+        raise HTTPException(status_code=409, detail="미확인 정리를 먼저 정지 요청으로 완료하세요")
+    if entry.status == "running" and entry.verified_at:
+        reconcile_deployment(deployment_id)
+        return get_deployment(deployment_id)
+    refresh_docker_hosts()
+    return _launch(entry, entry.configuration, get_docker_hosts(), get_strategy(entry.strategy))
 
 
 @_serialized_operation
 def stop_deployment(deployment_id: str) -> DeploymentEntry:
     """배포된 컨테이너들을 모두 정지/제거"""
     entry = get_deployment(deployment_id)
+    if entry.is_schedule:
+        from services.deployment_scheduling import stop_schedule
+        return stop_schedule(entry)
     refresh_docker_hosts()
     if entry.status == "pending" and not entry.container_map:
         # 이 표시 도입 이전의 빈 pending도 기동 부재의 증거가 아니다.
@@ -235,38 +285,60 @@ def _cleanup_node(client, node_id, remaining, entry):
 
 def rollback_deployment(deployment_id: str) -> DeploymentEntry:
     """이전 배포로 롤백 — 현재 배포를 정지하고 previous를 다시 활성화"""
+    with _operation_lock(deployment_id):
+        return _rollback(deployment_id)
+
+
+def _rollback(deployment_id):
     current = get_deployment(deployment_id)
+    if current.is_schedule:
+        raise HTTPException(status_code=409, detail="실제 검증된 실행 회차를 선택해 rollback하세요")
     if not current.previous_deployment_id:
         raise HTTPException(
             status_code=400,
             detail="롤백 가능한 이전 배포가 없습니다",
         )
     previous = get_deployment(current.previous_deployment_id)
+    if not previous.configuration or not previous.verified_at or not previous.expected_image_id:
+        raise HTTPException(status_code=409, detail="이전 정상 실행의 전체 설정/검증 snapshot이 없습니다")
+    if current.rollback_run_id:
+        restored = _restore_entry(previous, current.rollback_run_id)
+    else:
+        identity = uuid.uuid4().hex
+        current = current.model_copy(update={"rollback_run_id": identity})
+        _save(current)  # 복원 실행 게시 응답 유실도 같은 ID로 재연결한다.
+        restored = _restore_entry(previous, identity)
+    if restored.status != "running" or not restored.verified_at:
+        restored = retry_deployment(restored.deployment_id)
+    else:
+        reconcile_deployment(restored.deployment_id)
+        restored = get_deployment(restored.deployment_id)
+    if restored.status != "running":
+        raise HTTPException(status_code=409, detail="이전 정상 설정의 실제 복원 검증 실패")
+    stopped = stop_deployment(current.deployment_id)
+    if stopped.cleanup_pending or stopped.launch_pending or stopped.container_map:
+        raise HTTPException(status_code=409, detail="복원은 확인됐으나 현재 실행의 정리 확인이 필요합니다")
+    _save(stopped.model_copy(update={"status": "rolled_back", "rollback_run_id": restored.deployment_id}))
+    return restored
 
-    stop_deployment(current.deployment_id)
-    current = get_deployment(current.deployment_id)
-    if current.cleanup_pending or current.launch_pending or current.container_map:
-        raise HTTPException(status_code=409, detail="현재 배포 정리 확인 후 rollback할 수 있습니다")
-    current = current.model_copy(update={"status": "rolled_back"})
-    _save(current)
 
-    # 이전 배포를 동일한 구성으로 재배포
-    request = DeploymentRequest(
-        model_name=previous.model_name,
-        version=previous.version,
-        strategy=previous.strategy,
-        target_node_ids=previous.target_node_ids,
-        image_tag=previous.image_tag,
-    )
-    new_entry = create_deployment(request)
-    logger.info(
-        "롤백: %s → %s (model=%s@%s)",
-        deployment_id,
-        new_entry.deployment_id,
-        previous.model_name,
-        previous.version,
-    )
-    return new_entry
+def _restore_entry(previous, identity):
+    try:
+        return get_deployment(identity)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+    with _operation_lock(identity), model_registry.REGISTRY_LOCK:
+        _require_active(previous.configuration)
+        restored = previous.model_copy(deep=True, update={"deployment_id": identity, "status": "pending",
+            "configuration": previous.configuration.model_copy(update={"request_id": None}),
+            "created_at": _now_iso(), "container_map": {}, "target_results": {}, "verified_at": None,
+            "launch_pending": True, "cleanup_pending": False, "cleanup_results": {}, "error": None,
+            "previous_deployment_id": previous.deployment_id, "rollback_run_id": None,
+            "schedule_parent_id": None, "is_schedule": False, "schedule_active": False,
+            "current_run_id": None, "opening_run_id": None})
+        _save(restored)
+    return restored
 
 
 def _inspect_container_state(node_id: str, container_id: str) -> str | None:
@@ -289,6 +361,36 @@ def reconcile_deployment(deployment_id: str) -> DeploymentReconcileResult:
     previous_status = entry.status
     changes: list[str] = []
     container_states: dict[str, str] = {}
+    if entry.is_schedule:
+        return DeploymentReconcileResult(deployment_id=deployment_id, previous_status=previous_status,
+            current_status=entry.status, reconciled=False, changes=[], container_states={})
+
+    if (entry.configuration is not None and entry.verified_at and not entry.cleanup_pending
+            and entry.status in ("running", "pending", "failed")):
+        model = get_model(entry.model_name, entry.version)
+        refresh_docker_hosts()
+        results = dict(entry.target_results)
+        for node in entry.target_node_ids:
+            client = None
+            try:
+                client = get_docker_client(node)
+                container = client.containers.get(entry.container_map[node])
+                results[node] = deployment_runtime.verify_target(client, container, get_docker_hosts()[node],
+                    entry, model, entry.configuration, timeout=3)
+            except (HTTPException, DockerException, OSError, ValueError, KeyError, TypeError) as exc:
+                results[node] = DeploymentTargetResult(status="failed", container_id=entry.container_map.get(node),
+                    error_code=type(exc).__name__)
+            finally:
+                if client is not None:
+                    client.close()
+        failed = any(result.status != "running" for result in results.values())
+        entry = entry.model_copy(update={"target_results": results, "status": "failed" if failed else "running",
+            "error": "실제 health/predict 재검증 실패" if failed else None})
+        _save(entry)
+        return DeploymentReconcileResult(deployment_id=deployment_id, previous_status=previous_status,
+            current_status=entry.status, reconciled=entry.status != previous_status,
+            changes=["고정 이미지/health/실제 predict 재검증"],
+            container_states={node: value.status for node, value in results.items()})
 
     if entry.launch_pending or entry.cleanup_pending or (entry.status == "pending" and not entry.container_map):
         # 재시작/실패 후 미확인 예약을 빈 map이라는 이유로 해제하지 않는다.

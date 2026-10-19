@@ -135,6 +135,21 @@ export function mapApiDeployments(deployments: readonly DeploymentEntryApi[]): D
     targetSiloIds: d.target_node_ids.map((n) => siloIdToNumber(n, fallbackIndex++)),
     state: DEPLOY_STATE_MAP[d.status],
     ts: d.created_at.slice(11, 19),
+    targetNodeIds: d.target_node_ids,
+    env: d.configuration?.env,
+    inferencePort: d.configuration?.inference_port,
+    probeInputs: d.configuration?.probe_inputs,
+    intervalSec: d.interval_seconds ?? d.configuration?.interval_seconds,
+    verifiedAt: d.verified_at ?? undefined,
+    imageId: d.expected_image_id ?? undefined,
+    targets: d.target_results,
+    isSchedule: d.is_schedule,
+    scheduleActive: d.schedule_active,
+    nextDueAt: d.next_due_at ?? undefined,
+    occurrence: d.occurrence,
+    error: d.error ?? undefined,
+    cleanupPending: d.cleanup_pending,
+    previousDeploymentId: d.previous_deployment_id ?? undefined,
   }))
 }
 

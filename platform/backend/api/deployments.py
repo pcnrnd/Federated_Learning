@@ -1,7 +1,7 @@
 """모델 배포 API 엔드포인트"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, Response
+from fastapi import APIRouter, BackgroundTasks, Header, Response
 
 from models.common_schemas import DeploymentReconcileResult
 from models.packaging_schemas import DeploymentEntry, DeploymentRequest
@@ -20,6 +20,7 @@ def list_deployments_endpoint() -> list[DeploymentEntry]:
 def create_deployment_endpoint(
     request: DeploymentRequest,
     response: Response,
+    background_tasks: BackgroundTasks,
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ) -> DeploymentEntry:
     """새 배포 생성 (realtime / batch / edge) — X-Idempotency-Key 지원"""
@@ -28,10 +29,12 @@ def create_deployment_endpoint(
     if not is_new and cached is not None:
         response.status_code = status or 201
         return DeploymentEntry(**cached)
-    entry = deployment_service.create_deployment(request)
+    entry = deployment_service.create_deployment(request, defer=True)
     idempotency.complete(
         x_idempotency_key, endpoint, request, 201, entry
     )
+    if not entry.is_schedule and entry.status == "pending":
+        background_tasks.add_task(deployment_service.retry_deployment, entry.deployment_id)
     return entry
 
 
@@ -51,6 +54,11 @@ def get_deployment_endpoint(deployment_id: str) -> DeploymentEntry:
 def stop_deployment_endpoint(deployment_id: str) -> DeploymentEntry:
     """배포 정지/제거"""
     return deployment_service.stop_deployment(deployment_id)
+
+
+@router.post("/{deployment_id}/retry", response_model=DeploymentEntry)
+def retry_deployment_endpoint(deployment_id: str):
+    return deployment_service.retry_deployment(deployment_id)
 
 
 @router.post("/{deployment_id}/rollback", response_model=DeploymentEntry)

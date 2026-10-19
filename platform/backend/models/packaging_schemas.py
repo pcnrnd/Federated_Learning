@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Framework = Literal["pytorch", "onnx", "tensorflow", "ridge"]
 DeploymentStrategyName = Literal["realtime", "batch", "edge"]
@@ -128,6 +128,36 @@ class DeploymentRequest(BaseModel):
     inference_port: int = Field(default=8501, ge=1, le=65535)
     env: dict[str, str] = Field(default_factory=dict)
     labels: dict[str, str] = Field(default_factory=dict)
+    interval_seconds: int | None = Field(default=None, ge=1, strict=True)
+    probe_inputs: list[Any] | None = Field(default=None, min_length=1)
+    request_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def execution_contract(self):
+        import re
+        if len(set(self.target_node_ids)) != len(self.target_node_ids):
+            raise ValueError("배포 대상이 중복되었습니다")
+        reserved = {"MODEL_NAME", "MODEL_VERSION", "MODEL_FRAMEWORK", "MODEL_PATH", "ARTIFACT_ROOT", "MODEL_META_PATH"}
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or key in reserved for key in self.env):
+            raise ValueError("환경변수 이름 또는 모델 정체성 예약 변수를 확인하세요")
+        if any("\x00" in value for value in self.env.values()):
+            raise ValueError("환경변수에는 NUL을 사용할 수 없습니다")
+        if self.strategy == "batch":
+            self.interval_seconds = self.interval_seconds or 60
+        elif self.interval_seconds is not None:
+            raise ValueError("반복 주기는 일괄 배포에서만 설정합니다")
+        return self
+
+
+class DeploymentTargetResult(BaseModel):
+    status: Literal["pending", "launching", "running", "failed"] = "pending"
+    container_id: str | None = None
+    image_id: str | None = None
+    endpoint: str | None = None
+    weights_checksum: str | None = None
+    prediction_checksum: str | None = None
+    verified_at: str | None = None
+    error_code: str | None = None
 
 
 class DeploymentEntry(BaseModel):
@@ -150,3 +180,18 @@ class DeploymentEntry(BaseModel):
     launch_pending: bool = False
     cleanup_pending: bool = False
     cleanup_results: dict[str, str] = Field(default_factory=dict)
+    configuration: DeploymentRequest | None = None
+    expected_image_id: str | None = None
+    expected_identity: dict[str, str] = Field(default_factory=dict)
+    target_results: dict[str, DeploymentTargetResult] = Field(default_factory=dict)
+    verified_at: str | None = None
+    is_schedule: bool = False
+    schedule_active: bool = False
+    interval_seconds: int | None = None
+    next_due_at: str | None = None
+    occurrence: int = 0
+    opening_run_id: str | None = None
+    current_run_id: str | None = None
+    schedule_parent_id: str | None = None
+    scheduled_at: str | None = None
+    rollback_run_id: str | None = None

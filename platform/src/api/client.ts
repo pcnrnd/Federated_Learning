@@ -61,7 +61,17 @@ export async function apiMutation<T>(method: 'POST' | 'PUT' | 'DELETE', path: st
   })
   if (!res.ok) {
     // FastAPI 오류 본문의 detail을 살려 사용자에게 원인을 보여준다
-    const detail = await res.text().catch(() => '')
+    let detail = await res.text().catch(() => '')
+    if (path.startsWith('/api/deployments')) {
+      // Pydantic input/context에는 입력한 env 값이 포함될 수 있으므로 UI 로그로 복사하지 않는다.
+      try {
+        const parsed: unknown = JSON.parse(detail)
+        const value = (parsed as { detail?: unknown })?.detail
+        detail = typeof value === 'string' ? value : Array.isArray(value)
+          ? value.map((item: { loc?: unknown[]; msg?: string }) => `${item.loc?.join('.') ?? '설정'}: ${item.msg ?? '유효하지 않음'}`).join('; ')
+          : '배포 요청을 확인하세요'
+      } catch { detail = '배포 요청을 확인하세요' }
+    }
     throw new Error(`${method} ${path} → HTTP ${res.status}${detail ? ` — ${detail}` : ''}`)
   }
   return (await res.json()) as T
@@ -215,6 +225,18 @@ export interface DeploymentEntryApi {
   created_at: string
   previous_deployment_id: string | null
   error: string | null
+  configuration?: DeploymentRequestApi | null
+  expected_image_id?: string | null
+  verified_at?: string | null
+  target_results?: Record<string, { status: 'pending' | 'launching' | 'running' | 'failed';
+    endpoint?: string | null; image_id?: string | null; weights_checksum?: string | null; error_code?: string | null }>
+  is_schedule?: boolean
+  schedule_active?: boolean
+  interval_seconds?: number | null
+  next_due_at?: string | null
+  occurrence?: number
+  schedule_parent_id?: string | null
+  cleanup_pending?: boolean
 }
 
 export interface DeploymentRequestApi {
@@ -222,6 +244,11 @@ export interface DeploymentRequestApi {
   version: string
   strategy: 'realtime' | 'batch' | 'edge'
   target_node_ids: string[]
+  env?: Record<string, string>
+  interval_seconds?: number
+  request_id?: string
+  inference_port?: number
+  probe_inputs?: unknown[]
 }
 
 // --- 정제 잡 (P3 — data 탭 배선) -------------------------------------------
