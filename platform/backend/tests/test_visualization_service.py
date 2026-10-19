@@ -126,7 +126,8 @@ def test_silo_bar_resource_returns_6_silos(six_silos):
                 silo_id=f"silo-{i}",
                 cpu_pct=10.0 * i,
                 mem_pct=20.0,
-                timestamp="2026-05-14T00:00:00Z",
+                timestamp=resource_service._now_utc().isoformat(),
+                measurement_scope={"cpu": "unit-scoped observation", "mem": "unit-scoped observation"},
             )
         )
 
@@ -199,7 +200,9 @@ def test_topology_includes_silos_groups_and_running_deployment(six_silos, alpha_
     # 압박 사일로
     resource_service.set_limit(ResourceLimit(silo_id="silo-1", cpu_pct_max=80.0))
     resource_service.ingest_sample(
-        ResourceSample(silo_id="silo-1", cpu_pct=95.0, mem_pct=10.0, timestamp="2026-05-14T00:00:00Z")
+        ResourceSample(silo_id="silo-1", cpu_pct=95.0, mem_pct=10.0,
+                       timestamp=resource_service._now_utc().isoformat(),
+                       measurement_scope={"cpu": "unit-scoped observation", "mem": "unit-scoped observation"})
     )
     # 배포
     fake = MagicMock()

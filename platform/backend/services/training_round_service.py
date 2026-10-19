@@ -126,7 +126,9 @@ def _verify_membership(round_entry: TrainingRound, silo_id: str) -> None:
         )
 
 
-def _verify_aggregated_from(silo_id: str, aggregated_from: list[str]) -> None:
+def _verify_aggregated_from(
+    round_entry: TrainingRound, silo_id: str, aggregated_from: list[str],
+) -> None:
     """대리 제출 출처 검증 (HFL 설계 스펙 §4.2).
 
     ① 제출자가 해당 클러스터의 집계자인가 → 아니면 403
@@ -137,11 +139,16 @@ def _verify_aggregated_from(silo_id: str, aggregated_from: list[str]) -> None:
     if not aggregated_from:
         return  # 평면 제출 — 기존 경로와 완전히 동일
 
-    cluster = silo_group_service.get_cluster_by_aggregator(silo_id)
-    if cluster is None:
+    if round_entry.cluster_snapshot is None:
+        # 도입 이전 레코드만 현재 그룹으로 추정한다. 빈 스냅샷은 폴백하지 않는다.
+        cluster = silo_group_service.get_cluster_by_aggregator(silo_id)
+        allowed = cluster.member_node_ids if cluster is not None else None
+    else:
+        allowed = round_entry.cluster_snapshot.get(silo_id)
+    if allowed is None:
         raise HTTPException(
             status_code=403,
-            detail=f"사일로 '{silo_id}'는 어떤 클러스터의 집계자도 아니므로 대리 제출할 수 없습니다",
+            detail=f"사일로 '{silo_id}'는 라운드의 클러스터 집계자가 아니므로 대리 제출할 수 없습니다",
         )
 
     duplicated = sorted({n for n in aggregated_from if aggregated_from.count(n) > 1})
@@ -151,11 +158,11 @@ def _verify_aggregated_from(silo_id: str, aggregated_from: list[str]) -> None:
             detail=f"aggregated_from에 중복된 하위 노드: {duplicated}",
         )
 
-    outside = [n for n in aggregated_from if n not in cluster.member_node_ids]
+    outside = [n for n in aggregated_from if n not in allowed]
     if outside:
         raise HTTPException(
             status_code=422,
-            detail=f"클러스터 '{cluster.group_id}'의 멤버가 아닌 하위 노드: {outside}",
+            detail=f"라운드 '{round_entry.round_id}'의 클러스터 멤버가 아닌 하위 노드: {outside}",
         )
 
 
@@ -174,7 +181,7 @@ def submit_contribution(contribution: ParameterContribution) -> ParameterContrib
                 detail=f"라운드 상태가 '{entry.status}'이므로 기여를 받을 수 없습니다",
             )
         _verify_membership(entry, contribution.silo_id)
-        _verify_aggregated_from(contribution.silo_id, contribution.aggregated_from)
+        _verify_aggregated_from(entry, contribution.silo_id, contribution.aggregated_from)
 
         round_bucket = load_round_contributions(contribution.round_id)
         if contribution.silo_id in round_bucket:

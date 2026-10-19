@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { DEPLOY_STRATEGY_META } from '@/constants/simulation'
+import { siloActionKey, siloDraftKey } from '@/lib/siloResources'
 import { useModelStore } from '@/store/useModelStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import type { DeployStrategy } from '@/types/simulation'
@@ -80,7 +81,7 @@ export function StrategyForm({ modelId, packaged }: StrategyFormProps) {
           <div className="edge-node-grid">
             {silos.map((silo) => (
               <button
-                key={silo.id}
+                key={siloDraftKey(siloActionKey(silo))}
                 type="button"
                 className={`edge-node-chip${targetSiloIds.includes(silo.id) ? ' active' : ''}`}
                 onClick={() => toggleSilo(silo.id)}

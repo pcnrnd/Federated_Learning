@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useSiloStore } from '@/store/useSiloStore'
 import type { Silo, SiloThresholds } from '@/types/simulation'
-import { exceedsThreshold } from '@/lib/siloResources'
+import { exceedsThreshold, siloActionKey, siloDraftKey } from '@/lib/siloResources'
 
 interface SiloCardProps {
   silo: Silo
@@ -35,25 +35,27 @@ function ResourceBar({ label, value, threshold }: { label: string; value: number
 }
 
 export function SiloCard({ silo }: SiloCardProps) {
+  const key = siloActionKey(silo)
   const updateThreshold = useSiloStore((s) => s.updateThreshold)
   const removeSilo = useSiloStore((s) => s.removeSilo)
   const silos = useSiloStore((s) => s.silos)
-  const draft = useSiloStore((s) => s.thresholdDrafts[silo.id]) ?? silo.thresholds
+  const draft = useSiloStore((s) => s.thresholdDrafts[siloDraftKey(key)]) ?? silo.thresholds
   const editThreshold = useSiloStore((s) => s.editThreshold)
   const pending = useSiloStore((s) => s.pending)
+  const pollError = useSiloStore((s) => s.pollError)
   const [editing, setEditing] = useState(false)
 
   const overCount = METRIC_META.filter((m) => exceedsThreshold(silo[m.key], silo.thresholds[m.key])).length
 
-  const isRoot = silo.parentId === undefined
-  const parentName = isRoot ? null : silos.find((s) => s.id === silo.parentId)?.name
-  const childCount = silos.filter((s) => s.parentId === silo.id).length
+  const isRoot = silo.serverId ? silo.parentServerId === undefined : silo.parentId === undefined
+  const parentName = isRoot ? null : silos.find((s) => silo.serverId ? s.serverId === silo.parentServerId : s.id === silo.parentId)?.name
+  const childCount = silos.filter((s) => silo.serverId ? s.parentServerId === silo.serverId : s.parentId === silo.id).length
 
   return (
     <div className="glass-panel silo-card">
       <div className="silo-card-head">
         <div className="silo-title">
-          <span className={`silo-status-dot${overCount > 0 ? ' alert' : ''}`} />
+          <span className={`silo-status-dot${overCount > 0 ? ' alert' : ''}${silo.serverId && (pollError || silo.sampleState !== 'fresh') ? ' unknown' : ''}`} />
           <h3>{silo.name}</h3>
           {childCount > 0 && (
             <span className="silo-tier-badge" title="하위 노드의 로컬 집계를 담당합니다">
@@ -76,7 +78,7 @@ export function SiloCard({ silo }: SiloCardProps) {
               type="button"
               className="model-action remove"
               disabled={pending}
-              onClick={() => void removeSilo(silo.id)}
+              onClick={() => void removeSilo(key)}
             >
               <i className="fa-solid fa-link-slash" /> 해제
             </button>
@@ -85,7 +87,7 @@ export function SiloCard({ silo }: SiloCardProps) {
       </div>
 
       {silo.serverId && <p className="silo-observation" role="status">
-        {silo.serverId} · {({ fresh: '수집 중', stale: '수집 지연', uncollected: '미수집', unsupported: '측정 미지원' } as const)[silo.sampleState ?? 'uncollected']}
+        {silo.serverId} · {pollError ? '연결 실패 · 마지막 관측' : ({ fresh: '수집 중', stale: '수집 지연', uncollected: '미수집', unsupported: '측정 미지원', unverified: '측정 범위 확인 대기' } as const)[silo.sampleState ?? 'uncollected']}
         {silo.lastSampleAt && <> · <time dateTime={silo.lastSampleAt}>{new Date(silo.lastSampleAt).toLocaleString()}</time></>}
       </p>}
       {silo.resourceGate && <p className="silo-observation">자원 판정: {({ unknown: '필수 관측 대기', unmonitored: '활성 임계 감시 없음', available: '관측 임계 이내', over_budget: '임계 초과' } as const)[silo.resourceGate]}</p>}
@@ -113,20 +115,20 @@ export function SiloCard({ silo }: SiloCardProps) {
         <div className="silo-threshold-editor">
           {METRIC_META.map((m) => (
             <div key={m.key} className="control-group">
-              <label htmlFor={`th-${silo.id}-${m.key}`}>{m.label} 임계(%)</label>
+              <label htmlFor={`th-${siloDraftKey(key)}-${m.key}`}>{m.label} 임계(%)</label>
               <input
-                id={`th-${silo.id}-${m.key}`}
+                id={`th-${siloDraftKey(key)}-${m.key}`}
                 type="number"
                 className="model-input"
                 min={0}
                 max={100}
                 value={draft[m.key] ?? ''}
                 placeholder="미감시"
-                onChange={(e) => editThreshold(silo.id, { [m.key]: e.target.value === '' ? null : Number(e.target.value) })}
+                onChange={(e) => editThreshold(key, { [m.key]: e.target.value === '' ? null : Number(e.target.value) })}
               />
             </div>
           ))}
-          <button type="button" className="btn btn-primary" disabled={pending} onClick={() => void updateThreshold(silo.id, draft).then((saved) => { if (saved) setEditing(false) })}>임계값 저장</button>
+          <button type="button" className="btn btn-primary" disabled={pending} onClick={() => void updateThreshold(key, draft).then((saved) => { if (saved) setEditing(false) })}>임계값 저장</button>
         </div>
       )}
     </div>

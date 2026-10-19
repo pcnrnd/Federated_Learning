@@ -157,8 +157,9 @@ export interface Silo {
   /** 상위 사일로 id. undefined면 1단 사일로. `NodeState.parentId`와 동일 의미 */
   parentId?: number
   serverId?: string
+  parentServerId?: string
   lastSampleAt?: string
-  sampleState?: 'fresh' | 'stale' | 'uncollected' | 'unsupported'
+  sampleState?: 'fresh' | 'stale' | 'uncollected' | 'unsupported' | 'unverified'
   measurementScope?: Record<string, string>
   unavailable?: Record<string, string>
   cpuCores?: number | null

@@ -3544,6 +3544,7 @@ span.dep-state-failed.dep-state-badge {
 
 .silo-observation, .silo-scope { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .silo-scope { margin: 4px 0 10px; font-size: 11px; }
+.silo-status-dot.unknown { background: var(--text-secondary); }
 .silo-group-panel { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgb(var(--ink) / 0.15); }
 .silo-group-list { display: grid; gap: 10px; margin-bottom: 16px; overflow-wrap: anywhere; }
 .silo-group-members { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px; }

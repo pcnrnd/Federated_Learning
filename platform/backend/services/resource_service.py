@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from config.resource_manager import load_resource_limits, save_resource_limits
+from config.server_manager import load_servers
 from models.resource_schemas import (
     ResourceAlert,
     ResourceLimit,
@@ -44,7 +45,27 @@ _alerts: dict[str, ResourceAlert] = {}
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return _now_utc().isoformat()
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def observation_is_valid(sample: ResourceSample, metric: str) -> bool:
+    """원 legacy 값은 보존하되 범위·현재성 확인 전에는 실측으로 인증하지 않는다."""
+    scope = metric.removesuffix("_pct")
+    if getattr(sample, metric, None) is None or not sample.measurement_scope.get(scope):
+        return False
+    try:
+        timestamp = datetime.fromisoformat(sample.timestamp.replace("Z", "+00:00"))
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            return False
+        age = (_now_utc() - timestamp).total_seconds()
+        interval = int(load_servers().get(sample.silo_id, {}).get("collect_interval_seconds", 15))
+        return 0 <= age <= max(interval * 3, 60)
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 # ---------- 임계값 ----------
@@ -101,6 +122,8 @@ def _check_against_limit(
     ]
     for metric, observed, cap in checks:
         if cap is None or observed is None:
+            continue
+        if not observation_is_valid(sample, f"{metric}_pct"):
             continue
         if observed > cap:
             alert = ResourceAlert(
@@ -291,7 +314,7 @@ def gate_status(silo_id: str) -> str:
         return "unknown" if any(cap is not None for _, cap in checks) else "unmonitored"
     active = [(metric, cap) for metric, cap in checks
               if cap is not None and sample.capabilities.get(metric) is not False]
-    if any(getattr(sample, metric) is None for metric, _ in active):
+    if any(not observation_is_valid(sample, metric) for metric, _ in active):
         return "unknown"
     if any(getattr(sample, metric) > cap for metric, cap in active):
         return "over_budget"
