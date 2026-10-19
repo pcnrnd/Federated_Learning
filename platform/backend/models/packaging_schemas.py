@@ -67,6 +67,10 @@ class ModelIdentityRequest(BaseModel):
     version: str
 
 
+class RidgeIdentityPredictRequest(ModelIdentityRequest, RidgePredictRequest):
+    """slash를 포함한 실제 모델명을 JSON 정체성으로 전달한다."""
+
+
 class ModelEntry(BaseModel):
     """모델 레지스트리 엔트리"""
 
@@ -143,3 +147,6 @@ class DeploymentEntry(BaseModel):
     created_at: str
     previous_deployment_id: str | None = None
     error: str | None = None
+    launch_pending: bool = False
+    cleanup_pending: bool = False
+    cleanup_results: dict[str, str] = Field(default_factory=dict)

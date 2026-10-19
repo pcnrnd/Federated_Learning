@@ -36,6 +36,20 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return apiMutation<T>('POST', path, body)
 }
 
+export interface RidgePredictionApi {
+  model: string
+  version: string
+  artifact_id: string
+  weights_checksum: string
+  result_id: string
+  predictions: number[]
+}
+
+/** 모델 이름은 URL segment로 변환하지 않고 JSON의 정확한 정체성을 유지한다. */
+export function predictRegisteredRidge(name: string, version: string, inputs: unknown[]): Promise<RidgePredictionApi> {
+  return apiPost<RidgePredictionApi>('/api/models/predict', { name, version, inputs })
+}
+
 export async function apiMutation<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
   if (!API_BASE) throw new Error('VITE_API_BASE가 설정되지 않았습니다')
 
