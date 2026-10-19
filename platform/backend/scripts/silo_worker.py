@@ -41,6 +41,7 @@ import sys
 import time
 
 from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
+from silo_sdk.resources import sample_resources
 from silo_sdk.alignment import align_rows, hash_ids, load_align_key, order_digest
 from silo_sdk.client import SiloClientError
 from silo_sdk.edge import combine
@@ -273,45 +274,7 @@ def run_align(args: argparse.Namespace) -> None:
                       "intersection": len(intersection), **report}, ensure_ascii=False))
 
 
-# ---------- 리소스 실측 (/proc — 리눅스 컨테이너 전용) ----------
-
-
-def _cpu_pct(sample_interval: float = 0.25) -> float:
-    """/proc/stat 2회 스냅샷 차이로 CPU 사용률(%)을 계산한다."""
-
-    def snap() -> tuple[int, int]:
-        with open("/proc/stat", encoding="ascii") as f:
-            fields = [int(v) for v in f.readline().split()[1:]]
-        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)  # idle + iowait
-        return idle, sum(fields)
-
-    idle_a, total_a = snap()
-    time.sleep(sample_interval)
-    idle_b, total_b = snap()
-    delta_total = total_b - total_a
-    if delta_total <= 0:
-        return 0.0
-    return round(100.0 * (1.0 - (idle_b - idle_a) / delta_total), 1)
-
-
-def _mem_pct() -> float:
-    info: dict[str, int] = {}
-    with open("/proc/meminfo", encoding="ascii") as f:
-        for line in f:
-            key, _, rest = line.partition(":")
-            info[key] = int(rest.split()[0])
-    total = info.get("MemTotal", 0)
-    if total <= 0:
-        return 0.0
-    return round(100.0 * (1.0 - info.get("MemAvailable", total) / total), 1)
-
-
-def _disk_pct(path: str = "/") -> float:
-    st = os.statvfs(path)
-    total = st.f_blocks * st.f_frsize
-    if total <= 0:
-        return 0.0
-    return round(100.0 * (1.0 - st.f_bavail * st.f_frsize / total), 1)
+# ---------- 사일로 자기 cgroup 리소스 실측 ----------
 
 
 def _is_transient(exc: BaseException) -> bool:
@@ -336,10 +299,26 @@ def run_monitor(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
     pushed = 0
     failures = 0  # 연속 실패 — 성공 시 0으로
+    interval = args.interval
     while True:
-        cpu, mem, disk = _cpu_pct(), _mem_pct(), _disk_pct()
+        resources = sample_resources()
+        cpu, mem, disk = resources["cpu_pct"], resources["mem_pct"], resources["disk_pct"]
         try:
-            client.push_resource_sample(cpu, mem, disk_pct=disk)
+            try:
+                config = client.get_silo()
+                interval = config["collect_interval_seconds"]
+            except SiloClientError as config_error:
+                if config_error.status != 404:
+                    raise
+                interval = args.interval  # 이전 서버 설정과도 동작한다.
+            client.push_resource_sample(
+                cpu, mem, disk_pct=disk, measurement_scope=resources["measurement_scope"],
+                unavailable=resources["unavailable"],
+                cpu_cores=resources.get("cpu_cores"),
+                mem_used_bytes=resources.get("mem_used_bytes"),
+                mem_limit_bytes=resources.get("mem_limit_bytes"),
+                capabilities=resources.get("capabilities"),
+            )
         except Exception as exc:  # noqa: BLE001 — 분류 후 영구 오류는 그대로 다시 던진다
             if not _is_transient(exc):
                 raise
@@ -369,7 +348,7 @@ def run_monitor(args: argparse.Namespace) -> None:
             )
             if args.count > 0 and pushed >= args.count:
                 return
-        time.sleep(args.interval)
+        time.sleep(interval)
 
 
 # ---------- 학습 ----------

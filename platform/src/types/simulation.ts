@@ -138,22 +138,34 @@ export interface Deployment {
 // --- 6.6 사일로 리소스 모니터링 + 등록 ---
 
 export interface SiloThresholds {
-  cpu: number
-  mem: number
-  disk: number
+  cpu: number | null
+  mem: number | null
+  disk: number | null
 }
+
+export type ResourceHistoryMetric = keyof SiloThresholds | 'cpu_cores' | 'mem_used_bytes'
 
 export interface Silo {
   id: number
   name: string
   endpoint: string
   collectIntervalSec: number
-  cpu: number
-  mem: number
-  disk: number
+  cpu: number | null
+  mem: number | null
+  disk: number | null
   thresholds: SiloThresholds
   /** 상위 사일로 id. undefined면 1단 사일로. `NodeState.parentId`와 동일 의미 */
   parentId?: number
+  serverId?: string
+  lastSampleAt?: string
+  sampleState?: 'fresh' | 'stale' | 'uncollected' | 'unsupported'
+  measurementScope?: Record<string, string>
+  unavailable?: Record<string, string>
+  cpuCores?: number | null
+  memUsedBytes?: number | null
+  capabilities?: Record<string, boolean>
+  resourceGate?: 'unknown' | 'unmonitored' | 'available' | 'over_budget'
+  gpuThreshold?: number | null
 }
 
 // --- 6.4 사일로 데이터 정제 · 샤딩 ---

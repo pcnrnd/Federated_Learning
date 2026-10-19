@@ -2,16 +2,22 @@ import { useMemo, useState } from 'react'
 import { SiloCard } from '@/components/silos/SiloCard'
 import { SiloRegisterForm } from '@/components/silos/SiloRegisterForm'
 import { useSiloStore } from '@/store/useSiloStore'
+import { useSimulationStore } from '@/store/useSimulationStore'
+import { exceedsThreshold } from '@/lib/siloResources'
+import { SiloGroups } from '@/components/silos/SiloGroups'
+import { SiloResourceHistory } from '@/components/silos/SiloResourceHistory'
 
 export function SilosView() {
   const silos = useSiloStore((s) => s.silos)
+  const error = useSiloStore((s) => s.mutationError)
+  const isLive = !useSimulationStore((s) => s.mockEnabled)
   const [showForm, setShowForm] = useState(false)
 
   const alertCount = useMemo(
     () =>
       silos.filter(
         (s) =>
-          s.cpu >= s.thresholds.cpu || s.mem >= s.thresholds.mem || s.disk >= s.thresholds.disk,
+          exceedsThreshold(s.cpu, s.thresholds.cpu) || exceedsThreshold(s.mem, s.thresholds.mem) || exceedsThreshold(s.disk, s.thresholds.disk),
       ).length,
     [silos],
   )
@@ -28,6 +34,8 @@ export function SilosView() {
           </span>
         </div>
         <div className="card-body">
+          <p className="silo-observation">{isLive ? '실서버 모드 · 등록과 설정을 서버에 저장합니다.' : '데모 모드 · 화면 안의 예시 상태입니다.'}</p>
+          {error && <p role="alert" className="text-red">서버 변경 실패: {error}</p>}
           <div className="model-toolbar">
             <div className="silo-summary">
               <span className="lbl">등록 사일로</span>
@@ -52,6 +60,7 @@ export function SilosView() {
               ))}
             </div>
           )}
+          {isLive && <><SiloGroups /><SiloResourceHistory /></>}
         </div>
       </div>
     </div>

@@ -33,10 +33,14 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  return apiMutation<T>('POST', path, body)
+}
+
+export async function apiMutation<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
   if (!API_BASE) throw new Error('VITE_API_BASE가 설정되지 않았습니다')
 
   const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
+    method,
     headers: buildHeaders(body !== undefined),
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -44,7 +48,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   if (!res.ok) {
     // FastAPI 오류 본문의 detail을 살려 사용자에게 원인을 보여준다
     const detail = await res.text().catch(() => '')
-    throw new Error(`POST ${path} → HTTP ${res.status}${detail ? ` — ${detail}` : ''}`)
+    throw new Error(`${method} ${path} → HTTP ${res.status}${detail ? ` — ${detail}` : ''}`)
   }
   return (await res.json()) as T
 }
@@ -54,11 +58,46 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 export interface ResourceUsageSummary {
   silo_id: string
   last_sample_at: string
-  cpu_pct: number
-  mem_pct: number
+  cpu_pct: number | null
+  mem_pct: number | null
   gpu_pct: number | null
   disk_pct: number | null
   over_budget: boolean
+  availability?: 'unknown' | 'unmonitored' | 'available' | 'over_budget'
+  measurement_scope?: Record<string, string>
+  unavailable?: Record<string, string>
+  cpu_cores?: number | null
+  mem_used_bytes?: number | null
+  mem_limit_bytes?: number | null
+  capabilities?: Record<string, boolean>
+}
+
+export interface SiloRegistrationApi {
+  silo_id: string
+  label: string
+  base_url: string
+  collect_interval_seconds: number
+}
+
+export interface SiloGroupApi {
+  group_id: string
+  description: string
+  member_node_ids: string[]
+  aggregator_node_id: string | null
+  tags?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface ResourceSampleApi {
+  silo_id: string
+  timestamp: string
+  cpu_pct: number | null
+  mem_pct: number | null
+  disk_pct: number | null
+  measurement_scope?: Record<string, string>
+  unavailable?: Record<string, string>
+  cpu_cores?: number | null
+  mem_used_bytes?: number | null
 }
 
 export interface ResourceLimit {

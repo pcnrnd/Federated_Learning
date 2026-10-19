@@ -11,6 +11,8 @@ import {
   type ResourceLimit,
   type ResourceUsageSummary,
   type TrainingRoundSummary,
+  type SiloRegistrationApi,
+  type SiloGroupApi,
 } from '@/api/client'
 import {
   mapApiDeployments,
@@ -18,8 +20,8 @@ import {
   mapMetricsToChartPoints,
   mapMetricsToMonitorPoints,
   mapModelsToVersions,
-  mapUsageToSilos,
 } from '@/api/mappers'
+import { mapRegisteredSilos } from '@/lib/siloResources'
 import { useDataStore } from '@/store/useDataStore'
 import { useModelStore } from '@/store/useModelStore'
 import { useSiloStore } from '@/store/useSiloStore'
@@ -50,8 +52,9 @@ export function useLivePolling(): void {
       if (inFlight) return // 이전 주기 요청이 아직 진행 중 — 겹침 방지
       inFlight = true
       const store = useSimulationStore.getState()
+      const siloEpoch = useSiloStore.getState().mutationEpoch
       try {
-        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs, models, deployments] = await Promise.all([
+        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs, models, deployments, registrations, groups] = await Promise.all([
           apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
           apiGet<ResourceLimit[]>('/api/resources/limits'),
           apiGet<Paginated<MetricSample>>(
@@ -67,10 +70,14 @@ export function useLivePolling(): void {
           apiGet<CleaningJobApi[]>('/api/cleaning-jobs'),
           apiGet<ModelEntryApi[]>('/api/models'),
           apiGet<DeploymentEntryApi[]>('/api/deployments'),
+          apiGet<SiloRegistrationApi[]>('/api/silos'),
+          apiGet<SiloGroupApi[]>('/api/silo-groups'),
         ])
         if (cancelled) return
 
-        useSiloStore.getState().setSilos(mapUsageToSilos(usage, limits))
+        if (siloEpoch === useSiloStore.getState().mutationEpoch) {
+          useSiloStore.getState().applyLiveSilos(mapRegisteredSilos(registrations, usage, limits, groups), groups)
+        }
 
         const cleaning = mapCleaningJobs(cleaningJobs)
         useDataStore.getState().applyLiveCleaning(cleaning.dataBySilo, cleaning.jobs)
