@@ -54,7 +54,7 @@ src/
 ├── hooks/useSimulationEngine.ts # 라운드 오케스트레이션 + 취소 가능
 ├── hooks/useVisualizationData.ts # 실서버 시각화 데이터 조회
 ├── views/
-│   └── VisualizationView.tsx # 데이터 시각화 탭 컨테이너
+│   └── VisualizationView.tsx # 연합 학습 분석 탭 컨테이너
 ├── components/
 │   ├── layout/             # Sidebar, GlobalHeader, AppLayout
 │   ├── topology/           # SVG 토폴로지 + 패킷 애니메이션
@@ -84,7 +84,7 @@ useSimulationEngine ──라운드 사이클──▶ store 업데이트(불변
 ## 기능
 
 - 12개 분산 노드 + 중앙 서버 토폴로지 (SVG)
-- 「데이터 시각화」 탭 — 실서버 성능 추이·참여 매트릭스·사일로 비교·연합 토폴로지·기준 분포 5종
+- 「연합 학습 분석」 탭 — 실서버 성능 추이·참여 매트릭스·사일로 비교·연합 토폴로지·기준 분포 5종
 - 3개 집계 알고리즘
   - **FedAvg** — 연합 가중 평균
   - **Federated Median** — 이상치에 견고
