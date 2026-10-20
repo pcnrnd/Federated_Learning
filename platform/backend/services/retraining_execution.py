@@ -155,9 +155,11 @@ def _register(event, definition):
     entries, result = _results(event, definition)
     if event["final_result_id"] != result.result_id or event["round_ids"] != [r.round_id for r in entries]:
         raise ContractError("final_result_conflict")
-    # registry→원장 순서. 등록 후 링크 저장 실패 사이 archive/delete도 참조를 본다.
+    # 등록 진입의 round/job 조회는 registry 잠금 밖이어야 한다(job→round→registry와 역전 금지).
+    # 등록 서비스가 게시 전에 저장한 result 예약이 아래 재진입까지 archive/delete를 막는다.
+    entry = training_model_service.register_completed_result(entries[-1].round_id)
     with model_registry.REGISTRY_LOCK:
-        entry = training_model_service.register_completed_result(entries[-1].round_id)
+        entry = model_registry.get_model(entry.name, entry.version)
         artifact = model_registry.get_ridge_artifact(entry)
         if (entry.name != definition["model_name"] or entry.version == definition["version"]
                 or entry.metadata["result_id"] != result.result_id
