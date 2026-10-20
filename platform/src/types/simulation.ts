@@ -136,6 +136,97 @@ export interface ModelPackage {
   error?: string
 }
 
+export interface ServingGate {
+  min_pairs: number
+  window_seconds: number
+  max_age_seconds: number
+  max_error_rate: number
+  max_mean_abs_difference: number
+  max_latency_ratio: number | null
+}
+
+export interface ServingRoute {
+  route_id: string
+  primary_deployment_id: string
+  shadow_deployment_id: string | null
+  previous_deployment_id: string | null
+  shadow_id: string | null
+  status: 'active' | 'promoted' | 'rolled_back' | 'closed'
+  generation: number
+  mirror_pct: number
+  comparison_gate: ServingGate | null
+  comparison_started_at: string | null
+  created_at: string
+  changed_at: string
+  cleanup_deployment_ids: string[]
+  cleanup_pending: boolean
+  error: string | null
+}
+
+export interface ServingRoleSummary {
+  requests: number
+  successes: number
+  errors: number
+  interrupted: number
+  measured_requests: number
+  mean_latency_ms: number | null
+  throughput_rps: number | null
+}
+
+export interface ServingComparison {
+  route_id: string
+  generation: number
+  window_start: string
+  window_end: string
+  window_seconds: number
+  request_count: number
+  pending: number
+  interrupted: number
+  pairs: number
+  difference_count: number
+  mean_abs_difference: number | null
+  latest_pair_at: string | null
+  roles: Record<string, ServingRoleSummary>
+  paired_roles: Record<string, ServingRoleSummary>
+  gate_ready: boolean
+  gate_reasons: string[]
+  gate: ServingGate | null
+}
+
+export interface ServingEvent {
+  request_id: string
+  route_id: string
+  generation: number
+  started_at: string
+  completed_at: string | null
+  status: 'pending' | 'completed' | 'interrupted'
+  input_count: number
+  paired: boolean
+  mean_abs_difference: number | null
+  comparison_error: string | null
+  roles: Record<string, { deployment_id: string; model_name: string; version: string; node_id: string | null;
+    image_id: string | null; status: 'ok' | 'error' | 'interrupted'; duration_ms: number | null; error_code: string | null }>
+}
+
+export interface ServingGateDraft {
+  min_pairs: string
+  window_seconds: string
+  max_age_seconds: string
+  max_error_rate: string
+  max_mean_abs_difference: string
+  max_latency_ratio: string
+}
+
+export interface ServingShadow {
+  shadow_id: string
+  route_id: string | null
+  shadow_deployment_id: string
+  shadow_version: string
+  status: 'initializing' | 'active' | 'promoted' | 'aborted' | 'rolled_back' | 'failed'
+  cleanup_pending: boolean
+  error: string | null
+}
+
 export interface Deployment {
   id: string
   modelId: string

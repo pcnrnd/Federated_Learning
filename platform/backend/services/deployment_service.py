@@ -222,6 +222,13 @@ def stop_deployment(deployment_id: str) -> DeploymentEntry:
     if entry.is_schedule:
         from services.deployment_scheduling import stop_schedule
         return stop_schedule(entry)
+    with model_registry.REGISTRY_LOCK:
+        from services import serving_store
+        if serving_store.references(deployment_id):
+            raise HTTPException(status_code=409, detail="실제 route/standby 또는 진행 요청이 참조하는 실행입니다")
+        entry = get_deployment(deployment_id)
+        entry = entry.model_copy(update={"cleanup_pending": True})
+        _save(entry)  # route 신규 binding과 같은 lock에서 정리 의도를 먼저 예약한다.
     refresh_docker_hosts()
     if entry.status == "pending" and not entry.container_map:
         # 이 표시 도입 이전의 빈 pending도 기동 부재의 증거가 아니다.
@@ -285,12 +292,33 @@ def _cleanup_node(client, node_id, remaining, entry):
 
 def rollback_deployment(deployment_id: str) -> DeploymentEntry:
     """이전 배포로 롤백 — 현재 배포를 정지하고 previous를 다시 활성화"""
+    snapshot = get_deployment(deployment_id)
+    if snapshot.schedule_parent_id:
+        # tick/stop와 같은 parent→child 잠금 순서. 복원 뒤 자동 다음 회차가 덮어쓰지 않는다.
+        with _operation_lock(snapshot.schedule_parent_id):
+            parent = get_deployment(snapshot.schedule_parent_id)
+            if parent.current_run_id == snapshot.rollback_run_id and snapshot.rollback_run_id:
+                reconcile_deployment(snapshot.rollback_run_id)
+                return get_deployment(snapshot.rollback_run_id)
+            if parent.current_run_id != deployment_id or parent.opening_run_id:
+                raise HTTPException(status_code=409, detail="진행 중인 다음 회차가 없는 현재 batch 실행만 복원하세요")
+            _save(parent.model_copy(update={"schedule_active": False}))
+            with _operation_lock(deployment_id):
+                restored = _rollback(deployment_id)
+            parent = get_deployment(snapshot.schedule_parent_id)
+            _save(parent.model_copy(update={"current_run_id": restored.deployment_id, "opening_run_id": None,
+                "schedule_active": False, "status": "pending", "error": "회차 복원 완료; 자동 일정 중지"}))
+            return restored
     with _operation_lock(deployment_id):
         return _rollback(deployment_id)
 
 
 def _rollback(deployment_id):
     current = get_deployment(deployment_id)
+    with model_registry.REGISTRY_LOCK:
+        from services import serving_store
+        if serving_store.references(deployment_id):
+            raise HTTPException(status_code=409, detail="serving route가 참조하는 실행은 route rollback을 사용하세요")
     if current.is_schedule:
         raise HTTPException(status_code=409, detail="실제 검증된 실행 회차를 선택해 rollback하세요")
     if not current.previous_deployment_id:
@@ -322,7 +350,7 @@ def _rollback(deployment_id):
     return restored
 
 
-def _restore_entry(previous, identity):
+def _restore_entry(previous, identity, *, extra=None):
     try:
         return get_deployment(identity)
     except HTTPException as exc:
@@ -336,7 +364,7 @@ def _restore_entry(previous, identity):
             "launch_pending": True, "cleanup_pending": False, "cleanup_results": {}, "error": None,
             "previous_deployment_id": previous.deployment_id, "rollback_run_id": None,
             "schedule_parent_id": None, "is_schedule": False, "schedule_active": False,
-            "current_run_id": None, "opening_run_id": None})
+            "current_run_id": None, "opening_run_id": None, **(extra or {})})
         _save(restored)
     return restored
 

@@ -85,10 +85,29 @@ test('일정/대상별 실측 상태와 서버 오류를 렌더링하며 env 값
   expect(form).toContain('대상 사일로 선택')
 })
 
-test('배포 validation 오류의 input/env 값은 사용자 로그로 복사하지 않는다', async () => {
+test.each(['/api/deployments', '/api/serving-routes/actual/predict', '/api/shadow-deployments'])('validation input/env 값은 사용자 로그로 복사하지 않는다: %s', async (path) => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: [{ loc: ['body', 'env'],
     msg: 'Value error, 환경변수 이름을 확인하세요', input: { SECRET: 'private-value' } }] }), { status: 422 })))
   const { apiPost } = await import('@/api/client')
-  await expect(apiPost('/api/deployments', {})).rejects.toThrow('body.env')
-  await expect(apiPost('/api/deployments', {})).rejects.not.toThrow('private-value')
+  await expect(apiPost(path, {})).rejects.toThrow('body.env')
+  await expect(apiPost(path, {})).rejects.not.toThrow('private-value')
+})
+
+test('G5-A-F1 archived 모델 행 복원은 선택 JSON identity를 보내고 과거 실행 previous endpoint를 호출하지 않는다', async () => {
+  const { store, id } = await world()
+  store.setState((state) => ({ models: state.models.map((model) => ({ ...model, status: 'archived' })) }))
+  const writes: Array<{ url: string; body: unknown }> = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      writes.push({ url, body: JSON.parse(init.body as string) })
+      return new Response('{}')
+    }
+    return new Response(JSON.stringify(url.endsWith('/api/models') ? [{ name: 'm', version: '1.0.0',
+      status: 'active', metadata: {}, created_at: 'today' }] : []))
+  }))
+  store.getState().rollbackModel(id)
+  await vi.waitFor(() => { expect(writes).toHaveLength(1); expect(store.getState().liveModelPending).toBe(false) })
+  expect(writes[0]).toEqual({ url: 'http://central/api/deployments/restore-model', body: {
+    name: 'm', version: '1.0.0', request_id: expect.stringMatching(/^[a-f0-9]{32}$/),
+  } })
 })

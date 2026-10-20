@@ -62,7 +62,7 @@ export async function apiMutation<T>(method: 'POST' | 'PUT' | 'DELETE', path: st
   if (!res.ok) {
     // FastAPI 오류 본문의 detail을 살려 사용자에게 원인을 보여준다
     let detail = await res.text().catch(() => '')
-    if (path.startsWith('/api/deployments')) {
+    if (['/api/deployments', '/api/serving-routes', '/api/shadow-deployments'].some((prefix) => path.startsWith(prefix))) {
       // Pydantic input/context에는 입력한 env 값이 포함될 수 있으므로 UI 로그로 복사하지 않는다.
       try {
         const parsed: unknown = JSON.parse(detail)

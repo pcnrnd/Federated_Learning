@@ -79,6 +79,12 @@ def tick(now=None):
                 continue
             with service._operation_lock(snapshot.deployment_id):
                 fresh = service.get_deployment(snapshot.deployment_id)
+                if not fresh.schedule_active and fresh.current_run_id:
+                    current = service.get_deployment(fresh.current_run_id)
+                    if current.status == "rolled_back" and current.rollback_run_id:
+                        fresh = fresh.model_copy(update={"current_run_id": current.rollback_run_id,
+                            "opening_run_id": None, "error": "회차 복원 완료; 자동 일정 중지"})
+                        service._save(fresh)
                 if not fresh.schedule_active:
                     continue
                 if fresh.opening_run_id or (fresh.next_due_at and datetime.fromisoformat(fresh.next_due_at) <= now):
@@ -100,13 +106,19 @@ def stop_schedule(parent):
     parent = parent.model_copy(update={"schedule_active": False, "status": "stopped"})
     service._save(parent)  # 다음 회차부터 먼저 금지; Docker I/O는 registry lock 밖.
     pending = False
-    for identity in {parent.current_run_id, parent.opening_run_id} - {None}:
+    identities = {parent.current_run_id, parent.opening_run_id} - {None}
+    if parent.current_run_id:
+        current = service.get_deployment(parent.current_run_id)
+        if current.rollback_run_id:
+            identities.add(current.rollback_run_id)
+    for identity in identities:
         try:
             child = service.stop_deployment(identity)
         except HTTPException as exc:
             if exc.status_code == 404:
                 continue  # child 게시 전 intent만 저장된 경우.
-            raise
+            pending = True  # route/진행 요청 pin 등 미확인 정리를 parent 성공으로 숨기지 않는다.
+            continue
         pending = pending or child.cleanup_pending or child.launch_pending or bool(child.container_map)
     parent = parent.model_copy(update={"status": "failed" if pending else "stopped", "cleanup_pending": pending,
         "error": "일부 일괄 회차 정리가 미확인입니다" if pending else None})

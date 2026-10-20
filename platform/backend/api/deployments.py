@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Header, Response
 
 from models.common_schemas import DeploymentReconcileResult
-from models.packaging_schemas import DeploymentEntry, DeploymentRequest
+from models.packaging_schemas import DeploymentEntry, DeploymentRequest, ModelRestoreRequest
 from services import deployment_service, idempotency
 
 router = APIRouter(prefix="/api/deployments", tags=["deployments"])
@@ -42,6 +42,12 @@ def create_deployment_endpoint(
 def reconcile_all_deployments_endpoint() -> list[DeploymentReconcileResult]:
     """running/pending 배포 전체에 reconcile을 적용한다."""
     return deployment_service.reconcile_all_active()
+
+
+@router.post("/restore-model", response_model=DeploymentEntry)
+def restore_selected_model(request: ModelRestoreRequest):
+    from services.selected_model_restore import restore
+    return restore(request)
 
 
 @router.get("/{deployment_id}", response_model=DeploymentEntry)

@@ -67,6 +67,10 @@ class ModelIdentityRequest(BaseModel):
     version: str
 
 
+class ModelRestoreRequest(ModelIdentityRequest):
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
 class RidgeIdentityPredictRequest(ModelIdentityRequest, RidgePredictRequest):
     """slash를 포함한 실제 모델명을 JSON 정체성으로 전달한다."""
 
@@ -195,3 +199,5 @@ class DeploymentEntry(BaseModel):
     schedule_parent_id: str | None = None
     scheduled_at: str | None = None
     rollback_run_id: str | None = None
+    restore_identity: dict[str, str] | None = None
+    restore_current_deployment_id: str | None = None
