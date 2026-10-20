@@ -12,6 +12,56 @@ from services import deployment_service as service, model_registry
 _tick_lock = threading.RLock()
 
 
+def owned_run_ids(parent):
+    """저장된 소유 회차와 legacy 복원 연결을 끝까지 확인한다. cycle은 정리 성공이 아니다."""
+    entries = {entry.deployment_id: entry for entry in service.list_deployments()}
+    seeds = {parent.current_run_id, parent.opening_run_id} - {None}
+    seeds.update(entry.deployment_id for entry in entries.values() if entry.schedule_parent_id == parent.deployment_id)
+    owned = set()
+    for seed in seeds:
+        identity, chain = seed, set()
+        while identity:
+            if identity in chain:
+                raise HTTPException(status_code=409, detail="복원 실행 연결의 순환으로 정리를 확인할 수 없습니다")
+            chain.add(identity)
+            owned.add(identity)
+            entry = entries.get(identity)
+            if entry is None:  # 아직 게시되지 않은 opening/rollback intent.
+                break
+            if entry.is_schedule or entry.schedule_parent_id not in (None, parent.deployment_id):
+                raise HTTPException(status_code=409, detail="복원 실행의 일정 소유권을 확인할 수 없습니다")
+            identity = entry.rollback_run_id
+    return owned
+
+
+def owner_for(identity):
+    """이전 버전이 parent 없이 게시한 복원도 저장된 chain으로만 소유권을 복구한다."""
+    owners = [entry.deployment_id for entry in service.list_deployments()
+              if entry.is_schedule and identity in owned_run_ids(entry)]
+    if len(owners) > 1:
+        raise HTTPException(status_code=409, detail="복원 실행의 일정 소유권이 중복됩니다")
+    return owners[0] if owners else None
+
+
+def _restored_tip(parent):
+    owned_run_ids(parent)  # cycle/다른 일정 연결을 먼저 거부한다.
+    current = service.get_deployment(parent.current_run_id)
+    if (current.rollback_run_id and current.status != "rolled_back"
+            and parent.status != "stopped" and not parent.cleanup_pending):
+        try:
+            target = service.get_deployment(current.rollback_run_id)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            target = None
+        if target is None or target.status in ("pending", "running"):
+            # parent를 물려받은 pending 복원은 일반 pending-loop 대신 같은 복원 명령으로 복구한다.
+            return service.rollback_deployment(current.deployment_id)
+    while current.status == "rolled_back" and current.rollback_run_id:
+        current = service.get_deployment(current.rollback_run_id)
+    return current
+
+
 def _child(parent, identity):
     try:
         entry = service.get_deployment(identity)
@@ -80,9 +130,9 @@ def tick(now=None):
             with service._operation_lock(snapshot.deployment_id):
                 fresh = service.get_deployment(snapshot.deployment_id)
                 if not fresh.schedule_active and fresh.current_run_id:
-                    current = service.get_deployment(fresh.current_run_id)
-                    if current.status == "rolled_back" and current.rollback_run_id:
-                        fresh = fresh.model_copy(update={"current_run_id": current.rollback_run_id,
+                    current = _restored_tip(fresh)
+                    if current.deployment_id != fresh.current_run_id:
+                        fresh = fresh.model_copy(update={"current_run_id": current.deployment_id,
                             "opening_run_id": None, "error": "회차 복원 완료; 자동 일정 중지"})
                         service._save(fresh)
                 if not fresh.schedule_active:
@@ -103,14 +153,16 @@ def retry_schedule(parent):
 
 
 def stop_schedule(parent):
-    parent = parent.model_copy(update={"schedule_active": False, "status": "stopped"})
+    parent = parent.model_copy(update={"schedule_active": False, "cleanup_pending": True})
     service._save(parent)  # 다음 회차부터 먼저 금지; Docker I/O는 registry lock 밖.
     pending = False
-    identities = {parent.current_run_id, parent.opening_run_id} - {None}
-    if parent.current_run_id:
-        current = service.get_deployment(parent.current_run_id)
-        if current.rollback_run_id:
-            identities.add(current.rollback_run_id)
+    try:
+        identities = owned_run_ids(parent)
+    except HTTPException:
+        failed = parent.model_copy(update={"status": "failed", "cleanup_pending": True,
+            "error": "일괄 회차 복원 연결/소유권 정리가 미확인입니다"})
+        service._save(failed)
+        return failed
     for identity in identities:
         try:
             child = service.stop_deployment(identity)

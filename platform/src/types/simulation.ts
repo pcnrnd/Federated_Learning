@@ -165,6 +165,7 @@ export interface ServingRoute {
 
 export interface ServingRoleSummary {
   requests: number
+  completed_requests?: number
   successes: number
   errors: number
   interrupted: number

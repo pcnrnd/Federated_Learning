@@ -39,7 +39,8 @@ def restore(request):
                 model_registry.restore_archived_model(request.name, request.version)
                 restored = deployments._restore_entry(source, identity, extra={"restore_identity": request.model_dump(),
                     "restore_current_deployment_id": current.deployment_id if current else None,
-                    "previous_deployment_id": current.deployment_id if current else source.deployment_id})
+                    "previous_deployment_id": current.deployment_id if current else source.deployment_id,
+                    "schedule_parent_id": current.schedule_parent_id if current else None})
             if current and current.schedule_parent_id:
                 parent = deployments.get_deployment(current.schedule_parent_id)
                 if parent.opening_run_id or parent.current_run_id not in (current.deployment_id, restored.deployment_id):

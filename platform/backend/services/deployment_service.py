@@ -293,10 +293,12 @@ def _cleanup_node(client, node_id, remaining, entry):
 def rollback_deployment(deployment_id: str) -> DeploymentEntry:
     """이전 배포로 롤백 — 현재 배포를 정지하고 previous를 다시 활성화"""
     snapshot = get_deployment(deployment_id)
-    if snapshot.schedule_parent_id:
+    from services import deployment_scheduling
+    parent_id = snapshot.schedule_parent_id or deployment_scheduling.owner_for(deployment_id)
+    if parent_id:
         # tick/stop와 같은 parent→child 잠금 순서. 복원 뒤 자동 다음 회차가 덮어쓰지 않는다.
-        with _operation_lock(snapshot.schedule_parent_id):
-            parent = get_deployment(snapshot.schedule_parent_id)
+        with _operation_lock(parent_id):
+            parent = get_deployment(parent_id)
             if parent.current_run_id == snapshot.rollback_run_id and snapshot.rollback_run_id:
                 reconcile_deployment(snapshot.rollback_run_id)
                 return get_deployment(snapshot.rollback_run_id)
@@ -304,8 +306,8 @@ def rollback_deployment(deployment_id: str) -> DeploymentEntry:
                 raise HTTPException(status_code=409, detail="진행 중인 다음 회차가 없는 현재 batch 실행만 복원하세요")
             _save(parent.model_copy(update={"schedule_active": False}))
             with _operation_lock(deployment_id):
-                restored = _rollback(deployment_id)
-            parent = get_deployment(snapshot.schedule_parent_id)
+                restored = _rollback(deployment_id, schedule_parent_id=parent_id)
+            parent = get_deployment(parent_id)
             _save(parent.model_copy(update={"current_run_id": restored.deployment_id, "opening_run_id": None,
                 "schedule_active": False, "status": "pending", "error": "회차 복원 완료; 자동 일정 중지"}))
             return restored
@@ -313,7 +315,7 @@ def rollback_deployment(deployment_id: str) -> DeploymentEntry:
         return _rollback(deployment_id)
 
 
-def _rollback(deployment_id):
+def _rollback(deployment_id, *, schedule_parent_id=None):
     current = get_deployment(deployment_id)
     with model_registry.REGISTRY_LOCK:
         from services import serving_store
@@ -330,12 +332,12 @@ def _rollback(deployment_id):
     if not previous.configuration or not previous.verified_at or not previous.expected_image_id:
         raise HTTPException(status_code=409, detail="이전 정상 실행의 전체 설정/검증 snapshot이 없습니다")
     if current.rollback_run_id:
-        restored = _restore_entry(previous, current.rollback_run_id)
+        restored = _restore_entry(previous, current.rollback_run_id, extra={"schedule_parent_id": schedule_parent_id})
     else:
         identity = uuid.uuid4().hex
         current = current.model_copy(update={"rollback_run_id": identity})
         _save(current)  # 복원 실행 게시 응답 유실도 같은 ID로 재연결한다.
-        restored = _restore_entry(previous, identity)
+        restored = _restore_entry(previous, identity, extra={"schedule_parent_id": schedule_parent_id})
     if restored.status != "running" or not restored.verified_at:
         restored = retry_deployment(restored.deployment_id)
     else:
@@ -352,7 +354,14 @@ def _rollback(deployment_id):
 
 def _restore_entry(previous, identity, *, extra=None):
     try:
-        return get_deployment(identity)
+        existing = get_deployment(identity)
+        parent_id = (extra or {}).get("schedule_parent_id")
+        if parent_id and existing.schedule_parent_id != parent_id:
+            if existing.schedule_parent_id is not None:
+                raise HTTPException(status_code=409, detail="복원 실행의 일정 소유권이 다릅니다")
+            existing = existing.model_copy(update={"schedule_parent_id": parent_id})
+            _save(existing)
+        return existing
     except HTTPException as exc:
         if exc.status_code != 404:
             raise

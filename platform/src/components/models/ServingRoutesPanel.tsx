@@ -91,7 +91,8 @@ export function ServingRoutesPanel() {
           · 예측 차이 평균 {metric(state.comparison.mean_abs_difference)} · 진행 {state.comparison.pending} · 재시작 중단 {state.comparison.interrupted}</p>
         <ul>{Object.entries(state.comparison.roles).map(([role, value]) => <li key={role}>
           {role === 'primary' ? '주 모델' : '그림자'}: 요청 {value.requests} · 성공 {value.successes} · 오류 {value.errors}
-          · 지연 {metric(value.mean_latency_ms)}ms · 처리량 {metric(value.throughput_rps)}요청/초
+          · 지연 {metric(value.mean_latency_ms)}ms · 완료 {value.completed_requests ?? value.successes + value.errors}건
+          · 완료 시각 창 처리량 {metric(value.throughput_rps)}요청/초
           · 동일 요청 지연 {metric(state.comparison?.paired_roles[role]?.mean_latency_ms)}ms
         </li>)}</ul>
         <p>{state.comparison.gate_ready ? '관측 기준 충족 · 승격 시 현재 건강 상태를 다시 확인합니다' : state.comparison.gate_reasons.join(' · ')}</p>
