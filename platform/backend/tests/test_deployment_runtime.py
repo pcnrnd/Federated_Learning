@@ -12,7 +12,10 @@ from docker.errors import ImageNotFound
 from g5_helpers import IMAGE
 from models.packaging_schemas import DeploymentEntry, DeploymentRequest
 from services import deployment_runtime as runtime, ridge_artifacts
-from test_ridge_artifacts import completed_result
+import test_ridge_artifacts as ridge_fixtures
+
+# pytest가 수집할 동일 fixture 객체를 원래 이름으로 재노출한다.
+completed_result = ridge_fixtures.completed_result
 
 
 @contextmanager

@@ -9,13 +9,16 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from retraining_helpers import PRIVATE, clean_local, config_body, publish, setup_world
-from test_ridge_artifacts import completed_result  # noqa: F401
+import test_ridge_artifacts as ridge_fixtures
 from services import cleaning_job_service as cleaning, training_job_service as training
 from services import distribution_service as ledger, model_registry, retraining_config as configs
 from services import retraining_execution as execution, retraining_service as service
 from storage.factory import reset_repositories
 from models.federated_schemas import SiloGroupRequest
 from datetime import datetime, timedelta
+
+# pytest가 수집할 동일 fixture 객체를 원래 이름으로 재노출한다.
+completed_result = ridge_fixtures.completed_result
 
 
 @pytest.fixture(params=["yaml", "sqlite"])

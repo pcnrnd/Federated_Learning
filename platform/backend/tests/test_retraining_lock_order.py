@@ -11,12 +11,15 @@ from models.federated_schemas import TrainingJobRequest
 from retraining_helpers import setup_world
 from test_live_training import central_http, serve
 from test_retraining_flow import execute_two_rounds, prepare_event
-from test_ridge_artifacts import completed_result  # noqa: F401
+import test_ridge_artifacts as ridge_fixtures
 from services import model_registry, retraining_execution, retraining_service
 from services import training_job_service as jobs, training_model_service as registration, training_round_service as rounds
 from silo_sdk.client import SiloClient
 from silo_sdk.training_runtime import LiveWorker, make_server
 from storage.factory import reset_repositories
+
+# pytest가 수집할 동일 fixture 객체를 원래 이름으로 재노출한다.
+completed_result = ridge_fixtures.completed_result
 
 
 class DeadlineLock:

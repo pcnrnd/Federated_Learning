@@ -346,7 +346,8 @@ def _tick(max_concurrent_rounds: int) -> list[str]:
                 require_training_output(job.cleaning_job_id)
             except HTTPException as exc:
                 # 대기/실패 선행은 실제 학습 라운드를 만들거나 실패 횟수를 소비하지 않는다.
-                _update_job(job.job_id, lambda fresh: fresh.model_copy(update={"error": str(exc.detail)}))
+                detail = str(exc.detail)
+                _update_job(job.job_id, lambda fresh: fresh.model_copy(update={"error": detail}))
                 continue
         # 자원 게이트 — 그룹 멤버 중 한 노드라도 임계값 초과면 다음 라운드 보류
         try:

@@ -28,7 +28,8 @@ def create(primary, **updates):
 def test_create_shadow_requires_running_verified_primary(world):
     primary = deploy.create_deployment(request())
     deploy.stop_deployment(primary.deployment_id)
-    with pytest.raises(HTTPException) as rejected: create(primary)
+    with pytest.raises(HTTPException) as rejected:
+        create(primary)
     assert rejected.value.status_code == 409
 
 
@@ -40,13 +41,15 @@ def test_shadow_second_execution_and_request_retry_have_stable_route_and_child_i
     assert first.status == "active" and first.shadow_deployment_id != primary.deployment_id
     assert repeated.shadow_id == first.shadow_id and repeated.shadow_deployment_id == first.shadow_deployment_id
     assert first.route_id and first.traffic_mirror_pct == 20
-    with pytest.raises(HTTPException): create(primary, traffic_mirror_pct=30, request_id=identity)
+    with pytest.raises(HTTPException):
+        create(primary, traffic_mirror_pct=30, request_id=identity)
 
 
 def test_old_promote_without_real_comparison_evidence_is_rejected_and_primary_kept(world):
     primary = deploy.create_deployment(request())
     shadow = create(primary)
-    with pytest.raises(HTTPException) as rejected: shadows.promote_shadow(shadow.shadow_id)
+    with pytest.raises(HTTPException) as rejected:
+        shadows.promote_shadow(shadow.shadow_id)
     assert rejected.value.status_code == 409
     assert deploy.get_deployment(primary.deployment_id).status == "running"
 
@@ -71,7 +74,8 @@ def test_abort_cleanup_failure_is_truthful_and_retry_recovers_same_child(world, 
     monkeypatch.setattr(container, "stop", fail)
     aborted = shadows.abort_shadow(shadow.shadow_id)
     assert aborted.status == "failed" and aborted.cleanup_pending
-    with pytest.raises(HTTPException): model_registry.archive_model(IDENTITY["model"], "1.1.0")
+    with pytest.raises(HTTPException):
+        model_registry.archive_model(IDENTITY["model"], "1.1.0")
     monkeypatch.setattr(container, "stop", original)
     assert shadows.abort_shadow(shadow.shadow_id).status == "aborted"
     assert deploy.get_deployment(primary.deployment_id).status == "running"

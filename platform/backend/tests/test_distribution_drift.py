@@ -17,7 +17,10 @@ from models.distribution_schemas import DistributionPolicyRequest
 from services import distribution_drift as drift, distribution_service as ledger
 from storage.factory import reset_repositories
 from test_distribution_reports import PRIVATE, config_for, output, report_for
-from test_distribution_reports import world as world
+import test_distribution_reports as distribution_fixtures
+
+# pytest가 수집할 동일 fixture 객체를 원래 이름으로 재노출한다.
+world = distribution_fixtures.world
 
 NOW = datetime(2026, 10, 20, 0, 10, tzinfo=timezone.utc)
 

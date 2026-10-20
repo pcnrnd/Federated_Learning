@@ -9,7 +9,10 @@ from models.serving_schemas import ComparisonGate, ServingPredictRequest
 from services import deployment_service, model_registry, serving_requests, serving_routes as routes, serving_store as store
 from serving_helpers import setup
 from storage.factory import reset_repositories
-from test_ridge_artifacts import completed_result
+import test_ridge_artifacts as ridge_fixtures
+
+# pytest가 수집할 동일 fixture 객체를 원래 이름으로 재노출한다.
+completed_result = ridge_fixtures.completed_result
 
 
 @pytest.fixture(params=["yaml", "sqlite"])
@@ -20,7 +23,9 @@ def world(tmp_path, monkeypatch, request, completed_result):
     yield value
     value.resume.set()
     for http, thread in value.servers:
-        http.shutdown(); http.server_close(); thread.join(3)
+        http.shutdown()
+        http.server_close()
+        thread.join(3)
         assert not thread.is_alive()
 
 
@@ -74,11 +79,15 @@ def test_absent_insufficient_stale_error_or_difference_cannot_promote(world, mon
     policy = None if defect == "missing" else gate(min_pairs=2 if defect == "insufficient" else 1,
         max_mean_abs_difference=0 if defect == "difference" else 2.01)
     route = paired(policy)
-    if defect == "shadow-error": world.faults["1.0.1"]["predict"] = True
-    if defect == "primary-error": world.faults["1.0.0"]["predict"] = True
-    if defect == "shape": world.faults["1.0.1"]["shape"] = True
+    if defect == "shadow-error":
+        world.faults["1.0.1"]["predict"] = True
     if defect == "primary-error":
-        with pytest.raises(HTTPException): predict(route)
+        world.faults["1.0.0"]["predict"] = True
+    if defect == "shape":
+        world.faults["1.0.1"]["shape"] = True
+    if defect == "primary-error":
+        with pytest.raises(HTTPException):
+            predict(route)
     else:
         predict(route)
     if defect == "stale":
@@ -113,11 +122,13 @@ def test_route_switch_save_failure_and_same_process_retry_reload_are_truthful(wo
         nonlocal fired
         if data["routes"][route.route_id]["status"] == "promoted" and not fired:
             fired = True
-            if after_write: original(data)
+            if after_write:
+                original(data)
             raise OSError("injected atomic switch boundary")
         original(data)
     monkeypatch.setattr(store, "save", save)
-    with pytest.raises(OSError): routes.promote(route.route_id)
+    with pytest.raises(OSError):
+        routes.promote(route.route_id)
     assert routes.get_route(route.route_id).primary_deployment_id == ("shadow" if after_write else "primary")
     reset_repositories()
     assert routes.promote(route.route_id).primary_deployment_id == "shadow"
@@ -131,7 +142,8 @@ def test_inflight_pin_concurrent_duplicate_close_cleanup_and_late_completion(wor
         request = pool.submit(predict, route)
         try:
             assert world.entered.wait(2)
-            with pytest.raises(HTTPException) as duplicate: predict(route)
+            with pytest.raises(HTTPException) as duplicate:
+                predict(route)
             assert duplicate.value.status_code == 409
             closed = routes.close(route.route_id)
             assert closed.status == "closed" and closed.cleanup_pending
@@ -153,12 +165,15 @@ def test_restart_pending_is_interrupted_without_raw_replay_and_route_reference_w
     recovered = store.read()["requests"]["d"*32]
     assert recovered["status"] == "interrupted" and recovered["comparison_error"] == "ServerRestart"
     assert not serving_requests.comparison(route.route_id).gate_ready
-    with pytest.raises(HTTPException): predict(route, "d"*32)
+    with pytest.raises(HTTPException):
+        predict(route, "d"*32)
     old = deployment_service.get_deployment("primary")
     deployment_service._save(old.model_copy(update={"status": "stopped", "container_map": {}}))
     for action in (model_registry.archive_model, model_registry.delete_model):
-        with pytest.raises(HTTPException): action("model", "1.0.0")
-    with pytest.raises(HTTPException): deployment_service.stop_deployment("shadow")
+        with pytest.raises(HTTPException):
+            action("model", "1.0.0")
+    with pytest.raises(HTTPException):
+        deployment_service.stop_deployment("shadow")
 
 
 def test_corrupt_serving_state_fails_closed_and_cannot_drop_lifecycle_references(world):
@@ -166,9 +181,11 @@ def test_corrupt_serving_state_fails_closed_and_cannot_drop_lifecycle_references
     path = store._path()
     path.write_text("routes: [broken", encoding="utf-8")
     before = path.read_bytes()
-    with pytest.raises(HTTPException) as blocked: routes.ensure_route("primary")
+    with pytest.raises(HTTPException) as blocked:
+        routes.ensure_route("primary")
     assert blocked.value.status_code == 503 and path.read_bytes() == before
-    with pytest.raises(HTTPException): model_registry.archive_model("model", "1.0.0")
+    with pytest.raises(HTTPException):
+        model_registry.archive_model("model", "1.0.0")
 
 
 @pytest.mark.parametrize("boundary", ["reserve", "complete"])
@@ -183,7 +200,8 @@ def test_request_metadata_failure_never_replays_raw_or_fabricates_zero_latency(w
             raise OSError("injected request metadata boundary")
         original(data)
     monkeypatch.setattr(store, "save", save)
-    with pytest.raises(OSError): predict(route)
+    with pytest.raises(OSError):
+        predict(route)
     if boundary == "reserve":
         assert world.received == [] and store.read()["requests"] == {}
     else:

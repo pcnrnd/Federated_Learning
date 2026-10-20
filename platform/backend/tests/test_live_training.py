@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import importlib
 import json
-import math
 import threading
 import urllib.error
 import urllib.parse

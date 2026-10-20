@@ -1,12 +1,13 @@
 """시각화 5종 차트 데이터 단위 테스트"""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from config.federated_manager import load_training_rounds, save_training_rounds
-from config.server_manager import save_servers
+from config.server_manager import load_servers, save_servers
+from g5_helpers import IMAGE, IDENTITY, setup_world
 from models.federated_schemas import (
     ParameterContribution,
     SiloGroupRequest,
@@ -17,6 +18,7 @@ from models.packaging_schemas import DeploymentRequest, ModelRegisterRequest
 from models.resource_schemas import ResourceLimit, ResourceSample
 from services import (
     deployment_service,
+    deployment_runtime,
     drift_detector,
     metric_store,
     model_registry,
@@ -190,7 +192,16 @@ def test_heatmap_dimensions_match_silos_and_metrics(six_silos, alpha_model):
 
 
 @pytest.mark.unit
-def test_topology_includes_silos_groups_and_running_deployment(six_silos, alpha_model):
+def test_topology_includes_silos_groups_and_running_deployment(six_silos, tmp_path, monkeypatch):
+    # 프레임워크/daemon/health만 대역화하고 실제 배포·토폴로지 서비스를 통과한다.
+    # 공용 helper의 두 노드 설정은 이 회귀의 원래 여섯 사일로 설정으로 복원한다.
+    original_servers = load_servers()
+    world = setup_world(tmp_path, monkeypatch)
+    save_servers(original_servers)
+    model_registry.register_model(ModelRegisterRequest(name="alpha", version="1.0.0",
+        framework="pytorch", weights_path=world.model.weights_path))
+    monkeypatch.setattr(deployment_runtime, "pinned_package", lambda model, _request:
+        (IMAGE, {**IDENTITY, "model": model.name, "version": model.version}))
     silo_group_service.create_group(
         SiloGroupRequest(group_id="east", member_node_ids=["silo-1", "silo-2"])
     )
@@ -204,22 +215,19 @@ def test_topology_includes_silos_groups_and_running_deployment(six_silos, alpha_
                        timestamp=resource_service._now_utc().isoformat(),
                        measurement_scope={"cpu": "unit-scoped observation", "mem": "unit-scoped observation"})
     )
-    # 배포
-    fake = MagicMock()
-    container = MagicMock()
-    container.id = "cid"
-    fake.containers.create.return_value = container
-    fake.containers.get.return_value = container
-    fake.images.get.return_value = MagicMock()
-    with patch("services.deployment_service.get_docker_client", return_value=fake):
-        deployment_service.create_deployment(
-            DeploymentRequest(
-                model_name="alpha",
-                version="1.0.0",
-                strategy="realtime",
-                target_node_ids=["silo-2"],
-            )
+    # 유효한 pinned-package/실행 검증 대역이다. 실제 Docker/HTTP 증거로 간주하지 않는다.
+    entry = deployment_service.create_deployment(
+        DeploymentRequest(
+            model_name="alpha",
+            version="1.0.0",
+            strategy="realtime",
+            target_node_ids=["silo-2"],
         )
+    )
+    assert entry.status == "running"
+    assert entry.expected_identity["model"] == "alpha"
+    assert world.verified and world.verified[0][0] == entry.deployment_id
+    assert world.clients["silo-2"].containers.creates[0]["image"] == IMAGE
 
     env = visualization_service.topology()
     payload = env.payload
@@ -229,6 +237,8 @@ def test_topology_includes_silos_groups_and_running_deployment(six_silos, alpha_
     assert "silo-1" in node_ids
     assert "group::east" in node_ids
     assert any(n.startswith("deploy::") for n in node_ids)
+    deploy_id = "deploy::" + entry.deployment_id[:8]
+    assert node_ids == {*(f"silo-{i}" for i in range(1, 7)), "group::east", "group::west", deploy_id}
 
     # 압박 노드 표시
     silo1 = next(n for n in payload["nodes"] if n["id"] == "silo-1")
@@ -237,6 +247,11 @@ def test_topology_includes_silos_groups_and_running_deployment(six_silos, alpha_
     # 엣지 종류 — 집계자 있는 클러스터가 없으므로 aggregation 간선 없음
     kinds = {e["kind"] for e in payload["edges"]}
     assert kinds == {"group", "deployment"}
+    assert {(e["source"], e["target"]) for e in payload["edges"] if e["kind"] == "group"} == {
+        ("group::east", "silo-1"), ("group::east", "silo-2"), ("group::west", "silo-3")}
+    assert [e for e in payload["edges"] if e["kind"] == "deployment"] == [
+        {"source": deploy_id, "target": "silo-2", "kind": "deployment",
+         "metadata": {"strategy": "realtime", "model": "alpha"}}]
     assert {n["role"] for n in payload["nodes"] if n["id"].startswith("silo-")} == {"client"}
 
 

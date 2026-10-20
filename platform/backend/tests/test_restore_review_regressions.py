@@ -11,7 +11,10 @@ from models.packaging_schemas import ModelRestoreRequest
 from services import deployment_runtime, deployment_scheduling, deployment_service as deploy, model_registry, selected_model_restore
 from serving_helpers import setup
 from storage.factory import reset_repositories
-from test_ridge_artifacts import completed_result
+import test_ridge_artifacts as ridge_fixtures
+
+# pytest가 수집할 동일 fixture 객체를 원래 이름으로 재노출한다.
+completed_result = ridge_fixtures.completed_result
 
 
 @pytest.fixture(params=["yaml", "sqlite"])
@@ -29,7 +32,9 @@ def actual(tmp_path, monkeypatch, request, completed_result):
     yield value
     value.resume.set()
     for http, thread in value.servers:
-        http.shutdown(); http.server_close(); thread.join(3)
+        http.shutdown()
+        http.server_close()
+        thread.join(3)
         assert not thread.is_alive()
 
 
@@ -60,7 +65,8 @@ def test_F1_failed_selected_restore_does_not_replace_current_or_claim_completion
     model_registry.archive_model("model", "1.0.1")
     actual.faults["1.0.1"]["predict"] = True
     request = ModelRestoreRequest(name="model", version="1.0.1", request_id=uuid.uuid4().hex)
-    with pytest.raises(HTTPException): selected_model_restore.restore(request)
+    with pytest.raises(HTTPException):
+        selected_model_restore.restore(request)
     assert deploy.get_deployment("current").status == "running"
     assert prediction(deploy.get_deployment("current"))["predictions"] == [17.0]
     assert any(entry.version == "1.0.1" and entry.status == "failed" for entry in deploy.list_deployments())
@@ -79,7 +85,8 @@ def test_F3_failed_current_keeps_previous_version_reference_after_reload_then_re
     assert deploy.reconcile_deployment("current").current_status == "failed"
     reset_repositories()
     for action in (model_registry.archive_model, model_registry.delete_model):
-        with pytest.raises(HTTPException) as blocked: action("model", "1.0.0")
+        with pytest.raises(HTTPException) as blocked:
+            action("model", "1.0.0")
         assert blocked.value.status_code == 409
     restored = deploy.rollback_deployment("current")
     assert restored.version == "1.0.0" and prediction(restored)["predictions"] == [13.0]
@@ -104,14 +111,16 @@ def test_F2_batch_rollback_parent_owns_restored_run_across_link_failure_reload_d
         if (boundary.startswith("parent-link") and not fired and entry.deployment_id == parent.deployment_id
                 and entry.current_run_id != child and not entry.schedule_active):
             fired = True
-            if boundary.endswith("after"): original(entry)
+            if boundary.endswith("after"):
+                original(entry)
             raise OSError("injected parent restore link")
         original(entry)
     monkeypatch.setattr(deploy, "_save", save)
     if boundary in ("none", "cleanup"):
         restored = deploy.rollback_deployment(child)
     else:
-        with pytest.raises(OSError): deploy.rollback_deployment(child)
+        with pytest.raises(OSError):
+            deploy.rollback_deployment(child)
         restored = deploy.get_deployment(deploy.get_deployment(child).rollback_run_id)
         reset_repositories()
         deployment_scheduling.tick(due+timedelta(hours=1))
