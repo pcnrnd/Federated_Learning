@@ -1,13 +1,14 @@
 """Phase 2 API 완성도 — 에러 스키마, 멱등성, pagination, reconcile 테스트"""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
+from g5_helpers import request as deploy_request, setup_world
 from models.monitoring_schemas import MetricIngest
-from models.packaging_schemas import DeploymentRequest, ModelRegisterRequest
+from models.packaging_schemas import ModelRegisterRequest
 from models.resource_schemas import ResourceLimit, ResourceSample
 from services import deployment_service, metric_store, model_registry, resource_service
 
@@ -134,50 +135,14 @@ def test_idempotency_key_conflict_on_different_body(client, tmp_path):
 
 
 @pytest.mark.unit
-def test_deployment_reconcile_updates_stale_running_status(tmp_path):
-    from config.server_manager import save_servers
-
-    weights = tmp_path / "m.pt"
-    weights.write_bytes(b"")
-    model_registry.register_model(
-        ModelRegisterRequest(
-            name="alpha",
-            version="1.0.0",
-            framework="pytorch",
-            weights_path=str(weights),
-        )
-    )
-    save_servers(
-        {
-            "silo-2": {
-                "base_url": "tcp://localhost:2372",
-                "label": "silo-2",
-                "type": "remote",
-                "role": "client",
-                "tls": False,
-            }
-        }
-    )
-
-    fake = MagicMock()
-    container = MagicMock()
-    container.id = "cid-reconcile"
-    container.status = "exited"
-    fake.containers.create.return_value = container
-    fake.images.get.return_value = MagicMock()
-    fake.containers.get.return_value = container
-
-    with patch("services.deployment_service.get_docker_client", return_value=fake):
-        entry = deployment_service.create_deployment(
-            DeploymentRequest(
-                model_name="alpha",
-                version="1.0.0",
-                strategy="realtime",
-                target_node_ids=["silo-2"],
-            )
-        )
-        assert entry.status == "running"
-        result = deployment_service.reconcile_deployment(entry.deployment_id)
+def test_deployment_reconcile_updates_stale_running_status(tmp_path, monkeypatch):
+    world = setup_world(tmp_path, monkeypatch)
+    entry = deployment_service.create_deployment(deploy_request(target_node_ids=["silo-2"]))
+    assert entry.status == "running"
+    # 이 회귀는 health/predict snapshot 도입 전의 legacy running 기록을 정정하는 계약이다.
+    deployment_service._save(entry.model_copy(update={"configuration": None, "verified_at": None}))
+    world.clients["silo-2"].containers.get(entry.container_map["silo-2"]).status = "exited"
+    result = deployment_service.reconcile_deployment(entry.deployment_id)
 
     assert result.reconciled is True
     assert result.previous_status == "running"
@@ -186,7 +151,8 @@ def test_deployment_reconcile_updates_stale_running_status(tmp_path):
 
 
 @pytest.mark.unit
-def test_resource_alerts_pagination(client):
+def test_resource_alerts_pagination(client, monkeypatch):
+    monkeypatch.setattr(resource_service, "_now_utc", lambda: datetime(2026, 5, 14, 0, 1, tzinfo=timezone.utc))
     resource_service.set_limit(ResourceLimit(silo_id="silo-1", cpu_pct_max=50.0))
     for i in range(3):
         resource_service.ingest_sample(
@@ -195,6 +161,7 @@ def test_resource_alerts_pagination(client):
                 cpu_pct=80.0 + i,
                 mem_pct=10.0,
                 timestamp=f"2026-05-14T00:00:0{i}Z",
+                measurement_scope={metric: "unit-scoped observation" for metric in ("cpu", "mem")},
             )
         )
 
