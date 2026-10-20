@@ -147,7 +147,8 @@ def verify_target(client, container, node_info, entry, model, request, *, timeou
                 if health.get(field) != expected or prediction.get(field) != expected:
                     raise ValueError("실제 health/predict의 모델 정체성 불일치")
             values = prediction.get("predictions")
-            if not isinstance(values, list) or len(values) != len(inputs):
+            valid_count = isinstance(values, list) and len(values) == len(inputs)
+            if not valid_count:
                 raise ValueError("실제 예측 결과의 입력/출력 건수가 다릅니다")
             _finite_predictions(values)
             if model.framework == "ridge":

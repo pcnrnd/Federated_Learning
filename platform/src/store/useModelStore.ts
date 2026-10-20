@@ -122,6 +122,24 @@ async function liveCreateDeployment(input: DeployInput): Promise<void> {
   }
 }
 
+
+async function liveRestoreModel(modelId: string): Promise<void> {
+  if (!isLive() || useModelStore.getState().liveModelPending) return
+  const identity = parseModelKey(modelId)
+  const key = `restore:${modelId}`
+  const prior = useModelStore.getState().liveDeploymentRequests[key]
+  const requestId = prior?.requestId ?? newDeploymentRequestId()
+  useModelStore.setState((state) => ({ liveDeploymentRequests: { ...state.liveDeploymentRequests,
+    [key]: { fingerprint: modelId, requestId } } }))
+  const ok = await liveModelMutation(() => apiPost('/api/deployments/restore-model', {
+    name: identity.name, version: identity.version, request_id: requestId,
+  }), '선택한 모델 버전의 실제 복원 결과 반영')
+  if (ok) useModelStore.setState((state) => {
+    const { [key]: _completed, ...remaining } = state.liveDeploymentRequests
+    return { liveDeploymentRequests: remaining }
+  })
+}
+
 /**
  * 프로젝트명 + 버전 → 컨테이너 이미지 태그 생성.
  * 한글 등 ASCII 외 문자는 슬러그에서 제거되므로, 비거나 숫자로 시작하면 'proj-' 접두를 붙인다.
@@ -349,9 +367,7 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     const target = get().models.find((m) => m.id === id)
     if (!target) return
     if (isLive()) {
-      const current = get().deployments.find((entry) => entry.modelId === id && !entry.isSchedule && entry.previousDeploymentId)
-      if (current) get().rollbackDeployment(current.id)
-      else set({ liveModelError: '이 모델에 복원할 이전 정상 배포 설정이 없습니다' })
+      void liveRestoreModel(id)
       return
     }
     set((state) => ({ models: promoteToDeployed(state.models, target) }))

@@ -172,12 +172,24 @@ def _ridge_metadata(request):
 
 def _check_references(name, version):
     deployments = load_deployments()
-    active = [value for value in deployments.values() if value.get("status") in ("running", "pending")]
+    from config.maintenance_manager import load_shadows
+    from services import serving_store
+    state = serving_store.read()
+    for shadow in load_shadows().values():
+        outcome = state["shadows"].get(shadow.get("shadow_id"), {})
+        status = outcome.get("status", shadow.get("status"))
+        if (shadow.get("model_name") == name and shadow.get("shadow_version") == version
+                and status in ("initializing", "active", "failed")):
+            raise HTTPException(status_code=409, detail="진행/미확인 shadow 의도에 참조된 모델 버전입니다")
+    active = [value for value in deployments.values() if value.get("status") in ("running", "pending")
+        or bool(value.get("container_map")) or value.get("launch_pending") or value.get("cleanup_pending")
+        or (value.get("status") == "failed" and value.get("rollback_run_id"))]
     rollback_ids = {value.get("previous_deployment_id") for value in active}
     for identity, value in deployments.items():
         referenced = value.get("status") in ("running", "pending") or identity in rollback_ids
         # 실패 응답이어도 실제 컨테이너가 남은 배포는 삭제/보관으로 숨기지 않는다.
         referenced = referenced or bool(value.get("container_map")) or value.get("cleanup_pending") or value.get("launch_pending")
+        referenced = referenced or serving_store.references(identity)
         if referenced and value.get("model_name") == name and value.get("version") == version:
             raise HTTPException(status_code=409, detail="실행/미확인 정리 또는 rollback에 참조된 모델 버전입니다")
     entry = get_model(name, version)
@@ -192,6 +204,19 @@ def archive_model(name, version):
     registry = load_models()
     registry[name][version]["status"] = "archived"
     save_models(registry)
+    return get_model(name, version)
+
+
+@_locked
+def restore_archived_model(name, version):
+    entry = get_model(name, version)
+    if entry.framework == "ridge":
+        get_ridge_artifact(entry)
+    elif not Path(entry.weights_path).is_file() or Path(entry.weights_path).stat().st_size == 0:
+        raise HTTPException(status_code=409, detail="복원할 실제 가중치 파일을 확인하세요")
+    values = load_models()
+    values[name][version]["status"] = "active"
+    save_models(values)
     return get_model(name, version)
 
 

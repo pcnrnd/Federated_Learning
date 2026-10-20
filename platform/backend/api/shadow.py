@@ -37,3 +37,8 @@ def promote_endpoint(shadow_id: str) -> ShadowDeployment:
 @router.post("/{shadow_id}/abort", response_model=ShadowDeployment)
 def abort_endpoint(shadow_id: str) -> ShadowDeployment:
     return shadow_deployment_service.abort_shadow(shadow_id)
+
+
+@router.post("/{shadow_id}/retry", response_model=ShadowDeployment)
+def retry_endpoint(shadow_id: str) -> ShadowDeployment:
+    return shadow_deployment_service.retry_shadow(shadow_id)

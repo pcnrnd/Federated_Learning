@@ -57,7 +57,10 @@ def _load_model():
         _model.eval()
     elif MODEL_FRAMEWORK == "onnx":
         import onnxruntime
-        _model = onnxruntime.InferenceSession(str(MODEL_PATH))
+        session = onnxruntime.InferenceSession(str(MODEL_PATH))
+        if len(session.get_inputs()) != 1 or len(session.get_outputs()) != 1:
+            raise ValueError("ONNX는 단일 입력·단일 출력의 batch 모델을 지원합니다")
+        _model = session
     elif MODEL_FRAMEWORK == "tensorflow":
         import tensorflow as tf
         _model = tf.keras.models.load_model(str(MODEL_PATH))
@@ -84,6 +87,7 @@ def _identity(model):
 
 class PredictRequest(BaseModel):
     inputs: list[Any] = Field(..., min_length=1)
+    request_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
 @app.get("/health")
@@ -96,6 +100,16 @@ def health():
 def meta():
     model = _ready()
     return dict(_meta, **_identity(model))
+
+
+def _onnx_batch(outputs, input_count):
+    if len(outputs) != 1:
+        raise ValueError("단일 ONNX 출력이 필요합니다")
+    values = outputs[0].tolist()
+    if not isinstance(values, list) or len(values) != input_count:
+        raise ValueError("ONNX 출력 batch 건수가 입력과 다릅니다")
+    json.dumps(values, allow_nan=False)
+    return values
 
 
 def _forward(model, inputs):
@@ -111,7 +125,7 @@ def _forward(model, inputs):
         names = model.get_inputs()
         if len(names) != 1:
             raise ValueError("단일 입력 ONNX 모델이 필요합니다")
-        return [item.tolist() for item in model.run(None, {names[0].name: np.asarray(inputs, dtype=np.float32)})]
+        return _onnx_batch(model.run(None, {names[0].name: np.asarray(inputs, dtype=np.float32)}), len(inputs))
     import numpy as np
     return np.asarray(model(np.asarray(inputs, dtype=np.float32), training=False)).tolist()
 
@@ -126,4 +140,5 @@ def predict_endpoint(payload: PredictRequest):
         raise HTTPException(status_code=422, detail="예측 입력 형식/차원/유한 범위가 올바르지 않습니다") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"실제 예측 실패 ({type(exc).__name__})") from exc
-    return dict(ok=True, input_count=len(payload.inputs), predictions=predictions, **_identity(model))
+    return dict(ok=True, input_count=len(payload.inputs), predictions=predictions,
+                request_id=payload.request_id, **_identity(model))

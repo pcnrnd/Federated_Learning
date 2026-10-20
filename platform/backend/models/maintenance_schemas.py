@@ -4,9 +4,11 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from models.packaging_schemas import DeploymentRequest
+from models.serving_schemas import ComparisonGate
 
 ChangeType = Literal["major", "minor", "patch"]
-ShadowStatus = Literal["active", "promoted", "aborted"]
+ShadowStatus = Literal["initializing", "active", "promoted", "aborted", "rolled_back", "failed"]
 ABStatus = Literal["running", "evaluated", "promoted", "aborted"]
 ABWinner = Literal["control", "treatment", "inconclusive"]
 
@@ -60,8 +62,12 @@ class ShadowDeploymentRequest(BaseModel):
         default=10.0,
         ge=0.0,
         le=100.0,
-        description="섀도우로 미러링할 트래픽 비율 (메타데이터, 실제 라우팅은 외부 프록시 책임)",
+        description="실제 serving route의 요청 ID 기준 shadow 미러링 비율",
     )
+    route_id: str | None = None
+    request_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    comparison_gate: ComparisonGate | None = None
+    probe_inputs: list | None = None
 
 
 class ShadowDeployment(BaseModel):
@@ -76,6 +82,13 @@ class ShadowDeployment(BaseModel):
     created_at: str
     promoted_at: str | None = None
     aborted_at: str | None = None
+    route_id: str | None = None
+    request_id: str | None = None
+    request_snapshot: ShadowDeploymentRequest | None = None
+    deployment_request: DeploymentRequest | None = None
+    comparison_gate: ComparisonGate | None = None
+    cleanup_pending: bool = False
+    error: str | None = None
 
 
 class ABTestRequest(BaseModel):
