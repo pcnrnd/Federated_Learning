@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL = """
 PRAGMA journal_mode=WAL;
@@ -83,6 +83,12 @@ CREATE TABLE IF NOT EXISTS resource_limits (
 );
 
 CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS distribution_state (
     id TEXT PRIMARY KEY,
     payload TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))

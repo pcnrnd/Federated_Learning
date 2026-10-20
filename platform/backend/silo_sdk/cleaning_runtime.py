@@ -138,8 +138,12 @@ async def cycle(client: SiloClient, data_dir: str, executor=None, concurrency: i
 
 async def run(client: SiloClient, data_dir: str, poll_interval: float = 2,
               concurrency: int = 2, max_cycles: int = 0) -> None:
+    from .distribution_runtime import DistributionCollector, run_collector
     active: dict[tuple, asyncio.Task] = {}
     limit, count = max(1, min(concurrency, 4)), 0
+    # 이전 custom SDK adapter는 정제 계약만 유지. 실제 6사일로 SiloClient는 항상 수집한다.
+    collector = DistributionCollector(client, data_dir) if hasattr(client, "list_distribution_configs") else None
+    collection = asyncio.create_task(run_collector(collector, poll_interval)) if collector else None
     try:
         while max_cycles == 0 or count < max_cycles:
             for key, task in list(active.items()):
@@ -163,10 +167,15 @@ async def run(client: SiloClient, data_dir: str, poll_interval: float = 2,
                 await asyncio.sleep(max(0.01, poll_interval))
         await asyncio.gather(*active.values())
     finally:
+        if collector:
+            collector.stopping.set()
         for task in active.values():
             if not task.done():
                 task.cancel()
         await asyncio.gather(*active.values(), return_exceptions=True)
+        if collection:
+            # thread 취소로 실제 I/O를 버리지 않는다. stop은 다음 호출 전 검사하고 현재 호출을 회수한다.
+            await asyncio.shield(collection)
 
 
 def run_with_signals(client: SiloClient, data_dir: str, poll_interval: float = 2,

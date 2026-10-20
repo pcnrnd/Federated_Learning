@@ -26,6 +26,7 @@ from api import (
     cleaning_recipes,
     dashboard,
     deployments,
+    distributions,
     lineage,
     models_api,
     monitoring,
@@ -112,6 +113,7 @@ app.include_router(deployments.router)
 
 # 모델 모니터링 (P0 #2)
 app.include_router(monitoring.router)
+app.include_router(distributions.router)
 
 # 사일로 링크 + 파라미터 수집 (P1)
 app.include_router(silo_groups.router)

@@ -88,6 +88,12 @@ class AsyncSiloClient:
             aggregated_from=aggregated_from,
         )
 
+    async def list_distribution_configs(self) -> list[dict]:
+        return await asyncio.to_thread(self._sync.list_distribution_configs)
+
+    async def push_distribution_report(self, report: dict) -> dict:
+        return await asyncio.to_thread(self._sync.push_distribution_report, report)
+
     async def push_resource_sample(
         self,
         cpu_pct: float | None,

@@ -212,6 +212,15 @@ class SiloClient:
             idempotency_key=idempotency_key,
         )
 
+    def list_distribution_configs(self) -> list[dict]:
+        result = self._request("GET", "/api/monitoring/distributions/configs" + _query(node_id=self.silo_id))
+        return result if isinstance(result, list) else []
+
+    def push_distribution_report(self, report: dict) -> dict:
+        if report.get("node_id") != self.silo_id:
+            raise ValueError("SDK 발신자와 분포 보고서 불일치")
+        return self._request("POST", "/api/monitoring/distributions/reports", report)
+
     def get_round(self, round_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/training-rounds/{round_id}")
 
