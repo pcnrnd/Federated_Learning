@@ -46,6 +46,27 @@ test('기존 설정 키의 저장값은 첫 렌더와 다음 새로고침에 일
   expect(reloaded.models.getState().models).toEqual([])
 })
 
+test('ON→OFF→ON/reset/새로고침의 초기 노드 표시값은 모두 같은 고정 입력이다', async () => {
+  const values = new Map([['fed-mock-enabled', 'true']])
+  vi.stubGlobal('window', { localStorage: { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) } })
+  const { mode } = await stores()
+  const expected = structuredClone(mode.getState().nodes)
+  const { createInitialNodes } = await import('@/lib/nodeFactory')
+  const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw new Error('initial fixture must not use random') })
+  try {
+    expect(createInitialNodes()).toEqual(expected)
+    mode.getState().setMockEnabled(false)
+    mode.getState().setMockEnabled(true)
+    expect(mode.getState().nodes).toEqual(expected)
+    mode.setState({ nodes: mode.getState().nodes.map((n) => ({ ...n, size: 0, delay: 0, mult: 0, normalPct: 0, abnormalPct: 0 })) })
+    mode.getState().reset()
+    expect(mode.getState().nodes).toEqual(expected)
+    vi.resetModules()
+    expect((await stores()).mode.getState().nodes).toEqual(expected)
+  } finally { random.mockRestore() }
+})
+
 test('DEMO의 8개 메뉴는 같은 모드의 입력을 표시하고 서버를 호출하지 않는다', async () => {
   const fetch = vi.fn()
   vi.stubGlobal('fetch', fetch)
@@ -195,4 +216,21 @@ test('API503·빈 응답은 fixture를 만들지 않고 다른 API의 실서버 
   expect(models.getState().models).toEqual([])
   expect(silos.getState().silos).toEqual([])
   expect(data.getState().dataBySilo).toEqual({})
+})
+
+test.each(['accuracy', 'throughput_rps', 'latency_ms'])('다른 목록이 비어도 실제 %s 지표가 있으면 ready다', async (metric) => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/metrics?')
+    ? { items: url.includes(`metric=${metric}&`) ? [{ metric, value: metric === 'accuracy' ? .87 : 45,
+      timestamp: '2026-10-20T00:00:00Z', silo_id: 'actual-silo' }] : [], total: 1 } : []))))
+  const { mode, models, silos } = await stores()
+  const { pollLiveData } = await import('@/hooks/useLivePolling')
+  await pollLiveData()
+  expect(mode.getState().liveStatus).toBe('ready')
+  expect(models.getState().models).toEqual([])
+  expect(silos.getState().silos).toEqual([])
+  if (metric === 'accuracy') expect(mode.getState().chartPoints[0].accuracy).toBe(87)
+  else expect(mode.getState().monitorPoints).toEqual([{ round: 0,
+    throughput: metric === 'throughput_rps' ? 45 : null, latency: metric === 'latency_ms' ? 45 : null, drift: 0 }])
+  const { DataSourceStatus } = await import('@/components/layout/DataSourceStatus')
+  expect(renderToStaticMarkup(<DataSourceStatus />)).not.toContain('실제 데이터가 없습니다')
 })
