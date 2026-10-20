@@ -69,7 +69,9 @@ export async function pollLiveData(): Promise<void> {
     store.setLiveStatus('error', detail)
     if (!registrations || !usage || !limits || !groups) useSiloStore.getState().recordPollFailure(detail)
   } else {
-    store.setLiveStatus(registrations?.length || models?.length || rounds?.length || cleaning?.length ? 'ready' : 'empty')
+    const displayable = registrations?.length || models?.length || rounds?.length || cleaning?.length
+      || accuracy?.items.length || throughput?.items.length || latency?.items.length
+    store.setLiveStatus(displayable ? 'ready' : 'empty')
   }
 }
 
