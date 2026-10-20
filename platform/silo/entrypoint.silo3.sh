@@ -1,5 +1,72 @@
 #!/bin/bash
 
+# Trusted deployment must explicitly use a private cgroup namespace. These
+# runtime guards supplement that admission; they do not prove namespace identity.
+_fed_prepare_cgroup_v2() {
+  # Only this script's fixed call uses system paths. Arguments allow inert
+  # filesystem tests of the exact function, not a runtime Env/CLI override.
+  local cg="$1" proc="$2" marker="$3" startup_pid="$4"
+  local began=$SECONDS kind current controllers enabled pid count=0 request="" controller
+  if [ ! -e "$cg/cgroup.controllers" ]; then
+    return 0  # Preserve the existing cgroup-v1 startup path.
+  fi
+  if [ "$startup_pid" != "1" ] || [ ! -f "$marker" ] || [ -L "$cg" ] \
+      || [ "$(stat -f -c %T "$cg")" != "cgroup2fs" ] \
+      || [ ! -w "$cg/cgroup.subtree_control" ]; then
+    echo "private cgroup startup guard refused before writes" >&2; return 1
+  fi
+  IFS= read -r current < "$proc/self/cgroup" || return 1
+  [ "$current" = "0::/" ] || { echo "cgroup namespace root required" >&2; return 1; }
+  IFS= read -r current < "$proc/1/cgroup" || return 1
+  [ "$current" = "0::/" ] || return 1
+  IFS= read -r kind < "$cg/cgroup.type" || return 1
+  IFS= read -r enabled < "$cg/cgroup.subtree_control" || [ -z "$enabled" ] || return 1
+  IFS= read -r controllers < "$cg/cgroup.controllers" || return 1
+  if [ "$kind" != "domain" ] || [ -n "$enabled" ] || [ -z "$controllers" ] \
+      || [ -e "$cg/fed-dind-init" ] || [ -L "$cg/fed-dind-init" ]; then
+    echo "non-fresh private cgroup state refused: type=$kind" >&2; return 1
+  fi
+  while IFS= read -r pid; do
+    [ "$pid" = "1" ] || { echo "non-startup root process refused" >&2; return 1; }
+    count=$((count + 1))
+  done < "$cg/cgroup.procs"
+  [ "$count" -eq 1 ] && [ $((SECONDS - began)) -lt 5 ] || return 1
+  for controller in $controllers; do
+    [[ "$controller" =~ ^[a-z][a-z0-9_]*$ ]] || return 1
+    request="$request +$controller"
+  done
+  # This fresh leaf and the namespace-root delegation are the only writes.
+  mkdir "$cg/fed-dind-init" || return 1
+  [ $((SECONDS - began)) -lt 5 ] || return 1
+  printf '1\n' > "$cg/fed-dind-init/cgroup.procs" || return 1
+  while IFS= read -r pid; do
+    echo "root process arrived during private startup; refusing delegation" >&2; return 1
+  done < "$cg/cgroup.procs"
+  [ $((SECONDS - began)) -lt 5 ] || return 1
+  printf '%s\n' "$request" > "$cg/cgroup.subtree_control" || return 1
+  IFS= read -r kind < "$cg/cgroup.type" || return 1
+  IFS= read -r enabled < "$cg/cgroup.subtree_control" || return 1
+  IFS= read -r current < "$proc/self/cgroup" || return 1
+  [ "$kind" = "domain" ] && [ "$current" = "0::/fed-dind-init" ] || return 1
+  for controller in $controllers; do
+    case " $enabled " in *" $controller "*) ;; *) return 1 ;; esac
+  done
+  while IFS= read -r pid; do
+    echo "root process remained after private delegation" >&2; return 1
+  done < "$cg/cgroup.procs"
+  [ $((SECONDS - began)) -lt 5 ] || return 1
+  echo "private cgroup startup prepared: domain root empty; PID1 in owned init leaf"
+}
+
+trap 'echo "private startup cancelled before services" >&2; exit 143' TERM
+trap 'echo "private startup interrupted before services" >&2; exit 130' INT
+if ! _fed_prepare_cgroup_v2 /sys/fs/cgroup /proc /.dockerenv "$$"; then
+  echo "private cgroup preparation failed; SSH/Docker/workers not started" >&2
+  exit 1
+fi
+trap - TERM INT
+
+
 # 1. SSH 데몬 시작
 service ssh start
 
