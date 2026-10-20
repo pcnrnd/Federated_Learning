@@ -480,6 +480,7 @@ export interface RetrainingOption {
 
 export interface RetrainingEvent {
   event_id: string
+  request_id?: string
   retrain_config_id: string
   status: string
   automatic: boolean
