@@ -23,6 +23,7 @@ _YAML_SOURCES: dict[StorageDomain, str] = {
     StorageDomain.CONTRIBUTIONS: "contributions.yaml",
     StorageDomain.RESOURCE_LIMITS: "resource_limits.yaml",
     StorageDomain.ALERTS: "alerts.yaml",
+    StorageDomain.DISTRIBUTIONS: "distributions.yaml",
 }
 
 
