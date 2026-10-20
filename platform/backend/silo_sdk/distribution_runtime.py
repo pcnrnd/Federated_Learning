@@ -81,8 +81,8 @@ class DistributionCollector:
         path = self._path(identity)
         try:
             record = self._read(path)
-        except (ValueError, KeyError, TypeError):
-            logger.warning("손상된 분포 journal 보존; 해당 출력 전송 보류")
+        except (OSError, ValueError, KeyError, TypeError):
+            logger.warning("분포 journal 읽기 보류; 원본 보존·해당 출력 전송 대기")
             return False
         if record is not None and record["status"] != "retry":
             return False  # 오래된 ACK가 batch 한도를 소비해 새 출력을 굶기지 않는다.
@@ -108,8 +108,8 @@ class DistributionCollector:
                 return
             try:
                 record = self._read(path)
-            except (ValueError, KeyError, TypeError):
-                logger.warning("손상된 분포 journal 보존; 다른 출력 수집 계속")
+            except (OSError, ValueError, KeyError, TypeError):
+                logger.warning("분포 journal 읽기 보류; 원본 보존·다른 출력 수집 계속")
                 continue
             if record:
                 self._send(path, record)

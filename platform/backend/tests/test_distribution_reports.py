@@ -7,6 +7,7 @@ import csv
 import importlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -366,6 +367,46 @@ def test_corrupt_pending_journal_is_preserved_without_blocking_other_outputs(wor
     collector.cycle()
     assert journal.read_bytes() == damaged
     assert service.get_current(config["config_id"], "silo-1")["job_id"] == "job-2"
+
+
+@pytest.mark.parametrize("read_location", ["scan_and_discovery", "discovery_only"])
+def test_unreadable_pending_journal_preserves_payload_allows_new_output_and_recovers_ack(world, monkeypatch, read_location):
+    manifest, _ = output(world)
+    config = config_for(world, manifest)
+    client = Bridge(lose_ack=True)
+    collector = DistributionCollector(client, str(world["data"]))
+    collector.cycle()
+    journal = next(collector.directory.glob("*.json"))
+    original_read, original_glob = Path.read_bytes, Path.glob
+    before = original_read(journal)
+    original_payload = json.loads(before)["report"]
+    assert json.loads(before)["status"] == "pending"
+    output(world, "job-2", completed_at="2026-10-20T00:02:30+00:00")
+    denied = []
+    def selective_read(path):
+        if path == journal:
+            denied.append(path)
+            raise PermissionError("selective journal access denied")
+        return original_read(path)
+    def discovery_scan(path, pattern, *args, **kwargs):
+        # glob 완료 뒤 journal이 발견되는 경계도 재현해 discovery read 자체의 격리를 확인한다.
+        entries = original_glob(path, pattern, *args, **kwargs)
+        return (p for p in entries if p != journal) if path == collector.directory else entries
+    monkeypatch.setattr(Path, "read_bytes", selective_read)
+    if read_location == "discovery_only":
+        monkeypatch.setattr(Path, "glob", discovery_scan)
+    collector.cycle()
+    assert len(denied) == (2 if read_location == "scan_and_discovery" else 1)
+    assert original_read(journal) == before
+    assert service.get_current(config["config_id"], "silo-1")["job_id"] == "job-2"
+    assert [p["job_id"] for p in client.calls] == ["job-1", "job-2"]
+    monkeypatch.setattr(Path, "read_bytes", original_read)
+    monkeypatch.setattr(Path, "glob", original_glob)
+    DistributionCollector(client, str(world["data"])).cycle()
+    assert client.calls[-1] == original_payload
+    recovered = json.loads(original_read(journal))
+    assert recovered == {"status": "acked", "report": original_payload}
+    assert jobs.get_job("job-1").status == jobs.get_job("job-2").status == "completed"
 
 
 def test_invalid_persisted_ledger_fails_closed_in_both_storage_modes(world):
