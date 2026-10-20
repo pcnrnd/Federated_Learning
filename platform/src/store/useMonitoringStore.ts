@@ -68,7 +68,8 @@ async function mutate(action: () => Promise<unknown>, resetDraft = false): Promi
   if (!live() || !store.getState().observers || store.getState().livePending) return false
   invalidate()
   const epoch = store.getState().generation
-  store.setState({ livePending: true, liveError: null })
+  // 마지막 조회 실패는 POST 시작/성공으로 해소되지 않는다. 새 GET 성공만 snapshot을 회복한다.
+  store.setState({ livePending: true })
   try {
     await action()
     if (!current(epoch)) return false
