@@ -4,6 +4,7 @@ import { useSimulationStore } from '@/store/useSimulationStore'
 import type { CleaningShardStatus } from '@/api/client'
 import { apiGet, apiPost, type CleaningJobApi } from '@/api/client'
 import { mapCleaningJobs } from '@/api/mappers'
+import { dataSourceGuard } from '@/lib/dataSource'
 import type { CleaningJobSummary, Job, LogKind } from '@/types/simulation'
 
 function logToConsole(kind: LogKind, message: string): void {
@@ -63,6 +64,7 @@ export interface DataStore {
   livePending: boolean
   liveError: string | null
   deliveredEvents: string[]
+  mutationEpoch: number
   createLiveJob: () => Promise<boolean>
   rescheduleLiveJob: (jobId: string, at: string) => Promise<boolean>
   refreshLiveCleaning: () => Promise<void>
@@ -99,23 +101,30 @@ function depsSatisfied(jobs: Job[], job: Job): boolean {
   return job.dependsOn.every((depId) => jobs.find((j) => j.id === depId)?.state === 'done')
 }
 
-export const useDataStore = create<DataStore>((set, get) => ({
-  dataBySilo: seedDataBySilo(),
-  jobs: seedJobs(),
-  liveCleaningJobs: [],
-  liveDraft: { job_id: '', recipe_name: '', recipe_version: '1.0.0', group_id: '',
+function initialLiveDraft(): Record<string, string> {
+  return { job_id: '', recipe_name: '', recipe_version: '1.0.0', group_id: '',
     dataset_label: 'silo-sources', scheduled_at: '', interval_seconds: '', max_occurrences: '',
-    depends_on: '', max_attempts: '3', retry_backoff_seconds: '5', timeout_seconds: '300',
-    partitions: '4', parallelism: '2' },
+    depends_on: '', max_attempts: '3', retry_backoff_seconds: '5', timeout_seconds: '300', partitions: '4', parallelism: '2' }
+}
+
+export const useDataStore = create<DataStore>((set, get) => ({
+  dataBySilo: useSimulationStore.getState().mockEnabled ? seedDataBySilo() : {},
+  jobs: useSimulationStore.getState().mockEnabled ? seedJobs() : [],
+  liveCleaningJobs: [],
+  liveDraft: initialLiveDraft(),
   patchLiveDraft: (patch) => set((s) => ({ liveDraft: { ...s.liveDraft, ...patch } })),
-  livePending: false, liveError: null, deliveredEvents: [],
+  livePending: false, liveError: null, deliveredEvents: [], mutationEpoch: 0,
   refreshLiveCleaning: async () => {
+    const current = dataSourceGuard(false)
+    if (!current()) return
     const mapped = mapCleaningJobs(await apiGet<CleaningJobApi[]>('/api/cleaning-jobs'))
-    if (!useSimulationStore.getState().mockEnabled) get().applyLiveCleaning(mapped.dataBySilo, mapped.jobs)
+    if (current()) get().applyLiveCleaning(mapped.dataBySilo, mapped.jobs)
   },
   createLiveJob: async () => {
+    const current = dataSourceGuard(false)
+    if (!current()) return false
     if (get().livePending) return false
-    set({ livePending: true, liveError: null })
+    set((s) => ({ livePending: true, liveError: null, mutationEpoch: s.mutationEpoch + 1 }))
     try {
       const d = get().liveDraft
       const saved = Object.fromEntries(Object.entries(d).filter(([key]) => !key.startsWith('reschedule:')))
@@ -126,27 +135,32 @@ export const useDataStore = create<DataStore>((set, get) => ({
         max_attempts: Number(d.max_attempts), retry_backoff_seconds: Number(d.retry_backoff_seconds),
         timeout_seconds: Number(d.timeout_seconds), partitions: Number(d.partitions), parallelism: Number(d.parallelism) }
       await apiPost('/api/cleaning-jobs', body)
+      if (!current()) return false
       await get().refreshLiveCleaning()
       return true
-    } catch (error) { set({ liveError: error instanceof Error ? error.message : String(error) }); return false }
-    finally { set({ livePending: false }) }
+    } catch (error) { if (current()) set({ liveError: error instanceof Error ? error.message : String(error) }); return false }
+    finally { if (current()) set({ livePending: false }) }
   },
   rescheduleLiveJob: async (jobId, at) => {
+    const current = dataSourceGuard(false)
+    if (!current()) return false
     if (get().livePending) return false
-    set({ livePending: true, liveError: null })
+    set((s) => ({ livePending: true, liveError: null, mutationEpoch: s.mutationEpoch + 1 }))
     try {
       await apiPost(`/api/cleaning-jobs/${encodeURIComponent(jobId)}/reschedule`, { scheduled_at: new Date(at).toISOString() })
+      if (!current()) return false
       await get().refreshLiveCleaning()
       return true
-    } catch (error) { set({ liveError: error instanceof Error ? error.message : String(error) }); return false }
-    finally { set({ livePending: false }) }
+    } catch (error) { if (current()) set({ liveError: error instanceof Error ? error.message : String(error) }); return false }
+    finally { if (current()) set({ livePending: false }) }
   },
 
-  clearAll: () => set({ dataBySilo: {}, jobs: [], liveCleaningJobs: [] }),
+  clearAll: () => set((s) => ({ dataBySilo: {}, jobs: [], liveCleaningJobs: [], liveDraft: initialLiveDraft(), livePending: false, liveError: null, deliveredEvents: [], mutationEpoch: s.mutationEpoch + 1 })),
   reseed: () =>
-    set({ dataBySilo: seedDataBySilo(), jobs: seedJobs(), liveCleaningJobs: [] }),
+    set((s) => ({ dataBySilo: seedDataBySilo(), jobs: seedJobs(), liveCleaningJobs: [], liveDraft: initialLiveDraft(), livePending: false, liveError: null, deliveredEvents: [], mutationEpoch: s.mutationEpoch + 1 })),
 
   applyLiveCleaning: (dataBySilo, liveCleaningJobs) => {
+    if (useSimulationStore.getState().mockEnabled) return
     const delivered = new Set(get().deliveredEvents)
     for (const job of liveCleaningJobs) for (const event of job.events ?? []) {
       if (delivered.has(event.event_id)) continue
@@ -170,6 +184,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
     }),
 
   canRun: (id) => {
+    if (!useSimulationStore.getState().mockEnabled) return false
     const jobs = get().jobs
     const job = jobs.find((j) => j.id === id)
     if (!job) return false
@@ -177,6 +192,8 @@ export const useDataStore = create<DataStore>((set, get) => ({
   },
 
   runJob: (id) => {
+    const current = dataSourceGuard(true)
+    if (!current()) return
     const job = get().jobs.find((j) => j.id === id)
     if (!job) return
 
@@ -191,6 +208,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
     logToConsole('server', `[${job.name}] 작업을 실행합니다. (스케줄: ${job.schedule})`)
 
     window.setTimeout(() => {
+      if (!current()) return
       const cur = get().jobs.find((j) => j.id === id)
       if (!cur || cur.state !== 'running') return
       set((state) => ({
@@ -213,6 +231,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
   },
 
   pauseJob: (id) => {
+    if (!useSimulationStore.getState().mockEnabled) return
     const job = get().jobs.find((j) => j.id === id)
     if (!job || job.state !== 'running') return
     set((state) => ({
@@ -222,6 +241,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
   },
 
   addJob: (input) => {
+    if (!useSimulationStore.getState().mockEnabled) return
     const job: Job = {
       id: nextJobId(),
       name: input.name.trim(),
@@ -235,6 +255,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
   },
 
   removeJob: (id) => {
+    if (!useSimulationStore.getState().mockEnabled) return
     const target = get().jobs.find((j) => j.id === id)
     if (!target) return
     set((state) => ({
@@ -250,3 +271,10 @@ export const useDataStore = create<DataStore>((set, get) => ({
     logToConsole('error', `[${target.name}] 파이프라인 작업을 삭제했습니다.`)
   },
 }))
+
+useSimulationStore.subscribe((state, previous) => {
+  if (state.mockEnabled !== previous.mockEnabled) {
+    if (state.mockEnabled) useDataStore.getState().reseed()
+    else useDataStore.getState().clearAll()
+  }
+})

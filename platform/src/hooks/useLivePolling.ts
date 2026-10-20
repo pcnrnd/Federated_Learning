@@ -1,127 +1,93 @@
 import { useEffect } from 'react'
 import {
-  apiGet,
-  isLiveConfigured,
-  API_BASE,
-  type CleaningJobApi,
-  type DeploymentEntryApi,
-  type MetricSample,
-  type ModelEntryApi,
-  type PackageRecordApi,
-  type Paginated,
-  type ResourceLimit,
-  type ResourceUsageSummary,
-  type TrainingRoundSummary,
-  type SiloRegistrationApi,
-  type SiloGroupApi,
+  apiGet, isLiveConfigured, type CleaningJobApi, type DeploymentEntryApi,
+  type MetricSample, type ModelEntryApi, type PackageRecordApi, type Paginated,
+  type ResourceLimit, type ResourceUsageSummary, type TrainingRoundSummary,
+  type SiloRegistrationApi, type SiloGroupApi,
 } from '@/api/client'
-import {
-  mapApiDeployments,
-  mapCleaningJobs,
-  mapMetricsToChartPoints,
-  mapMetricsToMonitorPoints,
-  mapModelsToVersions,
-} from '@/api/mappers'
+import { mapApiDeployments, mapCleaningJobs, mapMetricsToChartPoints,
+  mapMetricsToMonitorPoints, mapModelsToVersions } from '@/api/mappers'
+import { dataSourceGuard } from '@/lib/dataSource'
 import { mapRegisteredSilos } from '@/lib/siloResources'
 import { useDataStore } from '@/store/useDataStore'
 import { useModelStore } from '@/store/useModelStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 
-const LIVE_POLL_INTERVAL_MS = 5000
-const METRIC_QUERY_LIMIT = 500
+const query = (metric: string) => `/api/monitoring/metrics?metric=${metric}&limit=500`
 
-/**
- * 라이브 모드 폴링 (P0 — 읽기 전용 3종: 리소스 / 성능 지표 / 라운드 상태).
- * 목 데이터가 꺼져 있고 `VITE_API_BASE`가 설정된 동안만 5초 주기로 돈다.
- * 계약: docs/specs/2026-08-21-p0-api-contract.md
- */
+/** 한 API 실패가 다른 화면의 실제 기록을 숨기지 않는다. 실패를 빈 데이터로 대체하지 않는다. */
+export async function pollLiveData(): Promise<void> {
+  const current = dataSourceGuard(false)
+  if (!current() || !isLiveConfigured()) return
+  const siloEpoch = useSiloStore.getState().mutationEpoch
+  const modelEpoch = useModelStore.getState().mutationEpoch
+  const dataEpoch = useDataStore.getState().mutationEpoch
+  const cleaningPending = useDataStore.getState().livePending
+  const errors: string[] = []
+  const read = async <T,>(path: string): Promise<T | undefined> => {
+    try {
+      const value = await apiGet<T>(path)
+      const list = path.includes('/metrics?') ? (value as { items?: unknown } | null)?.items : value
+      if (!Array.isArray(list)) throw new Error(`GET ${path} → 목록 응답 형식 불일치`)
+      return value
+    }
+    catch (error) { errors.push(error instanceof Error ? error.message : String(error)); return undefined }
+  }
+  const [usage, limits, accuracy, throughput, latency, rounds, cleaning, models, deployments, registrations, groups, packages] = await Promise.all([
+    read<ResourceUsageSummary[]>('/api/resources/usage'), read<ResourceLimit[]>('/api/resources/limits'),
+    read<Paginated<MetricSample>>(query('accuracy')), read<Paginated<MetricSample>>(query('throughput_rps')),
+    read<Paginated<MetricSample>>(query('latency_ms')), read<TrainingRoundSummary[]>('/api/training-rounds'),
+    read<CleaningJobApi[]>('/api/cleaning-jobs'), read<ModelEntryApi[]>('/api/models'),
+    read<DeploymentEntryApi[]>('/api/deployments'), read<SiloRegistrationApi[]>('/api/silos'),
+    read<SiloGroupApi[]>('/api/silo-groups'), read<PackageRecordApi[]>('/api/packaging'),
+  ])
+  if (!current()) return
+  if (registrations && siloEpoch === useSiloStore.getState().mutationEpoch) {
+    const currentGroups = groups ?? useSiloStore.getState().groups
+    useSiloStore.getState().applyLiveSilos(mapRegisteredSilos(registrations, usage ?? [], limits ?? [], currentGroups), currentGroups)
+  }
+  if (cleaning && !cleaningPending && !useDataStore.getState().livePending && dataEpoch === useDataStore.getState().mutationEpoch) {
+    const mapped = mapCleaningJobs(cleaning)
+    useDataStore.getState().applyLiveCleaning(mapped.dataBySilo, mapped.jobs)
+  }
+  if (models && modelEpoch === useModelStore.getState().mutationEpoch) {
+    const prior = useModelStore.getState()
+    const versions = mapModelsToVersions(models, deployments ?? []).map((model) => deployments ? model
+      : { ...model, status: prior.models.find((m) => m.id === model.id)?.status ?? model.status })
+    prior.applyLiveModels(versions, deployments ? mapApiDeployments(deployments) : prior.deployments, packages)
+  }
+  const store = useSimulationStore.getState()
+  store.applyLiveSnapshot({
+    ...(accuracy ? { chartPoints: mapMetricsToChartPoints(accuracy.items) } : {}),
+    ...(throughput && latency ? { monitorPoints: mapMetricsToMonitorPoints(throughput.items, latency.items) } : {}),
+    ...(rounds ? { currentRound: rounds.length } : {}),
+  })
+  if (errors.length) {
+    const detail = errors.join(' · ')
+    if (store.liveError !== detail) store.log('error', `실서버 조회 실패 — ${detail}`)
+    store.setLiveStatus('error', detail)
+    if (!registrations || !usage || !limits || !groups) useSiloStore.getState().recordPollFailure(detail)
+  } else {
+    store.setLiveStatus(registrations?.length || models?.length || rounds?.length || cleaning?.length ? 'ready' : 'empty')
+  }
+}
+
 export function useLivePolling(): void {
-  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
-  const isLive = !mockEnabled && isLiveConfigured()
-
+  const demo = useSimulationStore((s) => s.mockEnabled)
+  const generation = useSimulationStore((s) => s.dataGeneration)
   useEffect(() => {
-    if (!isLive) return
-
-    // 연속 실패 시 로그 스팸을 막고, 복구 시에만 다시 알린다
-    let wasHealthy: boolean | null = null
-    // 목 전환/언마운트 후 도착한 응답이 스토어를 덮어쓰지 않도록 in-flight를 무효화한다
+    if (demo || !isLiveConfigured()) return
+    let pending = false
     let cancelled = false
-    let inFlight = false
-
     const poll = async () => {
+      if (pending || cancelled) return
+      pending = true
       useSiloStore.getState().refreshObservationState()
-      if (inFlight) return // 이전 주기 요청이 아직 진행 중 — 겹침 방지
-      inFlight = true
-      const store = useSimulationStore.getState()
-      const siloEpoch = useSiloStore.getState().mutationEpoch
-      const modelEpoch = useModelStore.getState().mutationEpoch
-      try {
-        const [usage, limits, accuracy, throughput, latency, rounds, cleaningJobs, models, deployments, registrations, groups, packages] = await Promise.all([
-          apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
-          apiGet<ResourceLimit[]>('/api/resources/limits'),
-          apiGet<Paginated<MetricSample>>(
-            `/api/monitoring/metrics?metric=accuracy&limit=${METRIC_QUERY_LIMIT}`,
-          ),
-          apiGet<Paginated<MetricSample>>(
-            `/api/monitoring/metrics?metric=throughput_rps&limit=${METRIC_QUERY_LIMIT}`,
-          ),
-          apiGet<Paginated<MetricSample>>(
-            `/api/monitoring/metrics?metric=latency_ms&limit=${METRIC_QUERY_LIMIT}`,
-          ),
-          apiGet<TrainingRoundSummary[]>('/api/training-rounds'),
-          apiGet<CleaningJobApi[]>('/api/cleaning-jobs'),
-          apiGet<ModelEntryApi[]>('/api/models'),
-          apiGet<DeploymentEntryApi[]>('/api/deployments'),
-          apiGet<SiloRegistrationApi[]>('/api/silos'),
-          apiGet<SiloGroupApi[]>('/api/silo-groups'),
-          apiGet<PackageRecordApi[]>('/api/packaging'),
-        ])
-        if (cancelled) return
-
-        if (siloEpoch === useSiloStore.getState().mutationEpoch) {
-          useSiloStore.getState().applyLiveSilos(mapRegisteredSilos(registrations, usage, limits, groups), groups)
-        }
-
-        const cleaning = mapCleaningJobs(cleaningJobs)
-        useDataStore.getState().applyLiveCleaning(cleaning.dataBySilo, cleaning.jobs)
-
-        if (modelEpoch === useModelStore.getState().mutationEpoch) {
-          useModelStore.getState().applyLiveModels(mapModelsToVersions(models, deployments), mapApiDeployments(deployments), packages)
-        }
-
-        const chartPoints = mapMetricsToChartPoints(accuracy.items)
-        const monitorPoints = mapMetricsToMonitorPoints(throughput.items, latency.items)
-        const lastAccuracy = chartPoints[chartPoints.length - 1]?.accuracy ?? 0
-        store.applyLiveSnapshot({
-          chartPoints,
-          monitorPoints,
-          currentRound: rounds.length,
-          global: { ...store.global, accuracy: lastAccuracy },
-        })
-
-        if (wasHealthy !== true) {
-          store.log('server', `실서버 연동 활성 — ${API_BASE} (사일로 ${usage.length}곳 수신)`)
-          wasHealthy = true
-        }
-      } catch (error: unknown) {
-        if (cancelled) return
-        const detail = error instanceof Error ? error.message : String(error)
-        useSiloStore.getState().recordPollFailure(detail)
-        if (wasHealthy !== false) {
-          store.log('error', `실서버 폴링 실패 — ${detail}. ${LIVE_POLL_INTERVAL_MS / 1000}초 후 재시도.`)
-          wasHealthy = false
-        }
-      } finally {
-        inFlight = false
-      }
+      try { await pollLiveData() } finally { pending = false }
     }
-
     void poll()
-    const timer = window.setInterval(() => void poll(), LIVE_POLL_INTERVAL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [isLive])
+    const timer = window.setInterval(() => { void poll() }, 5000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [demo, generation])
 }

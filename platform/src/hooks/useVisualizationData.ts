@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
+import { create } from 'zustand'
 import {
   apiGet,
   isLiveConfigured,
@@ -13,8 +14,14 @@ import {
 } from '@/api/client'
 import { baselineKey } from '@/api/mappers'
 import { useSimulationStore } from '@/store/useSimulationStore'
+import { dataSourceGuard } from '@/lib/dataSource'
+import { demoVisualization } from '@/lib/demoVisualization'
 
 const VIZ_POLL_INTERVAL_MS = 10000
+const useVizState = create<{ snapshot: VizSnapshot | null }>(() => ({ snapshot: null }))
+useSimulationStore.subscribe((state, previous) => {
+  if (state.mockEnabled !== previous.mockEnabled) useVizState.setState({ snapshot: null })
+})
 
 export type TrendMetric = 'accuracy' | 'latency_ms' | 'throughput_rps'
 export type ResourceMetric = 'cpu_pct' | 'mem_pct' | 'gpu_pct' | 'disk_pct'
@@ -153,15 +160,16 @@ async function fetchSnapshot(q: VizQuery): Promise<VizSnapshot> {
 export function useVisualizationData(query: VizQuery): { isLive: boolean; snapshot: VizSnapshot | null } {
   const mockEnabled = useSimulationStore((s) => s.mockEnabled)
   const activeTab = useSimulationStore((s) => s.activeTab)
+  const generation = useSimulationStore((s) => s.dataGeneration)
   const isLive = !mockEnabled && isLiveConfigured() && activeTab === 'visualization'
-  // ponytail: 이 탭만 쓰는 조회 결과라 store 대신 훅 상태 — 다른 화면이 쓰게 되면 store로 옮긴다
-  const [snapshot, setSnapshot] = useState<VizSnapshot | null>(null)
+  const snapshot = useVizState((s) => s.snapshot)
 
   const { modelName, modelVersion, trendMetric, resourceMetric } = query
   const selectedBaseline = query.baselineKey
 
   useEffect(() => {
     if (!isLive) return
+    const current = dataSourceGuard(false)
 
     // 선택 변경·언마운트 후 도착한 응답이 화면을 덮어쓰지 않도록 무효화한다
     let cancelled = false
@@ -175,11 +183,11 @@ export function useVisualizationData(query: VizQuery): { isLive: boolean; snapsh
     }
 
     const poll = async () => {
-      if (inFlight) return // 이전 주기 요청이 아직 진행 중 — 겹침 방지
+      if (inFlight || cancelled || !current()) return
       inFlight = true
       try {
         const next = await fetchSnapshot(q)
-        if (!cancelled) setSnapshot(next)
+        if (!cancelled && current()) useVizState.setState({ snapshot: next })
       } finally {
         inFlight = false
       }
@@ -191,7 +199,7 @@ export function useVisualizationData(query: VizQuery): { isLive: boolean; snapsh
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [isLive, modelName, modelVersion, trendMetric, resourceMetric, selectedBaseline])
+  }, [isLive, generation, modelName, modelVersion, trendMetric, resourceMetric, selectedBaseline])
 
-  return { isLive, snapshot: snapshot && hideStaleCharts(snapshot, query) }
+  return { isLive, snapshot: mockEnabled ? demoVisualization(query) : isLive && snapshot ? hideStaleCharts(snapshot, query) : null }
 }

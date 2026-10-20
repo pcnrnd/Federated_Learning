@@ -97,9 +97,10 @@ export interface ModelVersion {
   project: string
   version: string
   status: ModelStatus
-  accuracy: number
+  accuracy: number | null
   algorithm: Algorithm
-  rounds: number
+  algorithmRecorded?: boolean
+  rounds: number | null
   createdAt: string
   note?: string
   artifactId?: string
@@ -355,9 +356,9 @@ export interface Job {
 export interface MonitorPoint {
   round: number
   /** 처리량 (req/s) */
-  throughput: number
+  throughput: number | null
   /** 처리시간 (ms) */
-  latency: number
+  latency: number | null
   /** 데이터 드리프트 점수 (0~1) */
   drift: number
 }

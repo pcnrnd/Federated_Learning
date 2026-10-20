@@ -4,6 +4,8 @@
  * 변이(P1 — 배포·롤백)는 POST 후 다음 폴링 주기에 상태가 반영된다.
  */
 
+import { useSimulationStore } from '@/store/useSimulationStore'
+
 const REQUEST_TIMEOUT_MS = 4000
 
 export const API_BASE: string | undefined = import.meta.env.VITE_API_BASE
@@ -51,6 +53,8 @@ export function predictRegisteredRidge(name: string, version: string, inputs: un
 }
 
 export async function apiMutation<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  // 숨겨진 폼/오래된 이벤트도 데모 모드에서는 실서버에 쓸 수 없다.
+  if (useSimulationStore.getState().mockEnabled) throw new Error('데모 데이터 모드에서는 서버를 변경하지 않습니다')
   if (!API_BASE) throw new Error('VITE_API_BASE가 설정되지 않았습니다')
 
   const res = await fetch(`${API_BASE}${path}`, {

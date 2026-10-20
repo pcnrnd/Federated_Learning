@@ -161,3 +161,7 @@ export const useMonitoringStore = create<MonitoringStore>((set, get) => ({
   },
   ackLiveAlert: (alertId) => mutate(() => acknowledgeDistributionAlert(alertId)),
 }))
+
+useSimulationStore.subscribe((state, previous) => {
+  if (state.mockEnabled !== previous.mockEnabled && !useMonitoringStore.getState().observers) invalidate(true)
+})

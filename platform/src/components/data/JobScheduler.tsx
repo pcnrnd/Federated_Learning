@@ -39,8 +39,9 @@ export function JobScheduler() {
   const [showForm, setShowForm] = useState(false)
 
   // 라이브 모드 게이트 — 목 파이프라인(타이머 진행)은 서버 상태와 무관해 오해를 부른다
-  if (!mockEnabled && isLiveConfigured()) {
-    return <><LiveCleaningScheduler /><LiveTrainingScheduler /></>
+  if (!mockEnabled) {
+    return isLiveConfigured() ? <><LiveCleaningScheduler /><LiveTrainingScheduler /></>
+      : <p role="status" className="deploy-empty">실데이터 API 주소 설정이 필요합니다. 서버 작업을 실행할 수 없습니다.</p>
   }
 
   const siloName = (id?: number): string => {

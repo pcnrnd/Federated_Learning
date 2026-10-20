@@ -13,8 +13,9 @@ interface NewModelFormProps {
 
 export function NewModelForm({ defaultProject, onClose }: NewModelFormProps) {
   const mockEnabled = useSimulationStore((state) => state.mockEnabled)
-  return !mockEnabled && isLiveConfigured() ? <LiveModelForm onClose={onClose} />
-    : <DemoModelForm defaultProject={defaultProject} onClose={onClose} />
+  if (!mockEnabled) return isLiveConfigured() ? <LiveModelForm onClose={onClose} />
+    : <p role="status" className="deploy-empty">실데이터 API 주소 설정 후 실제 학습 결과나 모델 파일을 등록할 수 있습니다.</p>
+  return <DemoModelForm defaultProject={defaultProject} onClose={onClose} />
 }
 
 function DemoModelForm({ defaultProject, onClose }: NewModelFormProps) {

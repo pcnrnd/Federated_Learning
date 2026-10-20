@@ -5,6 +5,7 @@ import { SILO_SEEDS } from '@/constants/simulation'
 import { createNode } from '@/lib/nodeFactory'
 import { useDataStore } from '@/store/useDataStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
+import { dataSourceGuard } from '@/lib/dataSource'
 import type { LogKind, Silo, SiloThresholds, ResourceHistoryMetric } from '@/types/simulation'
 
 // 시드(SILO_SEEDS) 다음 id부터 신규 등록 사일로에 부여
@@ -85,7 +86,7 @@ export interface SiloStore {
 }
 
 export const useSiloStore = create<SiloStore>((set, get) => ({
-  silos: seedSilos(),
+  silos: useSimulationStore.getState().mockEnabled ? seedSilos() : [],
   groups: [], pending: false, mutationEpoch: 0, mutationError: null, pollError: null,
   recordPollFailure: (pollError, now = Date.now()) => set((s) => ({ pollError,
     silos: s.silos.map((silo) => refreshSiloObservation(silo, now, true)) })),
@@ -107,71 +108,93 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
   },
   applyLiveSilos: (silos, groups) => { if (!get().pending) set({ silos, groups, pollError: null }) },
   refreshLive: async () => {
+    const current = dataSourceGuard(false)
+    if (!current()) return
     try {
       const [registrations, usage, limits, groups] = await Promise.all([
         apiGet<SiloRegistrationApi[]>('/api/silos'), apiGet<ResourceUsageSummary[]>('/api/resources/usage'),
         apiGet<ResourceLimit[]>('/api/resources/limits'), apiGet<SiloGroupApi[]>('/api/silo-groups'),
       ])
-      if (useSimulationStore.getState().mockEnabled) return
+      if (!current()) return
       set({ silos: mapRegisteredSilos(registrations, usage, limits, groups), groups, pollError: null })
     } catch (error) {
-      if (!useSimulationStore.getState().mockEnabled) {
+      if (current()) {
         get().recordPollFailure(error instanceof Error ? error.message : String(error))
       }
       throw error
     }
   },
   saveGroup: async (group, existing) => {
+    const current = dataSourceGuard(false)
+    if (!current()) return false
     if (get().pending) return false
     set((s) => ({ pending: true, mutationError: null, mutationEpoch: s.mutationEpoch + 1 }))
     try {
       await apiMutation(existing ? 'PUT' : 'POST', existing ? `/api/silo-groups/${encodeURIComponent(group.group_id)}` : '/api/silo-groups', group)
+      if (!current()) return false
       await get().refreshLive()
+      if (!current()) return false
       return true
     } catch (error) {
-      set({ mutationError: error instanceof Error ? error.message : String(error) })
+      if (current()) set({ mutationError: error instanceof Error ? error.message : String(error) })
       return false
-    } finally { set({ pending: false }) }
+    } finally { if (current()) set({ pending: false }) }
   },
   deleteGroup: async (groupId) => {
+    const current = dataSourceGuard(false)
+    if (!current()) return false
     if (get().pending) return false
     set((s) => ({ pending: true, mutationError: null, mutationEpoch: s.mutationEpoch + 1 }))
     try {
       await apiMutation('DELETE', `/api/silo-groups/${encodeURIComponent(groupId)}`)
+      if (!current()) return false
       await get().refreshLive()
+      if (!current()) return false
       return true
     } catch (error) {
-      set({ mutationError: error instanceof Error ? error.message : String(error) })
+      if (current()) set({ mutationError: error instanceof Error ? error.message : String(error) })
       return false
-    } finally { set({ pending: false }) }
+    } finally { if (current()) set({ pending: false }) }
   },
   selectHistory: (selectedHistorySilo, historyMetric) => set((s) => ({ selectedHistorySilo, historyMetric: historyMetric ?? s.historyMetric })),
   loadHistory: async (siloId) => {
+    const current = dataSourceGuard(false)
+    if (!current()) return
     try {
       const result = await apiGet<Paginated<ResourceSampleApi>>(`/api/resources/samples/${encodeURIComponent(siloId)}?limit=500`)
+      if (!current()) return
       set((s) => ({ histories: { ...s.histories, [siloId]: result.items }, historyErrors: { ...s.historyErrors, [siloId]: null } }))
     } catch (error) {
-      set((s) => ({ historyErrors: { ...s.historyErrors, [siloId]: error instanceof Error ? error.message : String(error) } }))
+      if (current()) set((s) => ({ historyErrors: { ...s.historyErrors, [siloId]: error instanceof Error ? error.message : String(error) } }))
     }
   },
 
-  clearAll: () => set({ silos: [], groups: [], histories: {}, mutationError: null, pollError: null, thresholdDrafts: {} }),
-  reseed: () => set({ silos: seedSilos(), groups: [], histories: {}, mutationError: null, pollError: null, thresholdDrafts: {} }),
+  clearAll: () => set((s) => ({ silos: [], groups: [], histories: {}, historyErrors: {}, selectedHistorySilo: null,
+    groupDraft: { group_id: '', description: '', member_node_ids: [], aggregator_node_id: null }, editingGroupId: null,
+    registrationDraft: { name: '', siloId: '', endpoint: '', collectIntervalSec: 15, parentId: '' },
+    pending: false, mutationEpoch: s.mutationEpoch + 1, mutationError: null, pollError: null, thresholdDrafts: {} })),
+  reseed: () => set((s) => ({ silos: seedSilos(), groups: [], histories: {}, historyErrors: {}, selectedHistorySilo: null,
+    groupDraft: { group_id: '', description: '', member_node_ids: [], aggregator_node_id: null }, editingGroupId: null,
+    registrationDraft: { name: '', siloId: '', endpoint: '', collectIntervalSec: 15, parentId: '' },
+    pending: false, mutationEpoch: s.mutationEpoch + 1, mutationError: null, pollError: null, thresholdDrafts: {} })),
   setSilos: (silos) => set({ silos }),
 
   addSilo: async (input) => {
+    const current = dataSourceGuard(false)
     if (!useSimulationStore.getState().mockEnabled) {
       if (get().pending) return false
       set((s) => ({ pending: true, mutationError: null, mutationEpoch: s.mutationEpoch + 1 }))
       try {
         await apiPost('/api/silos', { silo_id: input.siloId, label: input.name, base_url: input.endpoint, collect_interval_seconds: input.collectIntervalSec })
+        if (!current()) return false
         await get().refreshLive()
+        if (!current()) return false
         logToConsole('server', `[${input.name}] 서버 사일로 등록을 저장했습니다.`)
         return true
       } catch (error) {
-        set({ mutationError: error instanceof Error ? error.message : String(error) })
+        if (current()) set({ mutationError: error instanceof Error ? error.message : String(error) })
         return false
-      } finally { set({ pending: false }) }
+      } finally { if (current()) set({ pending: false }) }
     }
     const parent = get().silos.find((s) => s.id === input.parentId)
     if (!parent) {
@@ -218,6 +241,7 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
   },
 
   updateThreshold: async (key, partial) => {
+    const current = dataSourceGuard(false)
     const target = actionTarget(get().silos, key)
     if (!target) return false
     if (!useSimulationStore.getState().mockEnabled) {
@@ -226,13 +250,15 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
       const thresholds = { ...target.thresholds, ...partial }
       try {
         await apiPost('/api/resources/limits', { silo_id: target.serverId, cpu_pct_max: thresholds.cpu, mem_pct_max: thresholds.mem, disk_pct_max: thresholds.disk, gpu_pct_max: target.gpuThreshold ?? null })
+        if (!current()) return false
         await get().refreshLive()
+        if (!current()) return false
         set((s) => { const drafts = { ...s.thresholdDrafts }; delete drafts[siloDraftKey(key)]; return { thresholdDrafts: drafts } })
         return true
       } catch (error) {
-        set({ mutationError: error instanceof Error ? error.message : String(error) })
+        if (current()) set({ mutationError: error instanceof Error ? error.message : String(error) })
         return false
-      } finally { set({ pending: false }) }
+      } finally { if (current()) set({ pending: false }) }
     }
     set((state) => ({
       silos: state.silos.map((s) =>
@@ -244,6 +270,7 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
   },
 
   removeSilo: async (key) => {
+    const current = dataSourceGuard(false)
     const target = actionTarget(get().silos, key)
     if (!target) return false
     if (!useSimulationStore.getState().mockEnabled) {
@@ -251,12 +278,14 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
       set((s) => ({ pending: true, mutationError: null, mutationEpoch: s.mutationEpoch + 1 }))
       try {
         await apiMutation('DELETE', `/api/silos/${encodeURIComponent(target.serverId)}`)
+        if (!current()) return false
         await get().refreshLive()
+        if (!current()) return false
         return true
       } catch (error) {
-        set({ mutationError: error instanceof Error ? error.message : String(error) })
+        if (current()) set({ mutationError: error instanceof Error ? error.message : String(error) })
         return false
-      } finally { set({ pending: false }) }
+      } finally { if (current()) set({ pending: false }) }
     }
     // 1단 사일로는 연합 구조의 고정 참여자 — 하위 노드만 해제할 수 있다
     if (target.parentId === undefined) {
@@ -270,3 +299,10 @@ export const useSiloStore = create<SiloStore>((set, get) => ({
     return true
   },
 }))
+
+useSimulationStore.subscribe((state, previous) => {
+  if (state.mockEnabled !== previous.mockEnabled) {
+    if (state.mockEnabled) useSiloStore.getState().reseed()
+    else useSiloStore.getState().clearAll()
+  }
+})
