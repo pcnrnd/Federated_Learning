@@ -145,6 +145,9 @@ def progress(job_id: str, index: int, payload: ShardProgress) -> CleaningJob:
 def reschedule(job_id: str, scheduled_at: str) -> CleaningJob:
     with jobs._lock:
         job = jobs.get_job(job_id)
+        from services.retraining_service import cleaning_reserved
+        if cleaning_reserved(job_id, job.generation):
+            raise HTTPException(409, "진행 중인 재교육이 고정한 성공 정제 출력입니다. 새 작업을 생성하세요")
         shards = [ShardAssignment(shard_index=s.shard_index, silo_id=s.silo_id, attempts=s.attempts)
                   for s in job.shards]
         changed = job.model_copy(update={"generation": job.generation + 1, "scheduled_at": scheduled_at,

@@ -193,6 +193,9 @@ def _check_references(name, version):
         if referenced and value.get("model_name") == name and value.get("version") == version:
             raise HTTPException(status_code=409, detail="실행/미확인 정리 또는 rollback에 참조된 모델 버전입니다")
     entry = get_model(name, version)
+    from services.retraining_config import references as retraining_references
+    if retraining_references(name, version, entry.metadata.get("result_id")):
+        raise HTTPException(status_code=409, detail="재교육 설정/진행 또는 미확인 복구에 참조된 모델입니다")
     from services.packaging_service import get_package
     if entry.package and get_package(name, version).status == "building":
         raise HTTPException(status_code=409, detail="이미지 빌드 중인 모델 버전입니다")

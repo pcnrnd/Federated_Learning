@@ -450,3 +450,51 @@ export interface DistributionOverview {
   items: DriftObservation[]
   alerts: DistributionAlert[]
 }
+export interface RetrainingConfigInput {
+  config_id: string
+  policy_id: string
+  group_id: string
+  dataset_label: string
+  max_rounds: number
+  enabled: boolean
+  auto_enabled: boolean
+  cleaning?: { max_attempts: number; retry_backoff_seconds: number; timeout_seconds: number; partitions: number; parallelism: number }
+  learning?: { l2: number; step_size: number; steps: number }
+  worker_endpoints?: Record<string, string>
+}
+
+export interface RetrainingConfig {
+  retrain_config_id: string
+  config_version: number
+  error_code?: string | null
+  definition: RetrainingConfigInput & { model_name: string; version: string }
+}
+
+export interface RetrainingOption {
+  config_id: string
+  model_name: string
+  version: string
+  feature: string
+  policy_id: string | null
+}
+
+export interface RetrainingEvent {
+  event_id: string
+  retrain_config_id: string
+  status: string
+  automatic: boolean
+  error_code: string | null
+  created_at: string
+  updated_at: string
+  cleaning_request: { job_id: string }
+  training_request: { job_id: string; model_name: string; version: string }
+  round_ids: string[]
+  registered_model: { name: string; version: string; weights_sha256: string; result_id: string; round_id: string } | null
+}
+
+export interface RetrainingOverview {
+  configs: RetrainingConfig[]
+  events: RetrainingEvent[]
+  options: RetrainingOption[]
+  groups: Array<{ group_id: string; members: number }>
+}

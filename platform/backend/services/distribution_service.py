@@ -15,7 +15,8 @@ from storage.settings import get_backend
 _lock = threading.RLock()
 _LEGACY_SECTIONS = ("configs", "reports", "current", "baselines", "baseline_current")
 _DRIFT_SECTIONS = ("drift_policies", "drift_policy_current", "drift_events", "drift_current", "drift_alerts", "drift_basis")
-_SECTIONS = (*_LEGACY_SECTIONS, *_DRIFT_SECTIONS)
+_RETRAIN_SECTIONS = ("retrain_configs", "retrain_config_current", "retrain_events", "retrain_errors")
+_SECTIONS = (*_LEGACY_SECTIONS, *_DRIFT_SECTIONS, *_RETRAIN_SECTIONS)
 
 
 def _repository():

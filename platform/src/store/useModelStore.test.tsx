@@ -23,6 +23,20 @@ test('registry 조회만으로 패키지를 built로 만들지 않는다', async
   expect(store.getState().packages).toEqual({})
 })
 
+test('live 모델 재교육 버튼은 선택한 실제 모델의 설정 화면을 열고 가짜 새 버전을 만들지 않는다', async () => {
+  const store = await liveStore()
+  const { modelKey } = await import('@/api/mappers')
+  const { useSimulationStore } = await import('@/store/useSimulationStore')
+  const { useRetrainingStore } = await import('@/store/useRetrainingStore')
+  const id = modelKey('m', '1.0.1')
+  store.getState().applyLiveModels([{ ...model, id }], [])
+  const before = store.getState().models
+  store.getState().triggerRetrain(id)
+  expect(store.getState().models).toBe(before)
+  expect(useSimulationStore.getState().activeTab).toBe('analytics')
+  expect(useRetrainingStore.getState().desiredModel).toBe(JSON.stringify(['m', '1.0.1']))
+})
+
 test('등록 401 실패는 기존 모델을 유지하고 화면 오류/대기 상태를 갱신한다', async () => {
   const store = await liveStore()
   store.getState().applyLiveModels([model], [])

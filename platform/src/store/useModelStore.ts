@@ -497,7 +497,12 @@ export const useModelStore = create<ModelStore>((set, get) => ({
 
   triggerRetrain: (modelId?: string) => {
     if (isLive()) {
-      logToConsole('system', '실서버 모드에서는 재학습 트리거를 지원하지 않습니다 — 학습 라운드를 서버에서 여세요.')
+      const target = get().models.find((model) => model.id === modelId) ?? get().models[0]
+      if (!target) return
+      const identity = parseModelKey(target.id)
+      useRetrainingStore.getState().focusModel(identity.name, identity.version)
+      useSimulationStore.getState().setActiveTab('analytics')
+      logToConsole('system', '재교육 대상 설정을 열었습니다. 참여 그룹·데이터셋을 확인한 후 저장한 설정으로 실행하세요.')
       return
     }
     const { models } = get()
@@ -528,3 +533,4 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     useSimulationStore.getState().setActiveTab('models')
   },
 }))
+import { useRetrainingStore } from './useRetrainingStore'
