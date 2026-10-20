@@ -1,9 +1,16 @@
 import { useMemo } from 'react'
 import { useMonitoringStore } from '@/store/useMonitoringStore'
 import { useModelStore } from '@/store/useModelStore'
+import { useSimulationStore } from '@/store/useSimulationStore'
+import { LiveDriftSettings } from './LiveDrift'
 
 /** 드리프트·재학습 임계치 및 자동 재학습 설정 패널 (기본 접힘). */
 export function DriftSettingsPanel() {
+  const mockEnabled = useSimulationStore((state) => state.mockEnabled)
+  return mockEnabled ? <DemoDriftSettingsPanel /> : <LiveDriftSettings />
+}
+
+function DemoDriftSettingsPanel() {
   const expanded = useMonitoringStore((s) => s.settingsExpanded)
   const toggleExpanded = useMonitoringStore((s) => s.toggleSettingsExpanded)
   const warnThreshold = useMonitoringStore((s) => s.warnThreshold)

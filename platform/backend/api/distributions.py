@@ -1,8 +1,9 @@
 """공통 bin·출력 계보를 검증하는 신규 분포 API. legacy drift API는 보존한다."""
 from fastapi import APIRouter
 
-from models.distribution_schemas import DistributionBaselineRequest, DistributionConfigRequest
+from models.distribution_schemas import DistributionBaselineRequest, DistributionConfigRequest, DistributionPolicyRequest
 from services import distribution_service as service
+from services import distribution_drift as drift
 
 router = APIRouter(prefix="/api/monitoring/distributions", tags=["분포 관측"])
 
@@ -45,3 +46,23 @@ def get_baseline(config_id: str, node_id: str) -> dict:
 @router.get("/baselines/{baseline_id}")
 def get_baseline_history(baseline_id: str) -> dict:
     return service.get_baseline(baseline_id)
+
+
+@router.post("/policies")
+def put_policy(request: DistributionPolicyRequest) -> dict:
+    return drift.put_policy(request.model_dump())
+
+
+@router.get("/drift")
+def get_drift() -> dict:
+    return drift.overview()
+
+
+@router.get("/events")
+def get_events(config_id: str, node_id: str) -> list[dict]:
+    return drift.events(config_id, node_id)
+
+
+@router.post("/alerts/{alert_id}/ack")
+def ack_alert(alert_id: str) -> dict:
+    return drift.ack(alert_id)

@@ -13,7 +13,9 @@ from storage.factory import StorageDomain, get_repository
 from storage.settings import get_backend
 
 _lock = threading.RLock()
-_SECTIONS = ("configs", "reports", "current", "baselines", "baseline_current")
+_LEGACY_SECTIONS = ("configs", "reports", "current", "baselines", "baseline_current")
+_DRIFT_SECTIONS = ("drift_policies", "drift_policy_current", "drift_events", "drift_current", "drift_alerts", "drift_basis")
+_SECTIONS = (*_LEGACY_SECTIONS, *_DRIFT_SECTIONS)
 
 
 def _repository():
@@ -36,9 +38,11 @@ def _load() -> dict:
                 raise ValueError()
             return {key: {} for key in _SECTIONS}
         state = document["state"]
-        if set(state) != set(_SECTIONS) or any(not isinstance(state[k], dict) for k in _SECTIONS):
+        if (not isinstance(state, dict) or not set(_LEGACY_SECTIONS) <= set(state)
+                or set(state) - set(_SECTIONS) or any(not isinstance(v, dict) for v in state.values())):
             raise ValueError()
-        return state
+        # G6A 원장은 읽을 때 새 절만 보충한다. 기존 관측/기준은 이동하거나 덮지 않는다.
+        return {key: state.get(key, {}) for key in _SECTIONS}
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
         raise HTTPException(503, "분포 원장을 읽을 수 없습니다") from exc
 
@@ -128,6 +132,8 @@ def accept_report(body: dict) -> dict:
         old = state["reports"].get(state["current"].get(key, ""))
         if old is None or _order(body) > _order(old):
             state["current"][key] = body["report_id"]
+        from services.distribution_drift import refresh_scope
+        refresh_scope(state, body["config_id"], body["node_id"])
         _save(state)
         return _ack(body)
 
@@ -164,6 +170,8 @@ def select_baseline(report_id: str) -> dict:
                     "config_id": report["config_id"], "node_id": report["node_id"], "report": report}
         state["baselines"][baseline["baseline_id"]] = baseline
         state["baseline_current"][sha([report["config_id"], report["node_id"]])] = baseline["baseline_id"]
+        from services.distribution_drift import refresh_scope
+        refresh_scope(state, report["config_id"], report["node_id"])
         _save(state)
         return baseline
 
