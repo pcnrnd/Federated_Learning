@@ -26,6 +26,12 @@ export function ControlPanel() {
   const inputsDisabled = isRunning && !isPaused
   const isFinished = !isRunning && currentRound > 0 && currentRound >= config.totalRounds
 
+  if (!mockEnabled) return <div className="glass-panel content-card"><div className="card-header">
+    <h3>실제 연합 학습</h3></div><div className="card-body">
+    <p>실제 학습은 성공한 정제 결과와 참여 그룹을 선택해 실행합니다. 서버에 기록된 라운드 {currentRound}건입니다.</p>
+    <button type="button" className="btn btn-primary" onClick={() => useSimulationStore.getState().setActiveTab('data')}>정제·학습 작업 보기</button>
+  </div></div>
+
   const handleAlgorithm = (algorithm: Algorithm) => {
     setAlgorithm(algorithm)
     log('system', `합산 알고리즘 구성 변동 -> ${ALGORITHM_LABEL[algorithm]}`)
@@ -107,7 +113,7 @@ export function ControlPanel() {
             type="button"
             className="btn btn-primary"
             disabled={(isRunning && !isPaused) || !mockEnabled}
-            title={mockEnabled ? undefined : '목 데이터가 꺼져 있습니다 — 설정에서 활성화하세요'}
+            title={mockEnabled ? undefined : '데모 데이터가 꺼져 있습니다 — 설정에서 활성화하세요'}
             onClick={start}
           >
             <i className={`fa-solid ${isRunning && !isPaused ? 'fa-spinner fa-spin' : 'fa-play'}`} />{' '}

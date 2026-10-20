@@ -24,7 +24,7 @@ export function useSystemHeartbeat(): void {
 
     const timer = window.setInterval(() => {
       const { isRunning, isPaused, mockEnabled } = useSimulationStore.getState()
-      // 목 데이터가 꺼져 있으면 가짜 상태 로그도 내보내지 않는다
+      // 데모 데이터가 꺼져 있으면 가짜 상태 로그도 내보내지 않는다
       if (!mockEnabled) return
       if (isRunning && !isPaused) return
 

@@ -113,7 +113,7 @@ export function TopologySVG() {
   if (isEmpty) {
     return (
       <div className="deploy-empty">
-        표시할 연합 네트워크가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+        표시할 데모 네트워크가 없습니다. 설정에서 데모 데이터를 다시 켜면 예시가 복원됩니다.
       </div>
     )
   }

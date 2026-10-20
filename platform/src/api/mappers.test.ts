@@ -130,7 +130,7 @@ describe('mapModelsToVersions', () => {
       note: '메모',
     })
     // 알 수 없는 metadata는 기본값으로 폴백, running 배포 없음 → 실험
-    expect(versions[1]).toMatchObject({ status: 'experimental', algorithm: 'fedavg', accuracy: 0 })
+    expect(versions[1]).toMatchObject({ status: 'experimental', algorithm: 'fedavg', algorithmRecorded: false, accuracy: null, rounds: null })
   })
 })
 
@@ -311,7 +311,7 @@ describe('mapMetricsToChartPoints', () => {
 })
 
 describe('mapMetricsToMonitorPoints', () => {
-  test('pairs throughput and latency series by round index', () => {
+  test('pairs actual timestamps and preserves an uncollected metric as null', () => {
     const points = mapMetricsToMonitorPoints(
       [sample('throughput_rps', 51.26, '2026-08-21T00:00:00Z')],
       [
@@ -322,7 +322,7 @@ describe('mapMetricsToMonitorPoints', () => {
 
     expect(points).toEqual([
       { round: 0, throughput: 51.3, latency: 130.5, drift: 0 },
-      { round: 1, throughput: 0, latency: 128.1, drift: 0 },
+      { round: 1, throughput: null, latency: 128.1, drift: 0 },
     ])
   })
 })

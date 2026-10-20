@@ -166,8 +166,9 @@ export function PerformanceChart() {
       datasets[1] = { ...datasets[1], label: '예상 Loss 추이' }
     }
 
-    return { labels, datasets }
-  }, [chartPoints, showPreview])
+    // 서버 accuracy 조회에는 loss가 포함되지 않는다. 미관측 loss=0 선을 만들지 않는다.
+    return { labels, datasets: mockEnabled ? datasets : datasets.slice(0, 1) }
+  }, [chartPoints, showPreview, mockEnabled])
 
   // Analytics 탭 마운트·데이터 갱신 시 Chart.js 캔버스 크기를 재계산한다.
   useEffect(() => {
@@ -182,7 +183,7 @@ export function PerformanceChart() {
   if (!mockEnabled && chartPoints.length === 0) {
     return (
       <div className="deploy-empty">
-        표시할 성능 데이터가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+        서버에서 수집된 성능 지표가 없습니다. 연결 상태와 실제 학습·관측 결과를 확인하세요.
       </div>
     )
   }

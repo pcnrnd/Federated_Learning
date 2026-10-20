@@ -38,7 +38,7 @@ function DemoDriftCard() {
   if (!mockEnabled && monitorPoints.length === 0) {
     return (
       <div className="deploy-empty">
-        드리프트 데이터가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+        조회된 분포 데이터가 없습니다. 연결 상태와 분포 관측을 확인하세요.
       </div>
     )
   }

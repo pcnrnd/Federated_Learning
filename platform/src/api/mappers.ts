@@ -113,9 +113,10 @@ export function mapModelsToVersions(
       version: m.version,
       status: m.status === 'archived' ? 'archived' : running.has(modelKey(m.name, m.version)) ? 'deployed' : 'experimental',
       // 서버 metadata.accuracy는 0~1 스케일 가정 (지표 API와 동일) → UI %
-      accuracy: Math.round((metaNumber(meta, 'accuracy') ?? 0) * 10000) / 100,
+      accuracy: metaNumber(meta, 'accuracy') === undefined ? null : Math.round(metaNumber(meta, 'accuracy')! * 10000) / 100,
       algorithm,
-      rounds: metaNumber(meta, 'rounds') ?? 0,
+      ...(ALGORITHMS.some((a) => a === meta.algorithm) ? {} : { algorithmRecorded: false }),
+      rounds: metaNumber(meta, 'rounds') ?? null,
       createdAt: m.created_at.slice(0, 10),
       ...(typeof meta.artifact_id === 'string' ? { artifactId: meta.artifact_id } : {}),
       ...(typeof meta.result_id === 'string' ? { resultId: meta.result_id } : {}),
@@ -224,13 +225,17 @@ export function mapMetricsToMonitorPoints(
   throughput: readonly MetricSample[],
   latency: readonly MetricSample[],
 ): MonitorPoint[] {
-  const rps = averageByTimestamp(throughput)
-  const ms = averageByTimestamp(latency)
-  const count = Math.max(rps.length, ms.length)
-  return Array.from({ length: count }, (_, i) => ({
+  const means = (samples: readonly MetricSample[]) => {
+    const buckets = new Map<string, number[]>()
+    for (const s of samples) buckets.set(s.timestamp, [...(buckets.get(s.timestamp) ?? []), s.value])
+    return new Map([...buckets].map(([ts, values]) => [ts, Math.round(10 * values.reduce((a, b) => a + b, 0) / values.length) / 10]))
+  }
+  const rps = means(throughput)
+  const ms = means(latency)
+  return [...new Set([...rps.keys(), ...ms.keys()])].sort().map((ts, i) => ({
     round: i,
-    throughput: Math.round((rps[i] ?? 0) * 10) / 10,
-    latency: Math.round((ms[i] ?? 0) * 10) / 10,
+    throughput: rps.get(ts) ?? null,
+    latency: ms.get(ts) ?? null,
     drift: 0, // 드리프트 조회는 P0 범위 밖
   }))
 }

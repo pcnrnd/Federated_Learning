@@ -139,7 +139,7 @@ export function MonitorChart() {
   return (
     !mockEnabled && monitorPoints.length === 0 ? (
       <div className="deploy-empty">
-        표시할 운영 지표가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
+        서버에서 수집된 처리량·지연 지표가 없습니다. 연결 상태와 실제 예측 요청을 확인하세요.
       </div>
     ) : (
     <div className="analytics-chart-box">

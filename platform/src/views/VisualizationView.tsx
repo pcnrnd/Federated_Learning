@@ -303,7 +303,7 @@ export function VisualizationView() {
 
   const model =
     models.find((m) => m.id === modelId) ?? models.find((m) => m.status === 'deployed') ?? models[0]
-  const modelRef = model ? parseModelKey(model.id) : null
+  const modelRef = model ? mockEnabled ? { name: model.project, version: model.version } : parseModelKey(model.id) : null
   const { isLive, snapshot } = useVisualizationData({
     modelName: modelRef?.name ?? null,
     modelVersion: modelRef?.version ?? null,
@@ -312,14 +312,12 @@ export function VisualizationView() {
     baselineKey: selectedBaseline,
   })
 
-  if (!isLive) {
+  if (!mockEnabled && !isLive) {
     return (
       <div className="tab-pane">
         <VizCard icon="fa-chart-column" title="연합 학습 분석" desc="Federated learning visualizations from live server data.">
           <Empty>
-            {mockEnabled
-              ? '설정에서 「목 데이터 시뮬레이션」을 끄면 서버 실측 데이터로 시각화가 표시됩니다.'
-              : '서버 연결 주소를 설정한 뒤 다시 열면 시각화가 표시됩니다.'}
+            실데이터 API 주소 설정이 필요합니다. 서버 연결 주소를 설정한 뒤 시각화를 조회하세요.
           </Empty>
         </VizCard>
       </div>

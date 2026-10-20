@@ -3,7 +3,6 @@ import {
   apiGet,
   apiMutation,
   apiPost,
-  isLiveConfigured,
   type DeploymentEntryApi,
   type DeploymentRequestApi,
   type ModelEntryApi,
@@ -16,6 +15,7 @@ import { deploymentPayload, newDeploymentRequestId } from '@/lib/deploymentReque
 import { DEPLOY_STRATEGY_META, DEPLOY_TIMINGS, RUNTIME_OPTIONS } from '@/constants/simulation'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
+import { dataSourceGuard } from '@/lib/dataSource'
 import type {
   Algorithm,
   DeployState,
@@ -28,7 +28,7 @@ import type {
   LiveModelDraft,
 } from '@/types/simulation'
 
-/** 모델 생성 폼에서 선택 가능한 프로젝트 목록 (목 데이터) */
+/** 모델 생성 폼에서 선택 가능한 프로젝트 목록 (데모 데이터) */
 export const MODEL_PROJECTS = [
   '프로젝트1',
   '프로젝트2',
@@ -60,9 +60,9 @@ function logToConsole(kind: LogKind, message: string): void {
   useSimulationStore.getState().log(kind, message)
 }
 
-/** 라이브 모드 여부 — 목 off + VITE_API_BASE 설정 */
+/** 요청한 데이터 모드. API 미설정도 실서버 모드이며 데모로 되돌리지 않는다. */
 function isLive(): boolean {
-  return !useSimulationStore.getState().mockEnabled && isLiveConfigured()
+  return !useSimulationStore.getState().mockEnabled
 }
 
 async function refreshLiveCatalog(): Promise<void> {
@@ -267,7 +267,7 @@ function promoteToDeployed(models: ModelVersion[], target: ModelVersion): ModelV
   })
 }
 
-const INITIAL_MODELS = seedModels()
+const INITIAL_MODELS = useSimulationStore.getState().mockEnabled ? seedModels() : []
 
 export const useModelStore = create<ModelStore>((set, get) => ({
   models: INITIAL_MODELS,
@@ -284,15 +284,18 @@ export const useModelStore = create<ModelStore>((set, get) => ({
 
   patchLiveModelDraft: (patch) => set((state) => ({ liveModelDraft: { ...state.liveModelDraft, ...patch } })),
   loadLiveModelResults: async () => {
+    const current = dataSourceGuard(false)
+    if (!current()) return
     try {
       const results = await apiGet<TrainingRoundSummary[]>('/api/training-rounds?status=completed')
-      if (isLive()) set({ liveModelResults: results.filter((round) => round.status === 'completed'
+      if (current()) set({ liveModelResults: results.filter((round) => round.status === 'completed'
         && round.result?.format === 'ridge-v1' && !!round.result.result_id) })
     } catch (error) {
-      set({ liveModelError: error instanceof Error ? error.message : String(error) })
+      if (current()) set({ liveModelError: error instanceof Error ? error.message : String(error) })
     }
   },
   createLiveModel: async () => {
+    if (!isLive()) return false
     try {
       const request = liveModelRequest(get().liveModelDraft)
       return await liveModelMutation(() => apiPost(request.endpoint, request.body), '실제 모델 등록 반영')
@@ -306,14 +309,15 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   setDeployTarget: (deployTargetId) => set({ deployTargetId }),
 
   clearAll: () =>
-    set((state) => ({ models: [], packages: {}, deployments: [], deployTargetId: null,
+    set((state) => ({ models: [], packages: {}, deployments: [], deployTargetId: null, projectFilter: ALL_PROJECTS,
+        liveModelDraft: { mode: 'training', round_id: '', version: '', name: '', weights_path: '' },
         liveModelResults: [], liveModelError: null, liveModelPending: false, liveDeploymentRequests: {}, mutationEpoch: state.mutationEpoch + 1 })),
 
-  applyLiveModels: (models, deployments, packages = []) =>
+  applyLiveModels: (models, deployments, packages) =>
     set((state) => ({
       models,
       deployments,
-      packages: mapLivePackages(packages),
+      packages: packages ? mapLivePackages(packages) : state.packages,
       // 선택 모델이 서버 목록에서 사라졌으면 해제
       deployTargetId: models.some((m) => m.id === state.deployTargetId)
         ? state.deployTargetId
@@ -327,13 +331,14 @@ export const useModelStore = create<ModelStore>((set, get) => ({
       deployments: [],
       deployTargetId: null,
       projectFilter: ALL_PROJECTS,
+      liveModelResults: [], liveModelDraft: { mode: 'training', round_id: '', version: '', name: '', weights_path: '' },
       liveModelPending: false, liveDeploymentRequests: {}, liveModelError: null, mutationEpoch: state.mutationEpoch + 1,
     }))
   },
 
   addModel: (input) => {
     if (isLive()) {
-      logToConsole('system', '실서버 모드에서는 화면 등록을 지원하지 않습니다 — POST /api/models로 등록하세요.')
+      logToConsole('system', '실제 모델 등록에서 완료된 학습 결과나 저장된 모델 파일을 선택하세요.')
       return
     }
     const model: ModelVersion = {
@@ -409,6 +414,7 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   },
 
   buildPackage: (modelId, runtime) => {
+    const current = dataSourceGuard(true)
     const target = get().models.find((m) => m.id === modelId)
     if (!target) return
     if (isLive()) {
@@ -428,6 +434,7 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     logToConsole('system', `[${target.project}] ${target.version} 컨테이너 패키징 빌드를 시작합니다. (${runtime})`)
 
     window.setTimeout(() => {
+      if (!current()) return
       set((state) => ({
         packages: {
           ...state.packages,
@@ -439,6 +446,7 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   },
 
   createDeployment: (input) => {
+    const current = dataSourceGuard(true)
     const target = get().models.find((m) => m.id === input.modelId)
     if (!target) return
     if (isLive()) {
@@ -471,10 +479,12 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     logToConsole('system', `[${modelLabel}] ${meta.label} 요청 접수 (${scope}). 배포 대기열 등록.`)
 
     window.setTimeout(() => {
+      if (!current()) return
       set((state) => ({ deployments: patchDeployment(state.deployments, id, 'deploying') }))
       logToConsole('server', `[${modelLabel}] ${meta.label} 진행 중 — 모델 가중치 및 컨테이너 배포 전송...`)
 
       window.setTimeout(() => {
+        if (!current()) return
         set((state) => ({ deployments: patchDeployment(state.deployments, id, 'done') }))
         logToConsole('success', `[${modelLabel}] ${meta.label} 완료. 운영 반영됨.`)
       }, DEPLOY_TIMINGS.deployStepMs)
@@ -533,4 +543,10 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     useSimulationStore.getState().setActiveTab('models')
   },
 }))
+useSimulationStore.subscribe((state, previous) => {
+  if (state.mockEnabled !== previous.mockEnabled) {
+    if (state.mockEnabled) useModelStore.getState().reseed()
+    else useModelStore.getState().clearAll()
+  }
+})
 import { useRetrainingStore } from './useRetrainingStore'

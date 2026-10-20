@@ -89,3 +89,7 @@ export const useLiveTrainingStore = create<LiveTrainingState>((set, get) => ({
     }
   },
 }))
+
+useSimulationStore.subscribe((state, previous) => {
+  if (state.mockEnabled !== previous.mockEnabled && !useLiveTrainingStore.getState().observers) invalidate(true)
+})

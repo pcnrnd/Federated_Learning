@@ -73,8 +73,8 @@ export function DataView() {
   // 사일로 식별자는 useSiloStore(단일 소스), 파이프라인 수치는 useDataStore에서 병합
   const siloData = useMemo<SiloData[]>(
     () =>
-      silos.map((s) => {
-        const d = dataBySilo[s.id] ?? { cleansePct: 0, shardCount: 1, records: 0 }
+      silos.filter((s) => dataBySilo[s.id] !== undefined).map((s) => {
+        const d = dataBySilo[s.id]
         return { siloId: s.id, name: s.name, ...d }
       }),
     [silos, dataBySilo],
@@ -94,7 +94,7 @@ export function DataView() {
         <div className="card-body">
           {siloData.length === 0 ? (
             <div className="deploy-empty">
-              등록된 사일로가 없습니다. “사일로 리소스” 탭에서 사일로를 등록하세요.
+              조회된 정제 결과가 없습니다. 연결 상태와 정제 작업 현황을 확인하세요.
             </div>
           ) : (
             <>

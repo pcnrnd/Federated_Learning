@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { GlobalHeader } from './GlobalHeader'
 import { Sidebar } from './Sidebar'
+import { DataSourceStatus } from './DataSourceStatus'
 
 interface AppLayoutProps {
   children: ReactNode
@@ -16,7 +17,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         <Sidebar />
         <main className="main-viewport">
           <GlobalHeader />
-          <div className="content-viewport-container">{children}</div>
+          <div className="content-viewport-container"><DataSourceStatus />{children}</div>
         </main>
       </div>
     </>
