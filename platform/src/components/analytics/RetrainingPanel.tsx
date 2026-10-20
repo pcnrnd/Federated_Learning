@@ -4,6 +4,7 @@ import { retrainingError, retrainingPayload, retrainingStatus } from '@/lib/retr
 import { useRetrainingStore } from '@/store/useRetrainingStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { RetrainingEvent } from '@/types/simulation'
+import { RetrainingLineage } from './RetrainingLineage'
 
 interface EventProps { event: RetrainingEvent }
 
@@ -17,11 +18,7 @@ function EventCard({ event }: EventProps) {
     {error && <p role="alert">{error}</p>}
     {event.registered_model && <p>새 실험 모델 {event.registered_model.name}@{event.registered_model.version} 등록 완료. 운영 전환은 별도입니다.</p>}
     {event.status === 'failed' && <button className="btn btn-secondary" disabled={pending} onClick={() => { void retry(event.event_id) }}>같은 실행 다시 확인</button>}
-    <details><summary>실행 계보</summary>
-      <p><a href={`../api/cleaning/jobs/${encodeURIComponent(event.cleaning_request.job_id)}`}>정제 작업</a> ·{' '}
-        <a href={`../api/training-jobs/${encodeURIComponent(event.training_request.job_id)}`}>학습 작업</a></p>
-      {event.registered_model && <p><a href={`../api/training-rounds/${encodeURIComponent(event.registered_model.round_id)}/result`}>최종 학습 결과</a></p>}
-    </details>
+    <RetrainingLineage event={event} />
   </article>
 }
 
