@@ -110,10 +110,16 @@ def test_real_zero_bins_use_existing_epsilon_psi_without_percent_clamping(world)
 
 
 def test_minimum_count_uses_training_valid_rows_not_total_rows(world):
-    config, _, _ = prepared(world)
+    manifest, shard = output(world, "base", values=[1, 2, 11, 12, PRIVATE])
+    config = config_for(world, manifest)
+    reference = report_for(world, manifest, shard, config)
+    assert (reference["total_count"], reference["valid_count"], reference["excluded_count"]) == (5, 4, 1)
+    ledger.accept_report(reference)
+    ledger.select_baseline(reference["report_id"])
     change(world, config, values=[1, 11, "NaN", "", PRIVATE])
     policy(config, min_valid_count=3)
     event = current()
+    assert event["baseline_valid_count"] >= 3
     assert (event["current_total_count"], event["current_valid_count"], event["current_excluded_count"]) == (5, 2, 3)
     assert event["state"] == "insufficient" and event["psi"] is None
 
