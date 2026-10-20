@@ -361,3 +361,92 @@ export interface MonitorPoint {
   /** 데이터 드리프트 점수 (0~1) */
   drift: number
 }
+
+/** 실제 분포의 원본 값은 수신하지 않는다. PSI는 백분율이 아니다. */
+export interface DistributionConfig {
+  config_id: string
+  model_name: string
+  version: string
+  node_ids: string[]
+  feature: string
+  bin_edges: number[]
+  window_seconds: number
+}
+
+export interface DistributionPolicyInput {
+  config_id: string
+  warning_threshold: number
+  critical_threshold: number
+  min_valid_count: number
+  max_age_seconds: number
+}
+
+export interface DistributionPolicy extends DistributionPolicyInput {
+  policy_id: string
+  policy_version: number
+  created_at: string
+  resolution: 'next_valid_stable'
+}
+
+export type DriftAvailability = 'ready' | 'unconfigured' | 'missing_baseline' | 'missing_current' | 'stale' | 'invalid' | 'insufficient'
+
+export interface DriftObservation {
+  event_id: string
+  config_id: string
+  node_id: string
+  model_name: string
+  version: string
+  feature: string
+  state: DriftAvailability
+  reason: string
+  psi: number | null
+  severity: 'stable' | 'warning' | 'critical' | null
+  policy: DistributionPolicy | null
+  baseline_id: string | null
+  baseline_report_id: string | null
+  current_report_id: string | null
+  baseline_at: string | null
+  current_at: string | null
+  window_start: string | null
+  window_end: string | null
+  baseline_window_start: string | null
+  baseline_window_end: string | null
+  baseline_total_count: number | null
+  baseline_valid_count: number | null
+  baseline_excluded_count: number | null
+  current_total_count: number | null
+  current_valid_count: number | null
+  current_excluded_count: number | null
+  bin_edges: number[]
+  baseline_bin_counts: number[] | null
+  current_bin_counts: number[] | null
+  evaluated_at: string
+  basis_revision: number
+}
+
+export interface DistributionAlert {
+  alert_id: string
+  event_id: string
+  config_id: string
+  node_id: string
+  model_name: string
+  version: string
+  feature: string
+  policy_id: string
+  policy_version: number
+  severity: 'stable' | 'warning' | 'critical'
+  cause: DriftAvailability
+  psi: number | null
+  message: string
+  status: 'open' | 'acked' | 'resolved'
+  triggered_at: string
+  acked_at: string | null
+  resolved_at: string | null
+  resolved_by_event_id: string | null
+}
+
+export interface DistributionOverview {
+  configs: DistributionConfig[]
+  items: DriftObservation[]
+  alerts: DistributionAlert[]
+}

@@ -2,6 +2,7 @@ import { MONITOR_PREVIEW_POINTS } from '@/constants/simulation'
 import { useModelStore } from '@/store/useModelStore'
 import { useMonitoringStore } from '@/store/useMonitoringStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
+import { LiveDriftCard } from './LiveDrift'
 
 type DriftLevel = 'ok' | 'warn' | 'alert'
 
@@ -21,6 +22,11 @@ const LEVEL_META: Record<DriftLevel, { label: string; icon: string }> = {
 }
 
 export function DriftCard() {
+  const mockEnabled = useSimulationStore((state) => state.mockEnabled)
+  return mockEnabled ? <DemoDriftCard /> : <LiveDriftCard />
+}
+
+function DemoDriftCard() {
   const monitorPoints = useSimulationStore((s) => s.monitorPoints)
   const triggerRetrain = useModelStore((s) => s.triggerRetrain)
   const warnThreshold = useMonitoringStore((s) => s.warnThreshold)
