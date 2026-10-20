@@ -232,6 +232,8 @@ class TrainingJobRequest(BaseModel):
     min_contributions: int = Field(default=2, ge=1)
     max_rounds: int = Field(default=10, ge=1, le=10_000)
     notes: str = ""
+    retraining_event_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$",
+        description="재교육 소유 이벤트. 일반 잡은 None이며 원장 장애와 독립이다")
     cleaning_job_id: str | None = Field(
         default=None, description="정제 작업 — 이 잡이 여는 라운드에 그대로 기록된다"
     )
@@ -263,6 +265,7 @@ class TrainingJob(BaseModel):
     created_at: str
     updated_at: str
     notes: str = ""
+    retraining_event_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     error: str | None = None
     cleaning_job_id: str | None = None
     learning: LiveLearning | None = None
