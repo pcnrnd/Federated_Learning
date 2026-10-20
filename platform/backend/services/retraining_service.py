@@ -43,17 +43,19 @@ def cleaning_reserved(job_id, generation):
                    for e in ledger._load()["retrain_events"].values())
 
 
-def reserve_registration(job_id, result_id):
+def reserve_registration(job_id, result_id, owner_event_id):
     """caller는 registry lock 보유. 모델 게시 전에 원장 참조를 원자적으로 예약한다."""
+    # 소유권은 원장 밖의 영속 학습 잡에서 읽는다. 일반 등록은 원장을 열지 않는다.
+    if owner_event_id is None:
+        return
     with ledger._lock:
         state = ledger._load()
-        changed = False
-        for event in state["retrain_events"].values():
-            if event["training_request"]["job_id"] == job_id and event["status"] != "registered":
-                if result_id not in event["registration_result_ids"]:
-                    event["registration_result_ids"].append(result_id)
-                    changed = True
-        if changed:
+        event = ledger._required(state, "retrain_events", owner_event_id)
+        request = event["training_request"]
+        if request["job_id"] != job_id or request.get("retraining_event_id") != owner_event_id:
+            raise HTTPException(409, "재교육 학습 잡의 소유 원장이 일치하지 않습니다")
+        if result_id not in event["registration_result_ids"]:
+            event["registration_result_ids"].append(result_id)
             ledger._save(state)
 
 
@@ -75,6 +77,7 @@ def _requests(identity, definition):
     train = TrainingJobRequest(job_id="rt-" + identity[:60], model_name=definition["model_name"],
         version=definition["version"], group_id=definition["group_id"], schedule_kind="chain",
         max_rounds=definition["max_rounds"], min_contributions=len(definition["topology"]["roots"]),
+        retraining_event_id=identity,
         notes=owner, cleaning_job_id=clean.job_id, learning=definition["live_learning"],
         worker_endpoints=definition["worker_endpoints"])
     return clean.model_dump(mode="json"), train.model_dump(mode="json")

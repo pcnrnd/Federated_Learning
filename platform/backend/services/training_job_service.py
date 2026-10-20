@@ -117,6 +117,7 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
         created_at=now,
         updated_at=now,
         notes=request.notes,
+        retraining_event_id=request.retraining_event_id,
         cleaning_job_id=request.cleaning_job_id,
         learning=request.learning,
         worker_endpoints=dict(request.worker_endpoints),
