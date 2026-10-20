@@ -12,7 +12,8 @@ from test_package_loader_validation import load_rendered, make_actual_model
 
 def rendered(tmp_path, monkeypatch, actual=False):
     weights = make_actual_model(tmp_path, "onnx") if actual else tmp_path / "fixture.onnx"
-    if not actual: weights.write_bytes(b"loader boundary fixture")
+    if not actual:
+        weights.write_bytes(b"loader boundary fixture")
     model = model_registry.register_model(ModelRegisterRequest(name="batch", version="1.0.0", framework="onnx", weights_path=str(weights)))
     context = tmp_path / "image-context"
     context.mkdir()
@@ -35,7 +36,8 @@ def test_F4_multiple_model_outputs_rejected_before_cache_or_build_success_U(tmp_
     _model, module = rendered(tmp_path, monkeypatch)
     session = SimpleNamespace(get_inputs=lambda: [object()], get_outputs=lambda: [object(), object()])
     monkeypatch.setitem(sys.modules, "onnxruntime", SimpleNamespace(InferenceSession=lambda _path: session))
-    with pytest.raises(ValueError): module._load_model()
+    with pytest.raises(ValueError):
+        module._load_model()
     assert module._model is None
 
 

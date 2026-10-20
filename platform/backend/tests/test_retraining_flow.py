@@ -12,14 +12,17 @@ from config import settings
 from models.cleaning_schemas import CleaningJobCreate
 from retraining_helpers import PRIVATE, TARGET, clean_local, config_body, publish, setup_world
 from test_live_training import central_http, serve
-from test_ridge_artifacts import completed_result  # noqa: F401
+import test_ridge_artifacts as ridge_fixtures
 from services import cleaning_job_service as cleaning, distribution_service as ledger
-from services import distribution_drift, model_registry, retraining_config, retraining_execution, retraining_service
+from services import distribution_drift, model_registry, retraining_config, retraining_service
 from services import ridge_artifacts, training_job_service as jobs, training_model_service, training_round_service as rounds
 from silo_sdk.cleaning_output import load_output
 from silo_sdk.client import SiloClient
 from silo_sdk.training_runtime import LiveWorker, make_server
 from storage.factory import reset_repositories
+
+# pytest가 수집할 동일 fixture 객체를 원래 이름으로 재노출한다.
+completed_result = ridge_fixtures.completed_result
 
 
 def independent_step(rows, base):
