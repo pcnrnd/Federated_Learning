@@ -55,7 +55,7 @@ echo "Starting MinIO for silo-${SILO_NUM}..."
 MINIO_COMPOSE="/usr/local/bin/compose.minio.yaml"
 
 # MinIO compose 파일이 존재하는지 확인
-if [ -f "$MINIO_COMPOSE" ]; then
+if [ "${FED_MINIO_AUTOSTART:-1}" != "0" ] && [ -f "$MINIO_COMPOSE" ]; then
     # Docker Compose v2 사용 (docker compose 명령어)
     # 만약 v2가 없다면 docker-compose 명령어 시도
     if command -v docker &> /dev/null && docker compose version &> /dev/null; then
