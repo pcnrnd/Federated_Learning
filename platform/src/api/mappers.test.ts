@@ -135,8 +135,19 @@ describe('mapModelsToVersions', () => {
 })
 
 describe('mapApiDeployments', () => {
-  test('maps ids, states and target silos', () => {
-    const [dep] = mapApiDeployments([deploymentEntry({ status: 'rolled_back' })])
+  test('maps ids, states, target results and persisted deployment configuration exactly', () => {
+    const targets: NonNullable<DeploymentEntryApi['target_results']> = {
+      'silo-1': { status: 'running', endpoint: 'http://silo-1:31001', image_id: 'sha256:actual' },
+      'silo-2': { status: 'failed', error_code: 'HTTPError' },
+    }
+    const [dep] = mapApiDeployments([deploymentEntry({ status: 'rolled_back',
+      configuration: { model_name: 'demo-alpha', version: '1.0.0', strategy: 'realtime',
+        target_node_ids: ['silo-1', 'silo-2'], env: { APP: 'preserved' }, inference_port: 8000,
+        probe_inputs: [[1, 2]], interval_seconds: 30 },
+      interval_seconds: 45, expected_image_id: 'sha256:actual', verified_at: 'observed-verify',
+      target_results: targets, is_schedule: true, schedule_active: false, next_due_at: 'observed-due',
+      occurrence: 2, error: 'actual failure', cleanup_pending: true, previous_deployment_id: 'dep-before',
+    })])
     expect(dep).toEqual({
       id: 'dep-abc',
       modelId: 'demo-alpha@1.0.0',
@@ -145,7 +156,39 @@ describe('mapApiDeployments', () => {
       targetSiloIds: [1, 2],
       state: 'rolled_back',
       ts: '08:45:12',
+      targetNodeIds: ['silo-1', 'silo-2'],
+      env: { APP: 'preserved' },
+      inferencePort: 8000,
+      probeInputs: [[1, 2]],
+      intervalSec: 45,
+      verifiedAt: 'observed-verify',
+      imageId: 'sha256:actual',
+      targets,
+      isSchedule: true,
+      scheduleActive: false,
+      nextDueAt: 'observed-due',
+      occurrence: 2,
+      error: 'actual failure',
+      cleanupPending: true,
+      previousDeploymentId: 'dep-before',
     })
+  })
+
+  test('absent optional server fields stay undefined rather than fabricated deployment facts', () => {
+    const [dep] = mapApiDeployments([deploymentEntry()])
+    expect(dep.targetNodeIds).toEqual(['silo-1', 'silo-2'])
+    for (const key of ['env', 'inferencePort', 'probeInputs', 'intervalSec', 'verifiedAt', 'imageId',
+      'targets', 'isSchedule', 'scheduleActive', 'nextDueAt', 'occurrence', 'error', 'cleanupPending',
+      'previousDeploymentId'] as const) {
+      expect(dep[key]).toBeUndefined()
+    }
+  })
+
+  test('schedule interval falls back to the saved command only when the top-level value is absent', () => {
+    const [dep] = mapApiDeployments([deploymentEntry({ interval_seconds: null, configuration: {
+      model_name: 'demo-alpha', version: '1.0.0', strategy: 'batch', target_node_ids: ['silo-1'], interval_seconds: 30,
+    } })])
+    expect(dep.intervalSec).toBe(30)
   })
 
   test('running maps to done (rollback-eligible)', () => {

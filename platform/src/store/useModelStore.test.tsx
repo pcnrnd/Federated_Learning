@@ -1,3 +1,4 @@
+import '@/test/currentSnapshotSsr'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ModelVersion } from '@/types/simulation'
