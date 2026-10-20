@@ -67,6 +67,61 @@ test('POST 성공 뒤 GET 실패에도 accepted 명령과 오류를 보존하고
   expect(store.getState().error).toBeNull()
 })
 
+test('서버 commit 뒤 ACK 유실과 모드 왕복은 같은 의도를 한 이벤트로 재연결한다', async () => {
+  await loaded()
+  const server = new Map<string, RetrainingEvent>()
+  run.mockImplementation(async (_config: string, requestId: string) => {
+    if (!server.has(requestId)) {
+      server.set(requestId, { ...event, event_id: 'one-event', request_id: requestId })
+      throw new Error('server committed, ACK lost')
+    }
+    return server.get(requestId)
+  })
+  expect(await store.getState().run()).toBe(false)
+  const command = store.getState().command
+  useSimulationStore.setState({ mockEnabled: true })
+  expect(store.getState().snapshot.events).toEqual([])
+  expect(store.getState().command).toEqual(command)
+  expect(await store.getState().run()).toBe(false)
+  expect(run).toHaveBeenCalledTimes(1)
+  useSimulationStore.setState({ mockEnabled: false })
+  await vi.waitFor(() => expect(store.getState().polling).toBe(false))
+  fetch.mockResolvedValue({ ...snapshot(), events: [...server.values()] })
+  expect(await store.getState().resumeCommand()).toBe(true)
+  expect(run.mock.calls[1]).toEqual(run.mock.calls[0])
+  expect(server.size).toBe(1)
+  expect(store.getState().command).toBeNull()
+  run.mockResolvedValue({ ...event, event_id: 'explicit-new-event' })
+  await store.getState().run()
+  expect(run.mock.calls[2][1]).not.toBe(command!.requestId)
+})
+
+test('모드 전환 중 늦은 ACK는 화면을 채우지 않고 미확인 명령은 보존한다', async () => {
+  await loaded()
+  const post = deferred<RetrainingEvent>()
+  run.mockReturnValue(post.promise)
+  const action = store.getState().run()
+  const command = store.getState().command
+  useSimulationStore.setState({ mockEnabled: true })
+  post.resolve(event)
+  expect(await action).toBe(false)
+  expect(store.getState().snapshot.events).toEqual([])
+  expect(store.getState().command).toEqual(command)
+  expect(store.getState().pending).toBe(false)
+})
+
+test('미확인 요청은 다른 설정 선택으로 덮어쓰지 않고 서버 확인 뒤에만 해소한다', async () => {
+  await loaded()
+  run.mockRejectedValueOnce(new Error('ACK lost'))
+  await store.getState().run()
+  const command = store.getState().command
+  const other = { ...config, retrain_config_id: 'other-config' }
+  store.setState({ snapshot: { ...snapshot(), configs: [other] }, selected: other.retrain_config_id, dirty: false })
+  expect(await store.getState().run()).toBe(false)
+  expect(store.getState().command).toEqual(command)
+  expect(run).toHaveBeenCalledTimes(1)
+})
+
 test.each(['mode', 'unmount'])('늦은 설정 저장 응답은 %s 뒤 화면/명령을 되살리지 않는다', async (boundary) => {
   await loaded()
   const post = deferred<RetrainingConfig>()

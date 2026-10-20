@@ -33,6 +33,8 @@ export function RetrainingPanel() {
   return <section className="glass-panel content-card" aria-label="실제 재교육">
     <h3>데이터 정제·재학습</h3>
     <p>저장한 기준 모델과 같은 학습 항목으로 다시 학습합니다. 경고 확인·해소와 새 모델 등록은 별도입니다.</p>
+    {state.command && <p role="status">서버 확인이 끝나지 않은 재교육 요청이 있습니다. 새 요청을 만들기 전에 이전 요청을 확인하세요.{' '}
+      <button type="button" className="btn btn-secondary" disabled={disabled} onClick={() => { void state.resumeCommand() }}>이전 요청 확인</button></p>}
     {state.error && <p role="alert">조회·요청 실패: {state.error}. 표시 내용은 마지막 성공 조회값입니다.</p>}
     {selected?.error_code && <p role="alert">자동 재교육 대기: {retrainingError(selected.error_code)}</p>}
     <button className="btn btn-secondary" disabled={disabled} onClick={() => { void state.poll() }}>상태 새로고침</button>
