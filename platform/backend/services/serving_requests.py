@@ -136,25 +136,24 @@ def comparison(route_id, *, at=None, data=None):
     start = end-timedelta(seconds=seconds)
     if route.comparison_started_at:
         start = max(start, datetime.fromisoformat(route.comparison_started_at))
-    events = [ServingEvent(**value) for value in data["requests"].values() if value["route_id"] == route_id
-        and value["generation"] == route.generation and start <= datetime.fromisoformat(value["started_at"]) <= end]
+    events = _window_events(data, route, start, end)
     roles = {}
     span = (end-start).total_seconds()
     for role in ("primary", "shadow"):
         assigned = [event for event in events if role == "primary" or event.shadow_deployment_id]
-        observations = [event.roles[role] for event in assigned if role in event.roles]
+        observations = [event.roles[role] for event in assigned if event.status == "completed" and role in event.roles]
         measured = [value.duration_ms for value in observations if value.duration_ms is not None]
         successes = sum(value.status == "ok" for value in observations)
         errors = sum(value.status == "error" for value in observations)
-        roles[role] = RoleSummary(requests=len(assigned), successes=successes, errors=errors,
+        roles[role] = RoleSummary(requests=len(assigned), completed_requests=successes+errors, successes=successes, errors=errors,
             interrupted=sum(event.status == "interrupted" for event in assigned), measured_requests=len(measured),
             mean_latency_ms=math.fsum(value/len(measured) for value in measured) if measured else None,
             throughput_rps=(successes+errors)/span if span > 0 else None)
-    pairs = [event for event in events if event.paired and event.mean_abs_difference is not None]
+    pairs = [event for event in events if event.status == "completed" and event.paired and event.mean_abs_difference is not None]
     paired_roles = {}
     for role in ("primary", "shadow"):
         durations = [event.roles[role].duration_ms for event in pairs]
-        paired_roles[role] = RoleSummary(requests=len(pairs), successes=len(pairs), measured_requests=len(durations),
+        paired_roles[role] = RoleSummary(requests=len(pairs), completed_requests=len(pairs), successes=len(pairs), measured_requests=len(durations),
             mean_latency_ms=math.fsum(value/len(durations) for value in durations) if durations else None,
             throughput_rps=len(pairs)/span if span > 0 else None)
     count = sum(event.difference_count for event in pairs)
@@ -166,6 +165,21 @@ def comparison(route_id, *, at=None, data=None):
         pending=sum(event.status == "pending" for event in events), interrupted=sum(event.status == "interrupted" for event in events),
         pairs=len(pairs), difference_count=count, mean_abs_difference=difference, latest_pair_at=latest,
         roles=roles, paired_roles=paired_roles, gate_ready=not reasons, gate_reasons=reasons, gate=route.comparison_gate)
+
+
+def _window_events(data, route, start, end):
+    """완료/중단은 (start,end] 완료 창. 진행 요청은 같은 generation의 미해결 집합으로 별도 포함."""
+    events = []
+    for raw in data["requests"].values():
+        if raw["route_id"] != route.route_id or raw["generation"] != route.generation:
+            continue
+        event = ServingEvent(**raw)
+        if event.status == "pending":
+            if datetime.fromisoformat(event.started_at) <= end:
+                events.append(event)
+        elif event.completed_at and start < datetime.fromisoformat(event.completed_at) <= end:
+            events.append(event)
+    return events
 
 
 def _gate_reasons(route, events, pairs, difference, latest, roles, paired_roles, end):

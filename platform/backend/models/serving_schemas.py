@@ -73,6 +73,7 @@ class ServingRoute(BaseModel):
 
 class RoleSummary(BaseModel):
     requests: int = 0
+    completed_requests: int = 0
     successes: int = 0
     errors: int = 0
     interrupted: int = 0

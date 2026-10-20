@@ -42,11 +42,33 @@ def ensure_route(primary_id):
         return route
 
 
+def reserve_shadow(route_id, shadow_id, primary_id):
+    """실제 child create 전에 비교 슬롯을 영속한다. 메타 잠금 안에서만 실행한다."""
+    with REGISTRY_LOCK:
+        route = get_route(route_id)
+        if (route.status != "active" or route.primary_deployment_id != primary_id
+                or route.cleanup_pending or route.cleanup_deployment_ids
+                or (route.shadow_id and route.shadow_id != shadow_id)):
+            raise HTTPException(status_code=409, detail="다른 비교/정리/전환이 없는 활성 route만 예약할 수 있습니다")
+        if route.shadow_id == shadow_id:
+            return route
+        if route.shadow_deployment_id:
+            raise HTTPException(status_code=409, detail="이미 연결된 shadow 실행이 있습니다")
+        reserved = route.model_copy(update={"shadow_id": shadow_id, "changed_at": store.now()})
+        data = store.load()
+        data["routes"][route_id] = reserved.model_dump()
+        data["shadows"][shadow_id] = dict(status="initializing", route_id=route_id,
+            deployment_id=None, deployment_request_id="shadow-"+shadow_id, cleanup_pending=False)
+        store.save(data)  # 저장 실패 뒤 메모리의 예약만으로 실제 child를 만들지 않는다.
+        return reserved
+
+
 def attach_shadow(route_id, shadow_id, deployment_id, mirror_pct, gate=None):
     with operation(route_id), REGISTRY_LOCK:
         route = get_route(route_id)
-        if route.status == "closed" or (route.shadow_id and route.shadow_id != shadow_id):
-            raise HTTPException(status_code=409, detail="기존 비교 경로를 종료한 뒤 새 shadow를 연결하세요")
+        if (route.status != "active" or route.shadow_id != shadow_id or route.cleanup_pending
+                or route.shadow_deployment_id not in (None, deployment_id)):
+            raise HTTPException(status_code=409, detail="같은 shadow 의도가 영속 예약한 활성 route만 연결할 수 있습니다")
         primary = serving_requests.deployment(route.primary_deployment_id)
         shadow = serving_requests.deployment(deployment_id)
         if shadow.model_name != primary.model_name or shadow.deployment_id == primary.deployment_id:
@@ -136,14 +158,15 @@ def rollback(route_id):
             return restored  # 이전/새 실행은 standby로 참조 유지. 정리 완료라고 표시하지 않는다.
 
 
-def detach_shadow(route_id, shadow_id):
+def detach_shadow(route_id, shadow_id, *, deployment_ids=()):
     with operation(route_id), REGISTRY_LOCK:
         route = get_route(route_id)
         if route.shadow_id != shadow_id or route.status not in ("active", "closed"):
             raise HTTPException(status_code=409, detail="현재 active shadow만 해제할 수 있습니다")
         pending = list(route.cleanup_deployment_ids)
-        if route.shadow_deployment_id and route.shadow_deployment_id not in pending:
-            pending.append(route.shadow_deployment_id)
+        for identity in (*deployment_ids, route.shadow_deployment_id):
+            if identity and identity not in pending:
+                pending.append(identity)
         route = route.model_copy(update={"shadow_deployment_id": None, "cleanup_deployment_ids": pending,
             "cleanup_pending": bool(pending), "generation": route.generation+1, "changed_at": store.now()})
         data = store.load()
@@ -157,17 +180,21 @@ def detach_shadow(route_id, shadow_id):
 def close(route_id):
     with operation(route_id), REGISTRY_LOCK:
         route = get_route(route_id)
+        data = store.load()
         pending = set(route.cleanup_deployment_ids)
         if route.status != "closed":
             pending.update(value for value in (route.primary_deployment_id, route.shadow_deployment_id, route.previous_deployment_id) if value)
+            request_id = data["shadows"].get(route.shadow_id, {}).get("deployment_request_id")
+            if request_id:
+                pending.update(entry.deployment_id for entry in deployments.list_deployments()
+                    if entry.configuration and entry.configuration.request_id == request_id)
         closed = route.model_copy(update={"status": "closed", "shadow_deployment_id": None,
             "cleanup_deployment_ids": sorted(pending), "cleanup_pending": bool(pending),
             "generation": route.generation+1, "changed_at": store.now()})
-        data = store.load()
         data["routes"][route_id] = closed.model_dump()
         if route.shadow_id:
-            data["shadows"][route.shadow_id] = dict(status="failed", route_id=route_id,
-                deployment_id=route.shadow_deployment_id or route.primary_deployment_id, cleanup_pending=bool(pending))
+            data["shadows"][route.shadow_id] = {**data["shadows"].get(route.shadow_id, {}), "status": "failed",
+                "route_id": route_id, "deployment_id": route.shadow_deployment_id, "cleanup_pending": bool(pending)}
         store.save(data)  # 신규 요청을 먼저 금지한다. 진행 중 request pin은 보존한다.
     return cleanup(route_id)
 

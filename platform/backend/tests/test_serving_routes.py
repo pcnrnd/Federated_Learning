@@ -33,6 +33,7 @@ def gate(**updates):
 
 def paired(gate_value=None):
     route = routes.ensure_route("primary")
+    routes.reserve_shadow(route.route_id, "shadow-pair", "primary")
     return routes.attach_shadow(route.route_id, "shadow-pair", "shadow", 100, gate_value)
 
 

@@ -131,3 +131,95 @@ def test_F2_batch_rollback_parent_owns_restored_run_across_link_failure_reload_d
     stopped = deploy.stop_deployment(parent.deployment_id)
     assert stopped.status == "stopped" and not stopped.cleanup_pending
     assert all(not client.containers.items for client in world.clients.values())
+
+
+@pytest.mark.parametrize("backend", ["yaml", "sqlite"])
+@pytest.mark.parametrize("boundary", ["none", "intent-before", "intent-after", "restore-before", "restore-after",
+    "link-before", "link-after", "cleanup", "legacy-no-parent"])
+@pytest.mark.parametrize("ticks", [0, 1])
+def test_F2_repeated_restore_chain_remains_schedule_owned_and_stop_cleans_transitively(tmp_path, monkeypatch, backend, boundary, ticks):
+    monkeypatch.setenv("FED_STORAGE", backend)
+    reset_repositories()
+    world = setup_world(tmp_path, monkeypatch)
+    parent = deploy.create_deployment(deploy_request(strategy="batch", interval_seconds=30))
+    due = datetime.fromisoformat(parent.next_due_at)
+    deployment_scheduling.tick(due)
+    deployment_scheduling.tick(due+timedelta(seconds=30))
+    previous = deploy.get_deployment(parent.deployment_id).current_run_id
+    chain = [previous]
+    original, fired = deploy._save, False
+    def save(entry):
+        nonlocal fired
+        intent = entry.deployment_id == chain[-1] and entry.rollback_run_id and entry.status == "running"
+        restore = (entry.deployment_id not in chain and entry.deployment_id != parent.deployment_id
+            and entry.schedule_parent_id == parent.deployment_id and entry.status == "pending")
+        link = entry.deployment_id == parent.deployment_id and entry.current_run_id != chain[-1]
+        selected = ((boundary.startswith("intent-") and intent) or (boundary.startswith("restore-") and restore)
+            or (boundary.startswith("link-") and link))
+        if len(chain) == 3 and not fired and selected:
+            fired = True
+            if boundary.endswith("after"):
+                original(entry)
+            raise OSError("injected third restore parent adoption")
+        original(entry)
+    monkeypatch.setattr(deploy, "_save", save)
+    for _index in range(3):
+        before = chain[-1]
+        if boundary == "legacy-no-parent" and len(chain) > 1:
+            entry = deploy.get_deployment(before)
+            original(entry.model_copy(update={"schedule_parent_id": None}))
+        try:
+            restored = deploy.rollback_deployment(before)
+        except OSError:
+            assert fired
+            reset_repositories()
+            saved_id = deploy.get_deployment(before).rollback_run_id
+            if boundary.startswith("link-"):
+                restored = deploy.get_deployment(saved_id)
+            else:
+                restored = deploy.rollback_deployment(before)
+                if saved_id:
+                    assert restored.deployment_id == saved_id
+        assert restored.schedule_parent_id == parent.deployment_id
+        chain.append(restored.deployment_id)
+    assert len(set(chain)) == 4
+    reset_repositories()
+    if ticks:
+        deployment_scheduling.tick(due+timedelta(hours=1))
+    if boundary == "link-before" and ticks == 0:
+        # parent 연결 유실은 tick/재시도 없이 즉시 stop해도 마지막 실제 실행을 회수해야 한다.
+        assert deploy.get_deployment(parent.deployment_id).current_run_id == chain[-2]
+    else:
+        repeated = deploy.rollback_deployment(chain[-2])
+        assert repeated.deployment_id == chain[-1]
+        assert deploy.get_deployment(parent.deployment_id).current_run_id == chain[-1]
+    assert deployment_scheduling.owned_run_ids(deploy.get_deployment(parent.deployment_id)).issuperset(chain)
+    leaf = deploy.get_deployment(chain[-1])
+    container = world.clients["silo-1"].containers.get(leaf.container_map["silo-1"])
+    stop = container.stop
+    if boundary == "cleanup":
+        def fail(**_kwargs):
+            raise DockerException("injected last restored execution cleanup")
+        monkeypatch.setattr(container, "stop", fail)
+        failed = deploy.stop_deployment(parent.deployment_id)
+        assert failed.status == "failed" and failed.cleanup_pending
+        reset_repositories()
+        monkeypatch.setattr(container, "stop", stop)
+    stopped = deploy.stop_deployment(parent.deployment_id)
+    assert stopped.status == "stopped" and not stopped.cleanup_pending
+    assert all(not client.containers.items for client in world.clients.values())
+    assert len({entry.deployment_id for entry in deploy.list_deployments() if entry.deployment_id in chain}) == 4
+
+
+@pytest.mark.parametrize("backend", ["yaml", "sqlite"])
+def test_F2_restore_cycle_is_not_reported_as_successful_parent_cleanup(tmp_path, monkeypatch, backend):
+    monkeypatch.setenv("FED_STORAGE", backend)
+    reset_repositories()
+    setup_world(tmp_path, monkeypatch)
+    parent = deploy.create_deployment(deploy_request(strategy="batch", interval_seconds=30))
+    deployment_scheduling.tick(datetime.fromisoformat(parent.next_due_at))
+    child = deploy.get_deployment(parent.deployment_id).current_run_id
+    entry = deploy.get_deployment(child)
+    deploy._save(entry.model_copy(update={"rollback_run_id": child}))
+    stopped = deploy.stop_deployment(parent.deployment_id)
+    assert stopped.status == "failed" and stopped.cleanup_pending
