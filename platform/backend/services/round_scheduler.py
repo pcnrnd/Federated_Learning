@@ -124,6 +124,14 @@ class RoundScheduler:
             logger.error("정제 tick 오류: %s", exc)
             return []
 
+    async def tick_retraining(self) -> list[str]:
+        from services.retraining_service import tick
+        try:
+            return await asyncio.to_thread(tick)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("재교육 상태 복구 대기: %s", type(exc).__name__)
+            return []
+
     async def _loop(self) -> None:
         assert self._stop_event is not None
         while not self._stop_event.is_set():
@@ -132,6 +140,7 @@ class RoundScheduler:
                 await self.tick()
                 # 2. 잡 진행 — 완료된 라운드 reconcile + 다음 라운드 open
                 await asyncio.gather(self.tick_jobs(), self.tick_cleaning())
+                await self.tick_retraining()
                 # 3. running/pending 배포 상태를 Docker 실제 상태와 동기화
                 try:
                     from services.deployment_scheduling import tick as tick_deployments

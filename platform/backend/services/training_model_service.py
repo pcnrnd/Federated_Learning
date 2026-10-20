@@ -107,7 +107,10 @@ def register_completed_result(round_id, *, version=None):
     result = training_round_service.get_result(round_id).model_dump()
     if result["format"] != "ridge-v1":
         raise HTTPException(status_code=422, detail="실제 ridge 학습 완료 결과를 선택해야 합니다")
+    job_id = training_round_service.get_round(round_id).job_id
     with model_registry.REGISTRY_LOCK:
+        from services.retraining_service import reserve_registration
+        reserve_registration(job_id, result["result_id"])
         states = _load()
         identity = result["result_id"]
         binding = states.get(identity)
