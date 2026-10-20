@@ -36,7 +36,11 @@ const snapshot = (): DistributionOverview => ({ configs: [{ config_id: row.confi
 const observe = () => { const release = store.getState().observeLive(); releases.push(release); return release }
 const loaded = async () => { observe(); await vi.waitFor(() => expect(store.getState().pollPending).toBe(false)) }
 const html = () => renderToStaticMarkup(<><LiveDriftCard /><LiveDriftSettings /></>)
-function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done }); return { promise, resolve } }
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -80,6 +84,57 @@ test('poll 실패는 이전 snapshot과 갱신 실패를 함께 보존한다', a
   expect(html()).toContain('마지막 성공 조회값')
   expect(html()).toContain('현재 판단 불가')
   expect(html()).not.toContain('1.200000')
+})
+
+const stableSnapshot = (): DistributionOverview => ({ ...snapshot(), alerts: [], items: [{ ...row,
+  psi: 0, severity: 'stable', current_bin_counts: [100, 100], reason: '실제 정상 비교' }] })
+const requireUnavailable = () => {
+  expect(html()).toContain('현재 판단 불가')
+  expect(html()).toContain('계산할 수 없음')
+  expect(html()).not.toContain('0.000000')
+}
+
+test.each(['policy', 'ack'] as const)('%s pending과 후속 GET pending은 실패한 snapshot을 정상 PSI0으로 복구하지 않는다', async (kind) => {
+  fetch.mockResolvedValue(stableSnapshot()); await loaded()
+  expect(html()).toContain('0.000000')
+  fetch.mockRejectedValue(new Error('HTTP 503'))
+  expect(await store.getState().pollLive()).toBe(false)
+  requireUnavailable()
+  const post = deferred<unknown>(), fresh = deferred<DistributionOverview>()
+  if (kind === 'policy') save.mockReturnValue(post.promise)
+  else ack.mockReturnValue(post.promise)
+  fetch.mockReturnValue(fresh.promise)
+  const action = kind === 'policy' ? store.getState().saveLivePolicy() : store.getState().ackLiveAlert(alert.alert_id)
+  expect(store.getState()).toMatchObject({ livePending: true, liveError: 'HTTP 503' })
+  requireUnavailable()
+  post.resolve({})
+  await vi.waitFor(() => expect(store.getState().pollPending).toBe(true))
+  requireUnavailable()
+  fresh.resolve(stableSnapshot())
+  expect(await action).toBe(true)
+  expect(store.getState().liveError).toBeNull()
+  expect(html()).toContain('0.000000')
+})
+
+test.each([
+  ['policy', 'post-fail'], ['policy', 'get-fail'], ['ack', 'post-fail'], ['ack', 'get-fail'],
+] as const)('%s %s는 이전 조회 실패 뒤 정상 badge를 부활시키지 않는다', async (kind, failure) => {
+  fetch.mockResolvedValue(stableSnapshot()); await loaded()
+  fetch.mockRejectedValue(new Error('HTTP 503'))
+  await store.getState().pollLive()
+  const post = deferred<unknown>()
+  if (kind === 'policy') save.mockReturnValue(post.promise)
+  else ack.mockReturnValue(post.promise)
+  const action = kind === 'policy' ? store.getState().saveLivePolicy() : store.getState().ackLiveAlert(alert.alert_id)
+  requireUnavailable()
+  if (failure === 'post-fail') post.reject(new Error('HTTP 409'))
+  else post.resolve({})
+  expect(await action).toBe(false)
+  expect(store.getState().liveError).toBe(failure === 'post-fail' ? 'HTTP 409' : 'HTTP 503')
+  requireUnavailable()
+  fetch.mockResolvedValue(stableSnapshot())
+  expect(await store.getState().pollLive()).toBe(true)
+  expect(html()).toContain('0.000000')
 })
 
 test('서버 정책을 저장하고 재조회하며 편집 중 draft는 주기 poll이 덮지 않는다', async () => {
