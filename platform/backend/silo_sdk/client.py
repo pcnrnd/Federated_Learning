@@ -310,7 +310,9 @@ class SiloClient:
         result = self._request(
             "GET", "/api/cleaning-shards" + _query(silo_id=self.silo_id, status=status)
         )
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            raise SiloClientError(502, "정제 샤드 목록 응답 형식이 올바르지 않습니다")
+        return result
 
     def get_cleaning_job(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/cleaning-jobs/{job_id}")
