@@ -28,11 +28,16 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def resolve_rows_path() -> Path:
-    """Resolve ``rows.json`` from ``SILO1_ROWS_JSON`` or ``SILO1_DATA_ROOT``."""
-    explicit = os.environ.get("SILO1_ROWS_JSON")
+    """Resolve ``rows.json`` from env pins (``SILO*_ROWS_*`` / ``SILO*_DATA_ROOT``)."""
+    explicit = os.environ.get("SILO_ROWS_JSON") or os.environ.get("SILO1_ROWS_JSON")
     if explicit:
         return Path(explicit)
-    root = os.environ.get("SILO1_DATA_ROOT", "/srv/silo-data")
+    rel = os.environ.get("SILO_ROWS_REL")
+    root = os.environ.get("SILO_DATA_ROOT") or os.environ.get(
+        "SILO1_DATA_ROOT", "/srv/silo-data"
+    )
+    if rel:
+        return Path(root) / rel
     return Path(root) / DEFAULT_ROWS_REL
 
 
@@ -42,7 +47,11 @@ def load_rows_and_manifest() -> tuple[list[Row], dict[str, Any] | None]:
     if not rows_path.is_file():
         raise FileNotFoundError(f"Silo1 rows not found: {rows_path}")
     raw = rows_path.read_bytes()
-    expect = os.environ.get("SILO1_ROWS_SHA256", PINNED_ROWS_SHA256)
+    expect = (
+        os.environ.get("SILO_ROWS_SHA256")
+        or os.environ.get("SILO1_ROWS_SHA256")
+        or PINNED_ROWS_SHA256
+    )
     digest = _sha256_bytes(raw)
     if expect and digest != expect:
         raise ValueError(
