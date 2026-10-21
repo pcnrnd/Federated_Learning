@@ -20,6 +20,7 @@ import {
   type VizSnapshot,
 } from '@/hooks/useVisualizationData'
 import { layoutVizTopology } from '@/lib/vizTopology'
+import { UNCONFIGURED_API_MESSAGE, resolveUiDataMode } from '@/lib/uiMode'
 import { useModelStore } from '@/store/useModelStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { ModelVersion } from '@/types/simulation'
@@ -118,7 +119,9 @@ function slot(
   key: VizChartKey,
   emptyText: string | null,
   render: () => ReactNode,
+  unconfiguredMessage?: string | null,
 ): ReactNode {
+  if (unconfiguredMessage) return <Empty>{unconfiguredMessage}</Empty>
   if (!snapshot || snapshot.loading.includes(key)) return <Empty>데이터를 불러오는 중입니다.</Empty>
   if (snapshot.failed.includes(key)) {
     return <Empty>데이터를 불러오지 못했습니다. 서버 연결을 확인해 주세요. 10초마다 다시 시도합니다.</Empty>
@@ -136,9 +139,10 @@ interface TrendCardProps {
   onModelChange: (id: string) => void
   metric: TrendMetricMeta
   onMetricChange: (metric: TrendMetric) => void
+  unconfiguredMessage?: string | null
 }
 
-function TrendCard({ snapshot, models, model, onModelChange, metric, onMetricChange }: TrendCardProps) {
+function TrendCard({ snapshot, models, model, onModelChange, metric, onMetricChange, unconfiguredMessage }: TrendCardProps) {
   const raw = snapshot?.data.trend
   const trend = useMemo(() => (raw ? mapTimeseriesToLines(raw, metric.scale) : null), [raw, metric.scale])
   const toolbar = (
@@ -167,7 +171,7 @@ function TrendCard({ snapshot, models, model, onModelChange, metric, onMetricCha
       ) : (
         slot(snapshot, 'trend', trend?.series.length ? null : '사일로에서 지표 수집을 시작하면 추이가 표시됩니다.', () =>
           trend && <SiloTrendChart input={trend} yTitle={metric.yTitle} />,
-        )
+        unconfiguredMessage)
       )}
     </VizCard>
   )
@@ -175,16 +179,17 @@ function TrendCard({ snapshot, models, model, onModelChange, metric, onMetricCha
 
 interface SnapshotCardProps {
   snapshot: VizSnapshot | null
+  unconfiguredMessage?: string | null
 }
 
-function ParticipationCard({ snapshot }: SnapshotCardProps) {
+function ParticipationCard({ snapshot, unconfiguredMessage }: SnapshotCardProps) {
   const raw = snapshot?.data.participation
   const grid = useMemo(() => (raw ? mapParticipation(raw) : null), [raw])
   return (
     <VizCard icon="fa-table-cells" title="사일로 × 라운드 참여 매트릭스" desc="Which silos contributed to each training round.">
       {slot(snapshot, 'participation', grid?.columns.length ? null : '학습 라운드를 시작하면 사일로별 참여 현황이 표시됩니다.', () =>
         grid && <ParticipationHeatmap grid={grid} />,
-      )}
+      unconfiguredMessage)}
     </VizCard>
   )
 }
@@ -195,9 +200,10 @@ interface BarCardProps {
   onModeChange: (mode: BarMode) => void
   resource: ResourceMetric
   onResourceChange: (metric: ResourceMetric) => void
+  unconfiguredMessage?: string | null
 }
 
-function BarCard({ snapshot, mode, onModeChange, resource, onResourceChange }: BarCardProps) {
+function BarCard({ snapshot, mode, onModeChange, resource, onResourceChange, unconfiguredMessage }: BarCardProps) {
   const roundBar = snapshot?.data.roundBar
   const resourceBar = snapshot?.data.resourceBar
   const isSamples = mode === 'samples'
@@ -235,7 +241,7 @@ function BarCard({ snapshot, mode, onModeChange, resource, onResourceChange }: B
             yMax={isSamples ? undefined : 100}
           />
         ),
-      )}
+      unconfiguredMessage)}
     </VizCard>
   )
 }
@@ -244,9 +250,10 @@ interface HistogramCardProps {
   snapshot: VizSnapshot | null
   selected: string | null
   onBaselineChange: (key: string) => void
+  unconfiguredMessage?: string | null
 }
 
-function HistogramCard({ snapshot, selected, onBaselineChange }: HistogramCardProps) {
+function HistogramCard({ snapshot, selected, onBaselineChange, unconfiguredMessage }: HistogramCardProps) {
   const baselines = snapshot?.data.baselines ?? []
   const shown = snapshot?.data.histogram
   const input = useMemo(() => (shown ? mapHistogram(shown.payload) : null), [shown])
@@ -271,19 +278,19 @@ function HistogramCard({ snapshot, selected, onBaselineChange }: HistogramCardPr
     <VizCard icon="fa-chart-simple" title="기준 분포" desc="Baseline feature distribution used for drift detection." toolbar={toolbar}>
       {slot(snapshot, 'histogram', input?.values.length ? null : '기준 분포를 등록하면 피처별 분포가 표시됩니다.', () =>
         input && <BaselineHistogram input={input} feature={feature} />,
-      )}
+      unconfiguredMessage)}
     </VizCard>
   )
 }
 
-function TopologyCard({ snapshot }: SnapshotCardProps) {
+function TopologyCard({ snapshot, unconfiguredMessage }: SnapshotCardProps) {
   const raw = snapshot?.data.topology
   const layout = useMemo(() => (raw ? layoutVizTopology(raw) : null), [raw])
   return (
     <VizCard icon="fa-diagram-project" title="연합 토폴로지" desc="Central server, groups, aggregators, silos and running deployments.">
       {slot(snapshot, 'topology', layout?.nodes.length ? null : '사일로를 등록하면 연합 구성이 표시됩니다.', () =>
         layout && <LiveTopology layout={layout} />,
-      )}
+      unconfiguredMessage)}
     </VizCard>
   )
 }
@@ -304,7 +311,7 @@ export function VisualizationView() {
   const model =
     models.find((m) => m.id === modelId) ?? models.find((m) => m.status === 'deployed') ?? models[0]
   const modelRef = model ? mockEnabled ? { name: model.project, version: model.version } : parseModelKey(model.id) : null
-  const { isLive, snapshot } = useVisualizationData({
+  const { snapshot } = useVisualizationData({
     modelName: modelRef?.name ?? null,
     modelVersion: modelRef?.version ?? null,
     trendMetric,
@@ -312,17 +319,8 @@ export function VisualizationView() {
     baselineKey: selectedBaseline,
   })
 
-  if (!mockEnabled && !isLive) {
-    return (
-      <div className="tab-pane">
-        <VizCard icon="fa-chart-column" title="연합 학습 분석" desc="Federated learning visualizations from live server data.">
-          <Empty>
-            실데이터 API 주소 설정이 필요합니다. 서버 연결 주소를 설정한 뒤 시각화를 조회하세요.
-          </Empty>
-        </VizCard>
-      </div>
-    )
-  }
+  const uiMode = resolveUiDataMode(mockEnabled)
+  const unconfiguredMessage = uiMode === 'unconfigured' ? UNCONFIGURED_API_MESSAGE : null
 
   return (
     <div className="tab-pane">
@@ -333,8 +331,9 @@ export function VisualizationView() {
         onModelChange={setModelId}
         metric={TREND_METRICS.find((m) => m.value === trendMetric) ?? TREND_METRICS[0]}
         onMetricChange={setTrendMetric}
+        unconfiguredMessage={unconfiguredMessage}
       />
-      <ParticipationCard snapshot={snapshot} />
+      <ParticipationCard snapshot={snapshot} unconfiguredMessage={unconfiguredMessage} />
       <div className="viz-grid">
         <BarCard
           snapshot={snapshot}
@@ -342,10 +341,11 @@ export function VisualizationView() {
           onModeChange={setBarMode}
           resource={resourceMetric}
           onResourceChange={setResourceMetric}
+          unconfiguredMessage={unconfiguredMessage}
         />
-        <HistogramCard snapshot={snapshot} selected={selectedBaseline} onBaselineChange={setSelectedBaseline} />
+        <HistogramCard snapshot={snapshot} selected={selectedBaseline} onBaselineChange={setSelectedBaseline} unconfiguredMessage={unconfiguredMessage} />
       </div>
-      <TopologyCard snapshot={snapshot} />
+      <TopologyCard snapshot={snapshot} unconfiguredMessage={unconfiguredMessage} />
     </div>
   )
 }

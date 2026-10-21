@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useRef } from 'react'
 import { Line } from 'react-chartjs-2'
 import { CHART_PREVIEW_POINTS } from '@/constants/simulation'
+import { AnalyticsChartFrame } from '@/components/analytics/AnalyticsChartFrame'
 import { getChartTheme, type ChartTheme } from '@/lib/chartTheme'
 import { useSimulationStore } from '@/store/useSimulationStore'
 
@@ -179,18 +180,29 @@ export function PerformanceChart() {
     return () => window.cancelAnimationFrame(frame)
   }, [chartPoints, showPreview])
 
-  // 목 off + 실데이터 없음 — 빈 축을 그리는 대신 안내 문구
-  if (!mockEnabled && chartPoints.length === 0) {
-    return (
-      <div className="deploy-empty">
-        서버에서 수집된 성능 지표가 없습니다. 연결 상태와 실제 학습·관측 결과를 확인하세요.
-      </div>
-    )
-  }
+  const overlay =
+    !mockEnabled && chartPoints.length === 0
+      ? '서버에서 수집된 성능 지표가 없습니다. 연결 상태와 실제 학습·관측 결과를 확인하세요.'
+      : null
+
+  const chartData =
+    overlay !== null
+      ? {
+          labels: [0],
+          datasets: [
+            {
+              label: '글로벌 모델 정확도 (%)',
+              data: [null],
+              borderColor: 'rgba(6, 182, 212, 0.2)',
+              yAxisID: 'yAccuracy',
+            },
+          ],
+        }
+      : data
 
   return (
-    <div className="analytics-chart-box">
-      <Line ref={chartRef} data={data} options={options} />
-    </div>
+    <AnalyticsChartFrame overlayMessage={overlay}>
+      <Line ref={chartRef} data={chartData} options={options} />
+    </AnalyticsChartFrame>
   )
 }

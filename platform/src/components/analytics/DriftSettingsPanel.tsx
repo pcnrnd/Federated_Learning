@@ -1,4 +1,6 @@
 import { useMemo } from 'react'
+import { isLiveConfigured } from '@/api/client'
+import { resolveUiDataMode } from '@/lib/uiMode'
 import { useMonitoringStore } from '@/store/useMonitoringStore'
 import { useModelStore } from '@/store/useModelStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
@@ -7,10 +9,16 @@ import { LiveDriftSettings } from './LiveDrift'
 /** 드리프트·재학습 임계치 및 자동 재학습 설정 패널 (기본 접힘). */
 export function DriftSettingsPanel() {
   const mockEnabled = useSimulationStore((state) => state.mockEnabled)
-  return mockEnabled ? <DemoDriftSettingsPanel /> : <LiveDriftSettings />
+  const mode = resolveUiDataMode(mockEnabled)
+  return (
+    <>
+      <DemoDriftSettingsPanel demoOnly={mode !== 'demo'} />
+      {mode === 'live' && isLiveConfigured() && <LiveDriftSettings />}
+    </>
+  )
 }
 
-function DemoDriftSettingsPanel() {
+function DemoDriftSettingsPanel({ demoOnly }: { demoOnly?: boolean }) {
   const expanded = useMonitoringStore((s) => s.settingsExpanded)
   const toggleExpanded = useMonitoringStore((s) => s.toggleSettingsExpanded)
   const warnThreshold = useMonitoringStore((s) => s.warnThreshold)
@@ -48,6 +56,9 @@ function DemoDriftSettingsPanel() {
 
       {expanded && (
         <div className="drift-settings-body">
+          {demoOnly && (
+            <p className="desc">데모 전용 임계치입니다. 실서버 PSI 정책은 아래 실제 비교 정책 패널을 사용하세요.</p>
+          )}
           <div className="drift-settings-grid">
             <div className="control-group">
               <label htmlFor="drift-warn-threshold">경고 임계 (%)</label>
@@ -58,6 +69,7 @@ function DemoDriftSettingsPanel() {
                 min={0}
                 max={100}
                 value={warnThreshold}
+                disabled={demoOnly}
                 onChange={(e) => setWarnThreshold(Number(e.target.value))}
               />
             </div>
@@ -70,6 +82,7 @@ function DemoDriftSettingsPanel() {
                 min={0}
                 max={100}
                 value={alertThreshold}
+                disabled={demoOnly}
                 onChange={(e) => setAlertThreshold(Number(e.target.value))}
               />
             </div>

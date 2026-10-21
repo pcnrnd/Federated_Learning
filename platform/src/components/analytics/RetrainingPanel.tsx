@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { isLiveConfigured } from '@/api/client'
+import { DEMO_RETRAINING_REASON, resolveUiDataMode } from '@/lib/uiMode'
 import { retrainingError, retrainingPayload, retrainingStatus } from '@/lib/retraining'
 import { useRetrainingStore } from '@/store/useRetrainingStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
@@ -24,9 +25,32 @@ function EventCard({ event }: EventProps) {
 
 export function RetrainingPanel() {
   const mock = useSimulationStore((s) => s.mockEnabled)
+  const mode = resolveUiDataMode(mock)
+  const observe = useRetrainingStore((s) => s.observe)
   const state = useRetrainingStore()
-  useEffect(() => state.observe(), [])
-  if (mock || !isLiveConfigured()) return null
+  useEffect(() => {
+    if (mode === 'live') return observe()
+  }, [mode, observe])
+  if (mode === 'demo') {
+    return (
+      <section className="glass-panel content-card" aria-label="실제 재교육">
+        <h3>데이터 정제·재학습</h3>
+        <p className="deploy-empty" role="status">
+          {DEMO_RETRAINING_REASON}
+        </p>
+      </section>
+    )
+  }
+  if (!isLiveConfigured()) {
+    return (
+      <section className="glass-panel content-card" aria-label="실제 재교육">
+        <h3>데이터 정제·재학습</h3>
+        <p className="deploy-empty" role="status">
+          실데이터 API 주소 설정 후 재교육 기능을 사용할 수 있습니다.
+        </p>
+      </section>
+    )
+  }
   const parsed = retrainingPayload(state.draft, state.snapshot.options)
   const selected = state.snapshot.configs.find((c) => c.retrain_config_id === state.selected)
   const disabled = state.pending || state.polling
