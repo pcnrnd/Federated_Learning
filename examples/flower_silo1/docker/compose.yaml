@@ -47,9 +47,6 @@ services:
       - superlink:8000
       - --host
       - "0.0.0.0"
-      - --disable-runtime-dependency-installation
-    environment:
-      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
     mem_limit: 512m
     cpus: "1.0"
     volumes:
@@ -58,5 +55,6 @@ services:
         target: /srv/silo-data
         read_only: true
     environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
       SILO1_DATA_ROOT: /srv/silo-data
       SILO1_ROWS_SHA256: "8164fad0f8a29f18c677a99ad7e791b76e3c318dc15569d27bd2ea5432837356"

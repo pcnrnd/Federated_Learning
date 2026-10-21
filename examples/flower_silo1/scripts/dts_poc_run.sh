@@ -39,8 +39,17 @@ export POC_OUTPUT_DIR="$OUT_DIR"
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$EVID_DIR/run.log"; }
 
 mem_available_mb() {
-  # Locale-safe: second line of `free -m`, last column is "available".
-  free -m | awk 'NR==2 {print $NF}'
+  python3 - <<'PY'
+import subprocess
+
+text = subprocess.check_output(["free", "-m"], text=True, encoding="utf-8")
+for line in text.splitlines():
+    if line.startswith(("Mem:", "메모리:")):
+        print(line.split()[-1])
+        break
+else:
+    raise SystemExit("free_mem_line_missing")
+PY
 }
 
 record_memory() {
@@ -249,7 +258,18 @@ timeout 60s docker compose -f compose.yaml up -d --no-build
 COMPOSE_STARTED=1
 
 log "wait_supernode"
-sleep 10
+for i in $(seq 1 30); do
+  if docker inspect -f '{{.State.Running}}' fed-flower-poc-20261021-supernode 2>/dev/null | grep -q true; then
+    log "supernode_running after_${i}s"
+    break
+  fi
+  sleep 1
+done
+if ! docker inspect -f '{{.State.Running}}' fed-flower-poc-20261021-supernode 2>/dev/null | grep -q true; then
+  log "SUPERNODE_NOT_RUNNING"
+  exit 5
+fi
+sleep 5
 
 log "versions_and_flwr_cli"
 {
