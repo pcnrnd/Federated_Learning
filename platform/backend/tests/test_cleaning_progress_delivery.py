@@ -420,7 +420,8 @@ def test_real_sdk_raw_response_decode_errors_preserve_success_output(world, monk
 
 
 @pytest.mark.parametrize("change", ["generation-missing", "generation-null", "generation-bool",
-    "generation-string", "generation-old", "token-missing", "token-null", "token-malformed", "index-bool"])
+    "generation-string", "generation-old", "token-missing", "token-null", "token-malformed", "index-bool",
+    "status-list", "status-dict"])
 def test_malformed_get_is_unknown_not_a_fence_and_blocks_queued_cycle_work(world, change):
     nodes, path = world
     create("ambiguous", max_attempts=1)
@@ -441,6 +442,8 @@ def test_malformed_get_is_unknown_not_a_fence_and_blocks_queued_cycle_work(world
                 value["shards"][0].pop("attempt_id")
             elif change == "index-bool":
                 value["shards"][0]["shard_index"] = False
+            elif change.startswith("status-"):
+                value["shards"][0]["status"] = [] if change == "status-list" else {}
             else:
                 value["shards"][0]["attempt_id"] = None if change == "token-null" else "invalid"
             return value
