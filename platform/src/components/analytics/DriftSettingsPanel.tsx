@@ -4,16 +4,16 @@ import { resolveUiDataMode } from '@/lib/uiMode'
 import { useMonitoringStore } from '@/store/useMonitoringStore'
 import { useModelStore } from '@/store/useModelStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
-import { LiveDriftSettings } from './LiveDrift'
+import { LiveDriftPolicySection } from './LiveDriftPolicySection'
 
-/** 드리프트·재학습 임계치 및 자동 재학습 설정 패널 (기본 접힘). */
 export function DriftSettingsPanel() {
   const mockEnabled = useSimulationStore((state) => state.mockEnabled)
   const mode = resolveUiDataMode(mockEnabled)
+  const livePolicyDisabled = mode !== 'live' || !isLiveConfigured()
   return (
     <>
       <DemoDriftSettingsPanel demoOnly={mode !== 'demo'} />
-      {mode === 'live' && isLiveConfigured() && <LiveDriftSettings />}
+      <LiveDriftPolicySection disabled={livePolicyDisabled} />
     </>
   )
 }
@@ -30,9 +30,6 @@ function DemoDriftSettingsPanel({ demoOnly }: { demoOnly?: boolean }) {
   const setAutoRetrain = useMonitoringStore((s) => s.setAutoRetrain)
   const setRetrainModelId = useMonitoringStore((s) => s.setRetrainModelId)
 
-  // 원본 배열을 select한 뒤 useMemo로 파생한다.
-  // selector에서 .filter()로 새 배열을 반환하면 zustand v5(Object.is 비교) +
-  // useSyncExternalStore가 매 렌더마다 다른 참조를 감지해 무한 렌더 루프에 빠진다.
   const models = useModelStore((s) => s.models)
   const deployedModels = useMemo(
     () => models.filter((m) => m.status === 'deployed'),
@@ -57,7 +54,7 @@ function DemoDriftSettingsPanel({ demoOnly }: { demoOnly?: boolean }) {
       {expanded && (
         <div className="drift-settings-body">
           {demoOnly && (
-            <p className="desc">데모 전용 임계치입니다. 실서버 PSI 정책은 아래 실제 비교 정책 패널을 사용하세요.</p>
+            <p className="desc">데모 전용 임계치입니다. 실서버 PSI 정책은 아래 실제 비교 정책 섹션을 사용하세요.</p>
           )}
           <div className="drift-settings-grid">
             <div className="control-group">
@@ -100,14 +97,12 @@ function DemoDriftSettingsPanel({ demoOnly }: { demoOnly?: boolean }) {
                 id="drift-auto-retrain"
                 type="checkbox"
                 checked={autoRetrain}
+                disabled={demoOnly}
                 onChange={(e) => setAutoRetrain(e.target.checked)}
               />
               <span className="drift-toggle-track" aria-hidden="true" />
               <span className="drift-toggle-label">자동 재학습</span>
             </label>
-            <span className="drift-settings-hint">
-              경보 임계 초과 시 실험 버전을 자동 생성합니다.
-            </span>
           </div>
 
           <div className="control-group">
@@ -116,6 +111,7 @@ function DemoDriftSettingsPanel({ demoOnly }: { demoOnly?: boolean }) {
               <select
                 id="drift-retrain-model"
                 value={retrainModelId}
+                disabled={demoOnly}
                 onChange={(e) => setRetrainModelId(e.target.value as string | 'auto')}
               >
                 <option value="auto">자동 (첫 번째 배포 모델)</option>
