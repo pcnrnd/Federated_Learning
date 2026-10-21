@@ -15,6 +15,10 @@ class ExecutionCleanupError(RuntimeError):
     """실제 실행 종료 미확인 시 worker 전체의 신규 admission을 멈춘다."""
 
 
+class TerminalAckUnknown(RuntimeError):
+    """성공 보고 상태를 확인하지 못하면 재전송 없이 현재 worker admission을 멈춘다."""
+
+
 class CleaningProcessError(RuntimeError):
     def __init__(self, message: str, retryable: bool):
         super().__init__(message)
@@ -45,10 +49,54 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
             raise ExecutionCleanupError("정제 실행 프로세스 종료를 확인하지 못했습니다") from exc
 
 
+class _Progress:
+    """진행 보고는 한 요청과 최신 값 하나만 유지한다. 결과 pipe를 기다리게 하지 않는다."""
+
+    def __init__(self, client, job, shard):
+        self.client, self.job, self.shard = client, job, shard
+        self.latest = None
+        self.closed = False
+        self.changed = asyncio.Event()
+        self.task = asyncio.create_task(self.send())
+
+    def publish(self, message):
+        if not self.closed:
+            self.latest = (message["done"], message["total"], message["stage"])
+            self.changed.set()
+
+    async def send(self):
+        while not self.closed:
+            await self.changed.wait()
+            self.changed.clear()
+            if self.closed:
+                break
+            value, self.latest = self.latest, None
+            try:
+                await asyncio.to_thread(self.client.cleaning_progress, self.job["job_id"],
+                    self.shard["shard_index"], self.shard["attempt_id"], *value)
+            except (OSError, SiloClientError):
+                # ACK 유실 여부는 알 수 없다. 재전송하지 않고 다음 최신 진행량만 허용한다.
+                pass
+
+    async def close(self):
+        self.closed = True
+        self.latest = None
+        self.changed.set()
+        # to_thread 취소는 실제 HTTP 요청을 멈추지 않는다. 2초 단일 요청 스레드를
+        # 회수한 뒤 terminal report를 보낸다. 서버에 늦게 도착한 진행은 token/running
+        # 검사가 차단한다. HTTP timeout 자체를 서버의 미반영 증거로 취급하지 않는다.
+        try:
+            await asyncio.shield(self.task)
+        except asyncio.CancelledError:
+            await asyncio.shield(self.task)
+            raise
+
+
 async def _execute(client, job, shard, recipe, data_dir, timeout):
     launched_at = time.monotonic()
     process = await asyncio.create_subprocess_exec(*_executor_command(),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    progress = _Progress(client, job, shard)
 
     async def exchange():
         assert process.stdin is not None and process.stdout is not None
@@ -60,8 +108,7 @@ async def _execute(client, job, shard, recipe, data_dir, timeout):
         while line := await process.stdout.readline():
             message = json.loads(line)
             if message["type"] == "progress":
-                await asyncio.to_thread(client.cleaning_progress, job["job_id"], shard["shard_index"],
-                    shard["attempt_id"], message["done"], message["total"], message["stage"])
+                progress.publish(message)
             elif message["type"] == "result":
                 result = message["manifest"]
             elif message["type"] == "error":
@@ -76,7 +123,61 @@ async def _execute(client, job, shard, recipe, data_dir, timeout):
     try:
         return await asyncio.wait_for(exchange(), timeout=max(0, timeout - (time.monotonic() - launched_at)))
     finally:
-        await _stop_process(process)  # 실제 종료 확인 뒤에만 호출자의 실행 슬롯 반납.
+        try:
+            await _stop_process(process)  # 실제 종료 확인 뒤에만 호출자의 실행 슬롯 반납.
+        finally:
+            await progress.close()
+
+
+def _ack_matches(ack, client, job, shard, fields):
+    if not isinstance(ack, dict) or not isinstance(ack.get("shards"), list):
+        return False
+    if not all(isinstance(row, dict) for row in ack["shards"]):
+        return False
+    matches = [row for row in ack["shards"] if row.get("shard_index") == shard["shard_index"]]
+    return (ack.get("job_id") == job["job_id"] and ack.get("generation") == job.get("generation")
+        and len(matches) == 1 and matches[0].get("status") == "completed"
+        and matches[0].get("silo_id") == client.silo_id
+        and matches[0].get("attempt_id") == shard["attempt_id"]
+        and all(matches[0].get(key) == value for key, value in fields.items()))
+
+
+async def _reconcile_success(client, job, shard, fields):
+    try:
+        current = await asyncio.to_thread(client.get_cleaning_job, job["job_id"])
+    except (OSError, SiloClientError) as exc:
+        raise TerminalAckUnknown("정제 성공 보고 ACK·현재 상태 미확인: 신규 admission 중단") from exc
+    if _ack_matches(current, client, job, shard, fields):
+        return True
+    if isinstance(current, dict) and current.get("job_id") == job["job_id"]:
+        if current.get("generation") != job.get("generation"):
+            return False  # 명시적으로 새 generation이 이전 실행권한을 닫았다.
+        rows = current.get("shards")
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise TerminalAckUnknown("정제 성공 보고 현재 상태 형식 미확인: 신규 admission 중단")
+        rows = [r for r in rows if r.get("shard_index") == shard["shard_index"]]
+        if len(rows) == 1 and (rows[0].get("attempt_id") != shard["attempt_id"]
+                or rows[0].get("status") in {"completed", "failed", "cancelled", "retry_wait"}):
+            return False  # 닫힌/다른 token은 성공으로 인정하지 않는다.
+    raise TerminalAckUnknown("정제 성공 보고 ACK 미확인·실행권한 미종결: 신규 admission 중단")
+
+
+async def _report_success(client, job, shard, manifest):
+    fields = {key: manifest[key] for key in ("rows_in", "rows_out", "step_counters", "schema_fingerprint",
+                                             "output_id", "output_hash", "source_hash", "recipe_hash")}
+    sending = asyncio.create_task(asyncio.to_thread(client.report_cleaning_shard,
+        job["job_id"], shard["shard_index"], **fields,
+        attempt_id=shard["attempt_id"], started_at=shard["started_at"]))
+    try:
+        ack = await asyncio.shield(sending)
+    except asyncio.CancelledError:
+        await asyncio.gather(sending, return_exceptions=True)
+        raise
+    except (OSError, SiloClientError):
+        return await _reconcile_success(client, job, shard, fields)
+    if _ack_matches(ack, client, job, shard, fields):
+        return True
+    return await _reconcile_success(client, job, shard, fields)
 
 
 async def _failure(client, job_id, index, shard, message, retryable):
@@ -106,11 +207,6 @@ async def process_assignment(client: SiloClient, assignment: dict, data_dir: str
         if remaining <= 0:
             raise asyncio.TimeoutError()
         manifest = await _execute(client, job, shard, recipe, data_dir, remaining)
-        fields = {key: manifest[key] for key in ("rows_in", "rows_out", "step_counters", "schema_fingerprint",
-                                                 "output_id", "output_hash", "source_hash", "recipe_hash")}
-        await asyncio.to_thread(client.report_cleaning_shard, job_id, index, **fields,
-                                attempt_id=shard["attempt_id"], started_at=shard["started_at"])
-        return True
     except asyncio.CancelledError:
         await _failure(client, job_id, index, shard, "정제 worker 실행 취소", True)
         raise
@@ -122,16 +218,48 @@ async def process_assignment(client: SiloClient, assignment: dict, data_dir: str
         message = str(exc) if isinstance(exc, CleaningProcessError) else f"로컬 정제 실행 실패: {type(exc).__name__}"
         await _failure(client, job_id, index, shard, message, transient)
         return False
+    # 실행 실패와 terminal 전송/ACK 실패를 구분한다. 로컬 성공 출력을 실패로 덮지 않는다.
+    return await _report_success(client, job, shard, manifest)
+
+
+async def _admission_ready(client, active):
+    """재시작 후 소유자를 잃은 running attempt가 있으면 이 사일로의 신규 claim을 보류한다."""
+    try:
+        rows = await asyncio.to_thread(client.list_assigned_shards, "running")
+    except (OSError, SiloClientError):
+        return False
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("job_id"), str):
+            return False
+        if (row.get("status") != "running" or row.get("silo_id") != client.silo_id
+                or type(row.get("shard_index")) is not int or row["shard_index"] < 0
+                or type(row.get("generation")) is not int or row["generation"] < 0):
+            return False
+        if (row["job_id"], row["shard_index"], row["generation"]) not in active:
+            return False
+    return True
 
 
 async def cycle(client: SiloClient, data_dir: str, executor=None, concurrency: int = 2) -> list[bool]:
     """명시적인 단발 호출만 위한 helper. 지속 worker는 아래 독립 poll loop를 사용한다."""
+    if not await _admission_ready(client, {}):
+        return []
     assignments = await asyncio.to_thread(client.list_assigned_shards, "pending")
     semaphore = asyncio.Semaphore(max(1, min(concurrency, 4)))
+    blocked = False
 
     async def one(assignment):
+        nonlocal blocked
         async with semaphore:
-            return await process_assignment(client, assignment, data_dir)
+            if blocked:
+                return False
+            try:
+                return await process_assignment(client, assignment, data_dir)
+            except (TerminalAckUnknown, ExecutionCleanupError):
+                blocked = True
+                raise
 
     return await asyncio.gather(*(one(a) for a in assignments))
 
@@ -153,7 +281,7 @@ async def run(client: SiloClient, data_dir: str, poll_interval: float = 2,
                         task.result()
                     except (OSError, SiloClientError):
                         pass
-            if len(active) < limit:
+            if len(active) < limit and await _admission_ready(client, active):
                 try:
                     assignments = await asyncio.to_thread(client.list_assigned_shards, "pending")
                 except (OSError, SiloClientError):

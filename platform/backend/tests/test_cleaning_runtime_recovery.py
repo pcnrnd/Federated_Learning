@@ -283,7 +283,7 @@ def test_G2_F2_cli_sigterm_path_reaps_execution_child(tmp_path):
         "        await runtime._stop_process(process)", "        raise",
         "asyncio.create_subprocess_exec = observed", "class Client:", "    silo_id = 'silo-1'",
         "    claimed = False", "    def list_assigned_shards(self, status):",
-        "        return [] if self.claimed else [{'job_id': 'signal', 'shard_index': 0}]",
+        "        return [] if self.claimed or status != 'pending' else [{'job_id': 'signal', 'shard_index': 0}]",
         "    def start_cleaning_shard(self, *args):", "        self.claimed = True",
         "        return request['job']", "    def fetch_cleaning_recipe(self, *args):",
         "        return request['recipe']", "    def cleaning_progress(self, *args): return {}",
