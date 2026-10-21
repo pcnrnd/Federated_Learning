@@ -29,3 +29,9 @@ export const UNCONFIGURED_API_MESSAGE =
   '실데이터 API 주소 설정이 필요합니다. 환경 변수 VITE_API_BASE를 설정한 뒤 다시 시도하세요.'
 
 export const LIVE_JOB_SELECT_REASON = '일시정지·재개·취소할 실제 학습 작업을 먼저 선택하세요.'
+
+export const LIVE_TRAINING_JOB_CAPABILITY_REASON =
+  '실제 학습 작업 선택·취소는 API가 설정되고 데모 데이터가 꺼진 live 모드에서만 사용할 수 있습니다.'
+
+export const LIVE_TERMINAL_JOB_REASON =
+  '종료된 작업(completed/failed/cancelled)에는 일시정지·재개·취소·새 시작을 적용할 수 없습니다. 선택을 해제한 뒤 새 작업을 등록하세요.'

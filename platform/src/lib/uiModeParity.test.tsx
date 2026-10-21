@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import {
   CONTROL_CLEANING_FIELD_IDS,
+  CONTROL_LIVE_JOB_FIELD_IDS,
   CONTROL_TRAINING_FIELD_IDS,
   LIVE_DRIFT_POLICY_FIELD_IDS,
   MAIN_MODEL_FIELD_IDS,
@@ -53,7 +54,7 @@ test('미설정 API에서도 ControlPanel·NewModelForm 공통 카드가 유지�
   expect(renderToStaticMarkup(<NewModelForm defaultProject="p" onClose={() => {}} />)).toContain('VITE_API_BASE')
 })
 
-test('라이브 NodeCard 어댑터는 CPU 미수집을 대시로 렌더한다', async () => {
+test('라이브 NodeCard 어댑터는 CPU 미수집을 대시로 렌더하고 IDLE 배지를 표시하지 않는다', async () => {
   const { silosToDisplayNodes } = await import('@/lib/displayNodes')
   const { NodeCard } = await import('@/components/nodes/NodeCard')
   const node = silosToDisplayNodes(
@@ -71,16 +72,19 @@ test('라이브 NodeCard 어댑터는 CPU 미수집을 대시로 렌더한다', 
     ],
     {},
   )[0]
+  expect(node.statusUnavailable).toBe(true)
   const html = renderToStaticMarkup(<NodeCard node={node} interactive={false} allNodes={[node]} />)
   expect(html).toContain('progress-text')
   expect(html).toContain('— (미수집)')
+  expect(html).toContain('status-unobserved')
+  expect(html).not.toContain('>IDLE<')
 })
 
 test('NewModelForm·UnifiedPipelineForm·Retraining·Drift는 세 모드에서 동일 field id를 유지한다', async () => {
-  const modes: Array<{ label: string; mock: boolean; api: string }> = [
-    { label: 'demo', mock: true, api: 'http://central' },
-    { label: 'live', mock: false, api: 'http://central' },
-    { label: 'unconfigured', mock: false, api: '' },
+  const modes: Array<{ mock: boolean; api: string }> = [
+    { mock: true, api: 'http://central' },
+    { mock: false, api: 'http://central' },
+    { mock: false, api: '' },
   ]
 
   for (const { mock, api } of modes) {
@@ -110,6 +114,7 @@ test('NewModelForm·UnifiedPipelineForm·Retraining·Drift는 세 모드에서 �
     const controlHtml = renderToStaticMarkup(<ControlPanel />)
     assertIds(controlHtml, CONTROL_TRAINING_FIELD_IDS)
     assertIds(controlHtml, CONTROL_CLEANING_FIELD_IDS)
+    assertIds(controlHtml, CONTROL_LIVE_JOB_FIELD_IDS)
   }
 })
 
@@ -160,12 +165,12 @@ test('trainingJobActionPath는 슬래시 포함 job_id를 encodeURIComponent 한
   expect(trainingJobActionPath('job/second', 'cancel')).toBe('/api/training-jobs/job%2Fsecond/cancel')
 })
 
-test('UnifiedPipelineForm은 liveError·trainingError를 role=alert로 표시할 수 있다', async () => {
+test('UnifiedPipelineForm은 liveError·training store error를 각각 role=alert로 표시한다', async () => {
   await prepareMode(false, 'http://central')
   const { useDataStore } = await import('@/store/useDataStore')
   const { useLiveTrainingStore } = await import('@/store/useLiveTrainingStore')
   useDataStore.setState({ liveError: '정제 저장 실패' })
-  useLiveTrainingStore.setState({ trainingError: null, error: '학습 등록 실패', pending: false })
+  useLiveTrainingStore.setState({ error: '학습 등록 실패', pending: false })
   const { UnifiedPipelineForm } = await import('@/components/data/UnifiedPipelineForm')
   const html = renderToStaticMarkup(<UnifiedPipelineForm onClose={() => {}} />)
   expect(html).toContain('role="alert"')
@@ -216,6 +221,11 @@ test('PipelineLiveResults는 정제 카운터·라운드 결과 섹션을 렌더
           result_id: 'res-1',
           checksum: 'abc',
           parameters: [1, 2],
+          parameter_dim: 2,
+          total_samples: 5,
+          format: 'ridge_gradient_v1',
+          features: ['x1', 'x2'],
+          target: 'y',
         },
       },
     ],

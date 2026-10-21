@@ -1336,6 +1336,11 @@ input[type='range']::-webkit-slider-thumb:hover {
   text-transform: uppercase;
 }
 
+.status-unobserved {
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  color: var(--text-muted);
+}
+
 .status-idle {
   background: rgb(var(--ink) / 0.03);
   border: 1px solid rgb(var(--ink) / 0.08);
