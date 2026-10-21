@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flower-silo1"
+version = "0.1.0"
+description = "Minimal Flower 1.41 deployment example for Silo1 (NumPy ridge, one client)"
+readme = "README.md"
+requires-python = ">=3.11,<4"
+dependencies = [
+    "flwr==1.41.0",
+    "numpy>=1.26.0,<3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["flower_silo1"]
+
+[tool.flwr.app]
+publisher = "pcnrnd"
+fab-format-version = 1
+flwr-version-target = "1.41.0"
+
+[tool.flwr.app.components]
+serverapp = "flower_silo1.server_app:app"
+clientapp = "flower_silo1.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds = 2
+save-model = true
+model-output-path = "artifacts/final_weights.npz"
+local-steps = 5
+l2 = 0.01
+step-size = 0.1
+feature-columns = []
+target-column = ""
+parameter-dim = 0
