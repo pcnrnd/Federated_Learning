@@ -21,7 +21,13 @@ services:
     container_name: fed-flower-poc-20261021-superlink
     networks: [fed_flower_poc_20261021_internal]
     entrypoint: ["flower-superlink"]
-    command: ["--insecure", "--host", "0.0.0.0"]
+    command:
+      - --insecure
+      - --host
+      - 0.0.0.0
+      - --disable-runtime-dependency-installation
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
     mem_limit: 512m
     cpus: "1.0"
     volumes:
@@ -41,6 +47,9 @@ services:
       - superlink:8000
       - --host
       - "0.0.0.0"
+      - --disable-runtime-dependency-installation
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
     mem_limit: 512m
     cpus: "1.0"
     volumes:
