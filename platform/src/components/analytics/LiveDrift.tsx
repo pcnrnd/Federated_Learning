@@ -65,13 +65,15 @@ function DriftAlerts({ row }: ObservationProps) {
   </div>
 }
 
-export function LiveDriftCard() {
+export function LiveDriftCard({ compact = false }: { compact?: boolean }) {
   const state = useMonitoringStore()
   if (!isLiveConfigured()) return <div className="deploy-empty">실제 분포 API가 설정되지 않았습니다.</div>
   const row = state.liveRows.find((value) => driftScopeKey(value) === state.selectedScope)
   return <section className="glass-panel content-card" aria-label="실제 데이터 드리프트">
+    {!compact && <>
     <h3>실제 데이터 드리프트</h3>
     <p>원시 값 없이 검증된 정제 출력의 공통 히스토그램을 비교합니다. PSI는 백분율이 아닙니다.</p>
+    </>}
     <button className="btn btn-secondary" disabled={state.livePending || state.pollPending}
       onClick={() => { void state.pollLive() }}>새로고침</button>
     {state.liveError && <p role="alert">갱신 실패: {state.liveError} — 아래 내용은 마지막 성공 조회값입니다.</p>}

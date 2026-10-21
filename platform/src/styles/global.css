@@ -1539,6 +1539,17 @@ input[type='range']::-webkit-slider-thumb:hover {
   padding-top: 10px;
 }
 
+.analytics-chart-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+  pointer-events: none;
+}
+
 /* ==========================================================================
    Logs Tab
    ========================================================================== */

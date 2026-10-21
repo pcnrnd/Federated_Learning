@@ -9,8 +9,14 @@ import {
 } from '@/lib/topology'
 import { deriveStorageUnits, type StorageUnit } from '@/lib/storage'
 import { useDataStore, type SiloDataFields } from '@/store/useDataStore'
+import type { DisplayNode } from '@/lib/displayNodes'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { NodeStatus, PacketDirection } from '@/types/simulation'
+
+interface TopologySVGProps {
+  /** 미지정 시 시뮬레이션 store 노드를 사용한다 */
+  nodes?: DisplayNode[]
+}
 
 /** 패킷이 흐르는 방향에 따라 경로를 활성화한다. 서버↔사일로 구간(WAN)만 반응. */
 function trunkPathClass(direction: PacketDirection): string {
@@ -35,8 +41,9 @@ function clientNodeClass(status: NodeStatus, active: boolean): string {
   return 'client-node'
 }
 
-export function TopologySVG() {
-  const nodes = useSimulationStore((s) => s.nodes)
+export function TopologySVG({ nodes: nodesOverride }: TopologySVGProps = {}) {
+  const storeNodes = useSimulationStore((s) => s.nodes)
+  const nodes = nodesOverride ?? storeNodes
   const direction = useSimulationStore((s) => s.packetDirection)
   const dataBySilo = useDataStore((s) => s.dataBySilo)
 
