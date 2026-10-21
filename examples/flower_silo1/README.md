@@ -25,7 +25,19 @@ pip install -e .
 python -c "from flower_silo1.server_app import app as s; from flower_silo1.client_app import app as c"
 ```
 
-## Proposed runtime (root review — do not run until authorized)
+## DTS PoC runner (`scripts/dts_poc_run.sh`)
+
+Run only on DTS Linux (not Windows Docker). The script enforces: EXIT trap with
+evidence capture then bounded `compose down`; DTS available memory ≥ 4.5 GiB before
+build; pressure watch &lt; 3 GiB during build/run; `docker build --memory=1g`;
+overall `timeout --kill-after=15 660s`; GET probes on `http://127.0.0.1:18080/api/training-rounds`
+and `/api/models` via curl (connect 2s / max 5s, no masked failures).
+
+```bash
+bash ~/fed-flower-poc-20261021/app/scripts/dts_poc_run.sh
+```
+
+## Proposed runtime (manual compose)
 
 1. Set `SILO1_TARGET_COLUMN` / `SILO1_FEATURE_COLUMNS` (or `tool.flwr.app.config`
    `feature-columns` / `target-column` / `parameter-dim`) from `manifest.json` on the volume.
