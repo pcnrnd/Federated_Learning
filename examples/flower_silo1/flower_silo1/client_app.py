@@ -1,10 +1,11 @@
-"""Flower ClientApp: local NumPy ridge on read-only Silo1 rows."""
+"""Flower ClientApp: local NumPy ridge on read-only silo rows."""
 
 from __future__ import annotations
 
 import json
+import os
 
-from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
 from flower_silo1.data import load_rows_and_manifest, matrix_from_rows, resolve_feature_target
@@ -20,8 +21,19 @@ app = ClientApp()
 _DATA_CACHE: dict[str, object] | None = None
 
 
+def _silo_id(context: Context) -> str:
+    """Resolve silo id from run config or container env."""
+    cfg = context.run_config.get("silo-id")
+    if cfg is not None and str(cfg).strip():
+        return str(cfg).strip()
+    env_id = os.environ.get("SILO_ID")
+    if env_id:
+        return env_id.strip()
+    return "1"
+
+
 def _training_data(context: Context) -> tuple[list[list[float]], list[float], int]:
-    """Load Silo1 rows once per process and build the local design matrix."""
+    """Load silo rows once per process and build the local design matrix."""
     global _DATA_CACHE  # noqa: PLW0603
     if _DATA_CACHE is None:
         rows, manifest = load_rows_and_manifest()
@@ -43,7 +55,7 @@ def _log(event: str, **fields: object) -> None:
 
 @app.train()
 def train(msg: Message, context: Context) -> Message:
-    """Train from the global ArrayRecord on local Silo1 data."""
+    """Train from the global ArrayRecord on local silo data."""
     received = msg.content["arrays"]
     received_hash = hash_array_record(received)
     global_vector = arrays_to_vector(received.to_numpy_ndarrays())
@@ -59,11 +71,13 @@ def train(msg: Message, context: Context) -> Message:
     )
     local_record = ArrayRecord(vector_to_arrays(updated))
     local_hash = hash_array_record(local_record)
-    config = msg.content.get("config")
-    round_id = config.get("server-round", "?") if config is not None else "?"
+    inbound = msg.content.get("config")
+    round_id = inbound.get("server-round", "?") if inbound is not None else "?"
+    silo_id = _silo_id(context)
     _log(
         "client_round_train",
         round=round_id,
+        silo_id=silo_id,
         received_hash=received_hash,
         global_hash=received_hash,
         local_hash=local_hash,
@@ -73,5 +87,14 @@ def train(msg: Message, context: Context) -> Message:
         node_id=context.node_id,
     )
     metric_record = MetricRecord({"loss": loss, "num-examples": num_examples})
-    content = RecordDict({"arrays": local_record, "metrics": metric_record})
+    config_record = ConfigRecord(
+        {
+            "silo-id": silo_id,
+            "received-hash": received_hash,
+            "local-hash": local_hash,
+        }
+    )
+    content = RecordDict(
+        {"arrays": local_record, "metrics": metric_record, "config": config_record}
+    )
     return Message(content=content, reply_to=msg)

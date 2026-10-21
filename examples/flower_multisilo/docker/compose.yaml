@@ -1,0 +1,157 @@
+# fed-flower-six-silos-20261021: internal bridge, no host ports, six SuperNodes.
+
+name: fed-flower-six-silos-20261021
+
+networks:
+  fed_flower_six_silos_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  silo1_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-1-learning
+  silo2_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-2-learning
+  silo3_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-3-learning
+  silo4_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-4-learning
+  silo5_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-5-learning
+  silo6_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-6-learning
+
+x-supernode: &supernode_base
+  image: fed-flower-six-silos-20261021-app:1.41.0
+  networks: [fed_flower_six_silos_internal]
+  depends_on: [superlink]
+  entrypoint: ["flower-supernode"]
+  command:
+    - --insecure
+    - --superlink
+    - superlink:8000
+    - --host
+    - "0.0.0.0"
+  mem_limit: 512m
+  cpus: "1.0"
+  environment:
+    FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+
+services:
+  superlink:
+    image: fed-flower-six-silos-20261021-app:1.41.0
+    build:
+      context: ../..
+      dockerfile: flower_multisilo/docker/Dockerfile
+    container_name: fed-flower-six-silos-20261021-superlink
+    networks: [fed_flower_six_silos_internal]
+    entrypoint: ["flower-superlink"]
+    command:
+      - --insecure
+      - --host
+      - 0.0.0.0
+      - --disable-runtime-dependency-installation
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+    mem_limit: 512m
+    cpus: "1.0"
+    volumes:
+      - type: bind
+        source: ${POC_OUTPUT_DIR}
+        target: /output
+
+  supernode1:
+    <<: *supernode_base
+    container_name: fed-flower-six-silos-20261021-supernode1
+    volumes:
+      - type: volume
+        source: silo1_learning
+        target: /srv/silo-data
+        read_only: true
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+      SILO_ID: "1"
+      SILO_DATA_ROOT: /srv/silo-data
+      SILO_ROWS_REL: fed-final-path603396-20261021/.cleaned/f27880259e7c004a83f7515ca6ad70a792ee7cba6d4897a28994c1689f69f939/rows.json
+      SILO_ROWS_SHA256: "8164fad0f8a29f18c677a99ad7e791b76e3c318dc15569d27bd2ea5432837356"
+
+  supernode2:
+    <<: *supernode_base
+    container_name: fed-flower-six-silos-20261021-supernode2
+    volumes:
+      - type: volume
+        source: silo2_learning
+        target: /srv/silo-data
+        read_only: true
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+      SILO_ID: "2"
+      SILO_DATA_ROOT: /srv/silo-data
+      SILO_ROWS_REL: fed-final-path603396-20261021/.cleaned/f10190bd8e62495e2ccf985aeb98baa784ca3e0df84129064b8b6aae1f5b6fe6/rows.json
+      SILO_ROWS_SHA256: "fedb53a0f061d66dd70f0bcde2c00ac0b37ac324025dc99ded835a558cecd8a3"
+
+  supernode3:
+    <<: *supernode_base
+    container_name: fed-flower-six-silos-20261021-supernode3
+    volumes:
+      - type: volume
+        source: silo3_learning
+        target: /srv/silo-data
+        read_only: true
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+      SILO_ID: "3"
+      SILO_DATA_ROOT: /srv/silo-data
+      SILO_ROWS_REL: fed-final-path603396-20261021/.cleaned/c707626344d8e030dbabc0a21f742ad290a353a7df3f11de47abed1f64d7a3bb/rows.json
+      SILO_ROWS_SHA256: "56fc7fca3c7009312db8103e5eacf3a97cb0c06c611e83f3c942d31c17e31984"
+
+  supernode4:
+    <<: *supernode_base
+    container_name: fed-flower-six-silos-20261021-supernode4
+    volumes:
+      - type: volume
+        source: silo4_learning
+        target: /srv/silo-data
+        read_only: true
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+      SILO_ID: "4"
+      SILO_DATA_ROOT: /srv/silo-data
+      SILO_ROWS_REL: fed-final-path603396-20261021/.cleaned/64bc01df16adbce3ed36cd6704403e14029989e9d55638a70925540d4d398381/rows.json
+      SILO_ROWS_SHA256: "060a9293f0409d96edf460cc0ab75a058b893d66c50fba80c3e0cee7bb96d1c0"
+
+  supernode5:
+    <<: *supernode_base
+    container_name: fed-flower-six-silos-20261021-supernode5
+    volumes:
+      - type: volume
+        source: silo5_learning
+        target: /srv/silo-data
+        read_only: true
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+      SILO_ID: "5"
+      SILO_DATA_ROOT: /srv/silo-data
+      SILO_ROWS_REL: fed-final-path603396-20261021/.cleaned/e1c971cdecfe4180e7481a19150a55fd0a4e31c0ca12b03c9e8a2868e1a34934/rows.json
+      SILO_ROWS_SHA256: "4221522eccca8269541119ad7d399e1273099c545ed205941e283eebc67e56ea"
+
+  supernode6:
+    <<: *supernode_base
+    container_name: fed-flower-six-silos-20261021-supernode6
+    volumes:
+      - type: volume
+        source: silo6_learning
+        target: /srv/silo-data
+        read_only: true
+    environment:
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION: "1"
+      SILO_ID: "6"
+      SILO_DATA_ROOT: /srv/silo-data
+      SILO_ROWS_REL: fed-final-path603396-20261021/.cleaned/bd78e569eaad6e8bc26e17a9e958a6cb2301e74660fe4cd7233978ba24ffe075/rows.json
+      SILO_ROWS_SHA256: "9cefe8c8fb94d0d174cfe63f502c7882c5c702c533d3e7cba60f5849a70999ff"
