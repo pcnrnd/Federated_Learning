@@ -39,7 +39,8 @@ export POC_OUTPUT_DIR="$OUT_DIR"
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$EVID_DIR/run.log"; }
 
 mem_available_mb() {
-  free -m | awk '/^Mem:/ {print $7}'
+  # Locale-safe: second line of `free -m`, last column is "available".
+  free -m | awk 'NR==2 {print $NF}'
 }
 
 record_memory() {
