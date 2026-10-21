@@ -28,11 +28,11 @@ def _training_data(context: Context) -> tuple[list[list[float]], list[float], in
         features, target = resolve_feature_target(
             rows,
             manifest,
-            run_feature_columns=list(context.run_config.get("feature-columns") or []),
-            run_target_column=str(context.run_config.get("target-column") or ""),
+            run_feature_columns=context.run_config["feature-columns"],
+            run_target_column=context.run_config["target-column"],
         )
         xs, ys, seen = matrix_from_rows(rows, features, target)
-        _DATA_CACHE = {"xs": xs, "ys": ys, "seen": seen, "features": features, "target": target}
+        _DATA_CACHE = {"xs": xs, "ys": ys, "seen": seen}
     cached = _DATA_CACHE
     return cached["xs"], cached["ys"], int(cached["seen"])  # type: ignore[index]
 
@@ -57,8 +57,7 @@ def train(msg: Message, context: Context) -> Message:
         l2=float(context.run_config["l2"]),
         steps=int(context.run_config["local-steps"]),
     )
-    local_arrays = vector_to_arrays(updated)
-    local_record = ArrayRecord(local_arrays)
+    local_record = ArrayRecord(vector_to_arrays(updated))
     local_hash = hash_array_record(local_record)
     config = msg.content.get("config")
     round_id = config.get("server-round", "?") if config is not None else "?"

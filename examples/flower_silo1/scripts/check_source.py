@@ -23,6 +23,8 @@ def main() -> int:
         "fraction_evaluate=0.0",
         "min_train_nodes=1",
         "verify_round2_base_equals_round1_result",
+        "replies_list = list(replies)",
+        "expected exactly 1 successful reply",
     ):
         if needle not in text:
             print(f"missing server marker: {needle}", file=sys.stderr)
