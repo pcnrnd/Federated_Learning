@@ -11,6 +11,7 @@ import { useLiveTrainingStore } from '@/store/useLiveTrainingStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { JobState } from '@/types/simulation'
+import { PipelineLiveResults } from './PipelineLiveResults'
 import { UnifiedPipelineForm } from './UnifiedPipelineForm'
 
 const STATE_LABEL: Record<JobState, string> = {
@@ -234,6 +235,7 @@ export function JobScheduler() {
           </tbody>
         </table>
       </div>
+      {mode === 'live' && <PipelineLiveResults />}
     </div>
   )
 }
