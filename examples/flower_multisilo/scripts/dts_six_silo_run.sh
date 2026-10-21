@@ -115,9 +115,10 @@ capture_evidence() {
   fi
   (
     cd "$COMPOSE_DIR"
-    docker compose -f compose.yaml logs --no-color > "$EVID_DIR/compose_logs.txt" 2>&1 || true
-  )
-  docker cp fed-flower-six-silos-20261021-superlink:/output/flwr_run.log "$EVID_DIR/flwr_run.log" 2>/dev/null || true
+    timeout 15s docker compose -f compose.yaml logs --no-color > "$EVID_DIR/compose_logs.txt" 2>&1
+  ) || log "EVIDENCE_CAPTURE compose_logs timeout_or_error"
+  timeout 10s docker cp fed-flower-six-silos-20261021-superlink:/output/flwr_run.log "$EVID_DIR/flwr_run.log" 2>/dev/null \
+    || log "EVIDENCE_CAPTURE flwr_run_log timeout_or_error"
   if [[ -f "$OUT_DIR/final_weights.npz" ]]; then
     sha256sum "$OUT_DIR/final_weights.npz" | tee "$EVID_DIR/final_weights.sha256"
   fi
@@ -337,7 +338,7 @@ PY
 
 start_pressure_watcher
 set +e
-timeout "${RUN_BUDGET}s" docker compose -f compose.yaml exec -T superlink sh -ec '
+timeout "${RUN_BUDGET}s" docker compose -f compose.yaml exec -T superlink bash -o pipefail -ec '
   mkdir -p /output /root/.flwr
   CFG=/root/.flwr/config.toml
   if ! grep -Fq "[superlink.poc]" "$CFG" 2>/dev/null; then
