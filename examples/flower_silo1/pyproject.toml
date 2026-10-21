@@ -7,6 +7,7 @@ name = "flower-silo1"
 version = "0.1.0"
 description = "Minimal Flower 1.41 deployment example for Silo1 (NumPy ridge, one client)"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11,<4"
 dependencies = [
     "flwr==1.41.0",

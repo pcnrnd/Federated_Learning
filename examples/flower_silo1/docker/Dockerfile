@@ -5,7 +5,7 @@ WORKDIR /app
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE ./
 COPY flower_silo1 ./flower_silo1
 RUN python -m pip install -U pip \
     && python -m pip install .
