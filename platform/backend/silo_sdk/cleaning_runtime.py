@@ -166,6 +166,7 @@ async def _reconcile_success(client, job, shard, fields):
         if (len(rows) != 1 or rows[0].get("silo_id") != client.silo_id
                 or not isinstance(rows[0].get("attempt_id"), str)
                 or not re.fullmatch("[0-9a-f]{32}", rows[0]["attempt_id"])
+                or not isinstance(rows[0].get("status"), str)
                 or rows[0].get("status") not in {"pending", "running", "retry_wait", "completed", "failed", "cancelled"}):
             raise TerminalAckUnknown("정제 성공 보고 실행권한 형식 미확인: 신규 admission 중단")
         if (rows[0]["attempt_id"] != shard["attempt_id"]
