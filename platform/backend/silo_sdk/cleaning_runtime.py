@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import signal
 import sys
 import time
@@ -74,7 +75,7 @@ class _Progress:
             try:
                 await asyncio.to_thread(self.client.cleaning_progress, self.job["job_id"],
                     self.shard["shard_index"], self.shard["attempt_id"], *value)
-            except (OSError, SiloClientError):
+            except (OSError, SiloClientError, json.JSONDecodeError, UnicodeDecodeError):
                 # ACK 유실 여부는 알 수 없다. 재전송하지 않고 다음 최신 진행량만 허용한다.
                 pass
 
@@ -134,8 +135,10 @@ def _ack_matches(ack, client, job, shard, fields):
         return False
     if not all(isinstance(row, dict) for row in ack["shards"]):
         return False
-    matches = [row for row in ack["shards"] if row.get("shard_index") == shard["shard_index"]]
-    return (ack.get("job_id") == job["job_id"] and ack.get("generation") == job.get("generation")
+    matches = [row for row in ack["shards"] if type(row.get("shard_index")) is int
+               and row["shard_index"] == shard["shard_index"]]
+    return (ack.get("job_id") == job["job_id"] and type(ack.get("generation")) is int
+        and ack["generation"] == job["generation"]
         and len(matches) == 1 and matches[0].get("status") == "completed"
         and matches[0].get("silo_id") == client.silo_id
         and matches[0].get("attempt_id") == shard["attempt_id"]
@@ -145,19 +148,28 @@ def _ack_matches(ack, client, job, shard, fields):
 async def _reconcile_success(client, job, shard, fields):
     try:
         current = await asyncio.to_thread(client.get_cleaning_job, job["job_id"])
-    except (OSError, SiloClientError) as exc:
+    except (OSError, SiloClientError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise TerminalAckUnknown("정제 성공 보고 ACK·현재 상태 미확인: 신규 admission 중단") from exc
     if _ack_matches(current, client, job, shard, fields):
         return True
     if isinstance(current, dict) and current.get("job_id") == job["job_id"]:
-        if current.get("generation") != job.get("generation"):
+        generation = current.get("generation")
+        if type(generation) is not int or generation < job["generation"]:
+            raise TerminalAckUnknown("정제 성공 보고 generation 미확인: 신규 admission 중단")
+        if generation > job["generation"]:
             return False  # 명시적으로 새 generation이 이전 실행권한을 닫았다.
         rows = current.get("shards")
         if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
             raise TerminalAckUnknown("정제 성공 보고 현재 상태 형식 미확인: 신규 admission 중단")
-        rows = [r for r in rows if r.get("shard_index") == shard["shard_index"]]
-        if len(rows) == 1 and (rows[0].get("attempt_id") != shard["attempt_id"]
-                or rows[0].get("status") in {"completed", "failed", "cancelled", "retry_wait"}):
+        rows = [r for r in rows if type(r.get("shard_index")) is int
+                and r["shard_index"] == shard["shard_index"]]
+        if (len(rows) != 1 or rows[0].get("silo_id") != client.silo_id
+                or not isinstance(rows[0].get("attempt_id"), str)
+                or not re.fullmatch("[0-9a-f]{32}", rows[0]["attempt_id"])
+                or rows[0].get("status") not in {"pending", "running", "retry_wait", "completed", "failed", "cancelled"}):
+            raise TerminalAckUnknown("정제 성공 보고 실행권한 형식 미확인: 신규 admission 중단")
+        if (rows[0]["attempt_id"] != shard["attempt_id"]
+                or rows[0]["status"] in {"completed", "failed", "cancelled", "retry_wait"}):
             return False  # 닫힌/다른 token은 성공으로 인정하지 않는다.
     raise TerminalAckUnknown("정제 성공 보고 ACK 미확인·실행권한 미종결: 신규 admission 중단")
 
@@ -173,7 +185,7 @@ async def _report_success(client, job, shard, manifest):
     except asyncio.CancelledError:
         await asyncio.gather(sending, return_exceptions=True)
         raise
-    except (OSError, SiloClientError):
+    except (OSError, SiloClientError, json.JSONDecodeError, UnicodeDecodeError):
         return await _reconcile_success(client, job, shard, fields)
     if _ack_matches(ack, client, job, shard, fields):
         return True
@@ -226,7 +238,7 @@ async def _admission_ready(client, active):
     """재시작 후 소유자를 잃은 running attempt가 있으면 이 사일로의 신규 claim을 보류한다."""
     try:
         rows = await asyncio.to_thread(client.list_assigned_shards, "running")
-    except (OSError, SiloClientError):
+    except (OSError, SiloClientError, json.JSONDecodeError, UnicodeDecodeError):
         return False
     if not isinstance(rows, list):
         return False

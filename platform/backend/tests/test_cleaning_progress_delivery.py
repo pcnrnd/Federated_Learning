@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import sys
 import threading
 from datetime import timedelta
@@ -79,11 +80,17 @@ def test_blocked_progress_does_not_block_pipe_and_owned_child_is_reaped(mode, mo
     entered, release = threading.Event(), threading.Event()
     children, requests = [], []
     original = asyncio.create_subprocess_exec
+    original_stop = worker._stop_process
+    reaped = None
 
     async def observed(*args, **kwargs):
         process = await original(*args, **kwargs)
         children.append(process)
         return process
+
+    async def observed_stop(process):
+        await original_stop(process)
+        reaped.set()
 
     class Slow:
         silo_id = "silo-1"
@@ -91,7 +98,7 @@ def test_blocked_progress_does_not_block_pipe_and_owned_child_is_reaped(mode, mo
         def cleaning_progress(self, *args):
             requests.append(args)
             entered.set()
-            assert release.wait(3)
+            assert release.wait(6)
             raise TimeoutError("ACK unknown; do not retry")
 
     code = "\n".join([
@@ -103,19 +110,19 @@ def test_blocked_progress_does_not_block_pipe_and_owned_child_is_reaped(mode, mo
         if mode == "result" else "time.sleep(3600)",
     ])
     monkeypatch.setattr(asyncio, "create_subprocess_exec", observed)
+    monkeypatch.setattr(worker, "_stop_process", observed_stop)
     monkeypatch.setattr(worker, "_executor_command", lambda: [sys.executable, "-u", "-c", code])
 
     async def scenario():
+        nonlocal reaped
+        reaped = asyncio.Event()
         task = asyncio.create_task(worker._execute(Slow(), {"job_id": "owned"},
             {"shard_index": 0, "attempt_id": "token"}, {}, "unused", .3 if mode == "timeout" else 10))
         try:
             assert await asyncio.to_thread(entered.wait, 2)
             if mode == "cancel":
                 task.cancel()
-            for _ in range(200):
-                if children[0].returncode is not None:
-                    break
-                await asyncio.sleep(.01)
+            await asyncio.wait_for(reaped.wait(), 4)
             assert children[0].returncode is not None, "HTTP 대기 중에도 pipe 소비/child 종료·회수 필요"
             assert not task.done(), "실제 진행 HTTP thread 회수 전에는 실행 슬롯 반환 금지"
             assert len(requests) == 1, "진행 metadata 큐/HTTP thread를 무제한 생성하면 안 됨"
@@ -218,7 +225,7 @@ def test_terminal_ack_reconciles_exact_state_without_opposite_write_or_replay(wo
                 raise TimeoutError("GET also unavailable")
             current = super().get_cleaning_job(identity)
             if outcome == "wrong-token":
-                current["shards"][0].update(status="completed", attempt_id="different")
+                current["shards"][0].update(status="completed", attempt_id="f" * 32)
             elif outcome == "failed":
                 current["shards"][0]["status"] = "failed"
             return current
@@ -361,3 +368,96 @@ def test_cancellation_during_terminal_post_reaps_io_without_opposite_failure(wor
     asyncio.run(scenario())
     assert len(client.reports) == 1 and not client.reports[0].get("error")
     assert jobs.get_job("cancel-report").shards[0].status == "completed"
+
+
+@pytest.mark.parametrize("raw", [b"{broken", b"\xff"])
+@pytest.mark.parametrize("boundary", ["progress", "terminal"])
+def test_real_sdk_raw_response_decode_errors_preserve_success_output(world, monkeypatch, raw, boundary):
+    nodes, path = world
+    create("decode", max_attempts=1)
+    decoded_requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            decoded_requests.append(raw)
+            return raw
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: Response())
+    sdk = SiloClient("http://unused", nodes[0], timeout=2, retries=0)
+
+    class Decode(Bridge):
+        def cleaning_progress(self, *args):
+            if boundary == "progress":
+                return sdk.cleaning_progress(*args)
+            return super().cleaning_progress(*args)
+
+        def report_cleaning_shard(self, *args, **fields):
+            answer = super().report_cleaning_shard(*args, **fields)
+            if boundary == "terminal":
+                return sdk.report_cleaning_shard(*args, **fields)
+            return answer
+
+    # 실제 executor의 첫 progress 뒤에 짧게 양보해 HTTP raw-body decoder 실행을 보장한다.
+    code = "\n".join([
+        "import time", "from silo_sdk import cleaning_executor as executor",
+        "original = executor.send", "def send(message):", " original(message)",
+        " if message['type']=='progress': time.sleep(.05)", "executor.send=send",
+        "raise SystemExit(executor.main())",
+    ])
+    monkeypatch.setattr(worker, "_executor_command", lambda: [sys.executable, "-u", "-c", code])
+    client = Decode(nodes[0])
+    assert asyncio.run(worker.process_assignment(client,
+        {"job_id": "decode", "shard_index": 0}, str(path / nodes[0]))) is True
+    assert decoded_requests and len(client.reports) == 1 and not client.reports[0].get("error")
+    shard = jobs.get_job("decode").shards[0]
+    assert shard.status == "completed" and (path / nodes[0] / ".cleaned" / shard.output_id / "manifest.json").is_file()
+
+
+@pytest.mark.parametrize("change", ["generation-missing", "generation-null", "generation-bool",
+    "generation-string", "generation-old", "token-missing", "token-null", "token-malformed", "index-bool"])
+def test_malformed_get_is_unknown_not_a_fence_and_blocks_queued_cycle_work(world, change):
+    nodes, path = world
+    create("ambiguous", max_attempts=1)
+    create("queued", max_attempts=1)
+
+    class MalformedGet(Bridge):
+        def report_cleaning_shard(self, identity, index, **fields):
+            self.reports.append(copy.deepcopy(fields))
+            raise TimeoutError("terminal ACK unknown")
+
+        def get_cleaning_job(self, identity):
+            value = super().get_cleaning_job(identity)
+            if change == "generation-missing":
+                value.pop("generation")
+            elif change.startswith("generation-"):
+                value["generation"] = {"null": None, "bool": False, "string": "0", "old": -1}[change.split('-')[1]]
+            elif change == "token-missing":
+                value["shards"][0].pop("attempt_id")
+            elif change == "index-bool":
+                value["shards"][0]["shard_index"] = False
+            else:
+                value["shards"][0]["attempt_id"] = None if change == "token-null" else "invalid"
+            return value
+
+    client = MalformedGet(nodes[0])
+    with pytest.raises(worker.TerminalAckUnknown):
+        asyncio.run(worker.cycle(client, str(path / nodes[0]), concurrency=1))
+    assert client.claims == ["ambiguous"]
+    assert len(client.reports) == 1 and not client.reports[0].get("error")
+
+
+@pytest.mark.parametrize("raw", [b"{", b"\xff"])
+def test_raw_running_list_decode_failure_is_hold(monkeypatch, raw):
+    client = SiloClient("http://unused", "silo-1", timeout=2, retries=0)
+
+    def decode(*args):
+        return json.loads(raw.decode("utf-8"))
+
+    monkeypatch.setattr(client, "_request", decode)
+    assert asyncio.run(worker._admission_ready(client, {})) is False
