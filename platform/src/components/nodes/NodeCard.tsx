@@ -47,8 +47,15 @@ export function NodeCard({ node, interactive = true, allNodes }: NodeCardProps) 
     ? 'DISABLED'
     : isCutOff
       ? '상위 비활성'
-      : STATUS_LABEL[node.status]
-  const badgeClass = !node.enabled || isCutOff ? 'status-disabled' : STATUS_CLASS[node.status]
+      : node.statusUnavailable
+        ? '미수집'
+        : STATUS_LABEL[node.status]
+  const badgeClass =
+    !node.enabled || isCutOff
+      ? 'status-disabled'
+      : node.statusUnavailable
+        ? 'status-unobserved'
+        : STATUS_CLASS[node.status]
 
   const sizeLabel = node.metricUnavailable?.size
     ? '—'

@@ -5,6 +5,8 @@ export type DisplayMetricKey = 'acc' | 'loss' | 'delay' | 'size' | 'cpu' | 'dist
 
 export interface DisplayNode extends NodeState {
   metricUnavailable?: Partial<Record<DisplayMetricKey, boolean>>
+  /** live 어댑터: 관측되지 않은 실행 상태 — UI는 IDLE 대신 중립 표시 */
+  statusUnavailable?: boolean
   cleanseProgressPct?: number | null
 }
 
@@ -32,6 +34,7 @@ export function silosToDisplayNodes(
       loss: 0,
       cpu: silo.cpu ?? 0,
       status: 'idle',
+      statusUnavailable: true,
       normalPct: 0,
       abnormalPct: 0,
       enabled: true,

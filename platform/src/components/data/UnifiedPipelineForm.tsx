@@ -89,7 +89,10 @@ export function UnifiedPipelineForm({ onClose }: UnifiedPipelineFormProps) {
     }
   }
 
-  const displayError = formError ?? liveError ?? trainingError
+  const pipelineErrors = [formError, liveError, trainingError].filter(
+    (message, index, list): message is string =>
+      Boolean(message) && list.indexOf(message) === index,
+  )
 
   return (
     <form className="model-form glass-panel" onSubmit={demoEditable ? submitDemo : (event) => event.preventDefault()}>
@@ -276,7 +279,11 @@ export function UnifiedPipelineForm({ onClose }: UnifiedPipelineFormProps) {
         </div>
       </details>
 
-      {displayError && <p role="alert" className="text-red">{displayError}</p>}
+      {pipelineErrors.map((message) => (
+        <p key={message} role="alert" className="text-red">
+          {message}
+        </p>
+      ))}
 
       <div className="model-form-actions">
         <button type="button" className="btn btn-secondary" onClick={onClose}>

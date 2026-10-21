@@ -18,6 +18,7 @@ describe('silosToDisplayNodes', () => {
     const [node] = silosToDisplayNodes([silo], {})
     expect(node.metricUnavailable?.cpu).toBe(true)
     expect(node.metricUnavailable?.distribution).toBe(true)
+    expect(node.statusUnavailable).toBe(true)
     expect(node.normalPct).toBe(0)
     expect(node.abnormalPct).toBe(0)
   })

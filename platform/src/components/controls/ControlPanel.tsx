@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react'
+import type { TrainingJobApi } from '@/api/client'
 import { isLiveConfigured } from '@/api/client'
 import { ALGORITHM_LABEL, ALGORITHM_OPTIONS, CONFIG_BOUNDS } from '@/constants/simulation'
 import { getSimulationControls } from '@/hooks/useSimulationEngine'
 import { liveTrainingRequest } from '@/lib/liveTraining'
-import { trainingJobActionPath } from '@/lib/trainingJobPaths'
 import {
   CLEANING_FORM_FIELDS,
   initialTrainingDraftRecord,
   TRAINING_FORM_FIELDS,
 } from '@/lib/pipelineFields'
+import { trainingJobActionPath } from '@/lib/trainingJobPaths'
 import {
   LIVE_ALGORITHM_REASON,
   LIVE_JOB_SELECT_REASON,
   LIVE_SIMULATION_RESET_REASON,
+  LIVE_TERMINAL_JOB_REASON,
+  LIVE_TRAINING_JOB_CAPABILITY_REASON,
   resolveUiDataMode,
   UNCONFIGURED_API_MESSAGE,
 } from '@/lib/uiMode'
@@ -33,6 +36,14 @@ const ADVANCED_PREREQ_KEYS = [
   'l2',
   'min_contributions',
 ] as const
+
+function isManageableTrainingJob(job: TrainingJobApi): boolean {
+  return job.status === 'active' || job.status === 'paused'
+}
+
+function isTerminalTrainingJob(job: TrainingJobApi): boolean {
+  return job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
+}
 
 export function ControlPanel() {
   const config = useSimulationStore((s) => s.config)
@@ -74,7 +85,9 @@ export function ControlPanel() {
 
   const inputsDisabled = mode === 'demo' && isRunning && !isPaused
   const isFinished = mode === 'demo' && !isRunning && currentRound > 0 && currentRound >= config.totalRounds
-  const liveControlsDisabled = mode !== 'live' || livePending
+  const liveJobControlsDisabled = mode !== 'live' || livePending
+  const sliderDisabled =
+    mode === 'unconfigured' || (mode === 'demo' && inputsDisabled) || (mode === 'live' && livePending)
 
   const patchDraft = (patch: Record<string, string>) => {
     setTrainingDraft((prev) => ({ ...prev, ...patch }))
@@ -137,12 +150,20 @@ export function ControlPanel() {
   const onPrimaryLive = async () => {
     if (!isLiveConfigured()) return
     setFormError(null)
-    if (selectedJob?.status === 'active') {
-      await mutate(trainingJobActionPath(selectedJob.job_id, 'pause'))
-      return
-    }
-    if (selectedJob?.status === 'paused') {
-      await mutate(trainingJobActionPath(selectedJob.job_id, 'resume'))
+    if (selectedJob) {
+      if (isTerminalTrainingJob(selectedJob)) {
+        setFormError(LIVE_TERMINAL_JOB_REASON)
+        return
+      }
+      if (selectedJob.status === 'active') {
+        await mutate(trainingJobActionPath(selectedJob.job_id, 'pause'))
+        return
+      }
+      if (selectedJob.status === 'paused') {
+        await mutate(trainingJobActionPath(selectedJob.job_id, 'resume'))
+        return
+      }
+      setFormError(LIVE_TERMINAL_JOB_REASON)
       return
     }
     if (!prerequisitesReady()) {
@@ -152,8 +173,19 @@ export function ControlPanel() {
     await submitLiveTraining()
   }
 
+  const onPauseLive = async () => {
+    if (!selectedJob || !isManageableTrainingJob(selectedJob) || selectedJob.status !== 'active') return
+    await mutate(trainingJobActionPath(selectedJob.job_id, 'pause'))
+  }
+
+  const onCancelLive = async () => {
+    if (!selectedJob || !isManageableTrainingJob(selectedJob)) return
+    await mutate(trainingJobActionPath(selectedJob.job_id, 'cancel'))
+  }
+
   const primaryDisabledLive =
-    livePending || (selectedJob ? false : !prerequisitesReady())
+    livePending ||
+    (selectedJob ? !isManageableTrainingJob(selectedJob) : !prerequisitesReady())
 
   const primaryLabel =
     mode === 'demo'
@@ -168,11 +200,27 @@ export function ControlPanel() {
         ? '선택 작업 일시정지'
         : selectedJob?.status === 'paused'
           ? '선택 작업 재개'
-          : '실제 학습 시작'
+          : selectedJob && isTerminalTrainingJob(selectedJob)
+            ? '종료된 작업 선택됨'
+            : '실제 학습 시작'
 
   const roundDisplay = selectedJob
     ? `${selectedJob.rounds_completed}/${selectedJob.max_rounds}`
     : String(currentRound)
+
+  const jobSelectDisabled = liveJobControlsDisabled
+  const jobSelectTitle = mode !== 'live' ? LIVE_TRAINING_JOB_CAPABILITY_REASON : undefined
+  const cancelDisabled = liveJobControlsDisabled || !selectedJob || !isManageableTrainingJob(selectedJob)
+  const cancelTitle =
+    mode !== 'live'
+      ? LIVE_TRAINING_JOB_CAPABILITY_REASON
+      : !selectedJob
+        ? LIVE_JOB_SELECT_REASON
+        : selectedJob && isTerminalTrainingJob(selectedJob)
+          ? LIVE_TERMINAL_JOB_REASON
+          : undefined
+  const primaryTitleLive =
+    selectedJob && isTerminalTrainingJob(selectedJob) ? LIVE_TERMINAL_JOB_REASON : undefined
 
   return (
     <div className="glass-panel content-card">
@@ -187,33 +235,6 @@ export function ControlPanel() {
           <p className="deploy-empty" role="status">
             {UNCONFIGURED_API_MESSAGE}
           </p>
-        )}
-        {mode === 'live' && (
-          <>
-            <label className="control-group" htmlFor="control-live-training-job">
-              실제 학습 작업 선택
-            </label>
-            <select
-              id="control-live-training-job"
-              className="model-input"
-              value={selectedJobId}
-              disabled={liveControlsDisabled}
-              onChange={(event) => {
-                setFormError(null)
-                setSelectedJobId(event.target.value)
-              }}
-            >
-              <option value="">작업 선택 (일시정지·재개·취소에 필요)</option>
-              {liveJobs.map((job) => (
-                <option key={job.job_id} value={job.job_id}>
-                  {job.job_id} · {job.status} · {job.rounds_completed}/{job.max_rounds}
-                </option>
-              ))}
-            </select>
-            <p className="desc" role="status">
-              등록된 학습 작업 {liveJobs.length}건 · 선택 작업 라운드 {roundDisplay}
-            </p>
-          </>
         )}
         {(liveError || formError) && (
           <p className="text-red" role="alert">
@@ -249,7 +270,7 @@ export function ControlPanel() {
             min={CONFIG_BOUNDS.rounds.min}
             max={CONFIG_BOUNDS.rounds.max}
             display={String(config.totalRounds)}
-            disabled={liveControlsDisabled || (mode === 'demo' && inputsDisabled)}
+            disabled={sliderDisabled}
             onChange={(value) => (mode === 'live' ? syncLiveMaxRounds(value) : setTotalRounds(value))}
           />
 
@@ -260,7 +281,7 @@ export function ControlPanel() {
             min={CONFIG_BOUNDS.epochs.min}
             max={CONFIG_BOUNDS.epochs.max}
             display={String(config.localEpochs)}
-            disabled={liveControlsDisabled || (mode === 'demo' && inputsDisabled)}
+            disabled={sliderDisabled}
             onChange={(value) => (mode === 'live' ? syncLiveSteps(value) : setLocalEpochs(value))}
           />
 
@@ -272,7 +293,7 @@ export function ControlPanel() {
             max={CONFIG_BOUNDS.learningRate.max}
             step={CONFIG_BOUNDS.learningRate.step}
             display={config.learningRate.toFixed(3)}
-            disabled={liveControlsDisabled || (mode === 'demo' && inputsDisabled)}
+            disabled={sliderDisabled}
             onChange={(value) => (mode === 'live' ? syncLiveLearningRate(value) : setLearningRate(value))}
           />
         </div>
@@ -281,7 +302,8 @@ export function ControlPanel() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={mode === 'demo' ? (isRunning && !isPaused) || mode !== 'demo' : primaryDisabledLive}
+            disabled={mode === 'demo' ? isRunning && !isPaused : primaryDisabledLive}
+            title={mode === 'live' ? primaryTitleLive : undefined}
             onClick={() => {
               if (mode === 'demo') start()
               else void onPrimaryLive()
@@ -300,12 +322,18 @@ export function ControlPanel() {
             disabled={
               mode === 'demo'
                 ? !isRunning || isPaused
-                : liveControlsDisabled || !selectedJob || selectedJob.status !== 'active'
+                : liveJobControlsDisabled || !selectedJob || selectedJob.status !== 'active'
             }
-            title={mode === 'live' && !selectedJob ? LIVE_JOB_SELECT_REASON : undefined}
+            title={
+              mode === 'live' && !selectedJob
+                ? LIVE_JOB_SELECT_REASON
+                : mode === 'live' && selectedJob && isTerminalTrainingJob(selectedJob)
+                  ? LIVE_TERMINAL_JOB_REASON
+                  : undefined
+            }
             onClick={() => {
               if (mode === 'demo') pauseSim()
-              else if (selectedJob) void mutate(trainingJobActionPath(selectedJob.job_id, 'pause'))
+              else void onPauseLive()
             }}
           >
             <i className="fa-solid fa-pause" /> 일시 정지
@@ -319,28 +347,48 @@ export function ControlPanel() {
           >
             <i className="fa-solid fa-rotate-left" /> 초기화
           </button>
-          {mode === 'live' && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={liveControlsDisabled || !selectedJob}
-              title={!selectedJob ? LIVE_JOB_SELECT_REASON : undefined}
-              onClick={() => {
-                if (!selectedJob) return
-                void mutate(trainingJobActionPath(selectedJob.job_id, 'cancel'))
-              }}
-            >
-              선택 작업 취소
-            </button>
-          )}
         </div>
 
         <details className="parity-advanced-section">
           <summary>실제 학습 선행 조건 · 정제/학습 고급 필드</summary>
           <div className="drift-settings-body">
             {mode !== 'live' && (
-              <p className="desc">실서버 연동 시에만 편집할 수 있습니다. 필드 레이아웃은 모든 모드에서 동일합니다.</p>
+              <p className="desc">{LIVE_TRAINING_JOB_CAPABILITY_REASON} 필드 레이아웃은 모든 모드에서 동일합니다.</p>
             )}
+            <label className="control-group" htmlFor="control-live-training-job">
+              실제 학습 작업 선택
+            </label>
+            <select
+              id="control-live-training-job"
+              className="model-input"
+              value={selectedJobId}
+              disabled={jobSelectDisabled}
+              title={jobSelectTitle}
+              onChange={(event) => {
+                setFormError(null)
+                setSelectedJobId(event.target.value)
+              }}
+            >
+              <option value="">작업 선택 (일시정지·재개·취소에 필요)</option>
+              {liveJobs.map((job) => (
+                <option key={job.job_id} value={job.job_id}>
+                  {job.job_id} · {job.status} · {job.rounds_completed}/{job.max_rounds}
+                </option>
+              ))}
+            </select>
+            <p id="control-live-training-summary" className="desc" role="status">
+              등록된 학습 작업 {liveJobs.length}건 · 선택 작업 라운드 {roundDisplay}
+            </p>
+            <button
+              id="control-live-training-cancel"
+              type="button"
+              className="btn btn-secondary"
+              disabled={cancelDisabled}
+              title={cancelTitle}
+              onClick={() => void onCancelLive()}
+            >
+              선택 작업 취소
+            </button>
             {TRAINING_FORM_FIELDS.map(([key, label]) => {
               const sliderBound = key === 'steps' || key === 'step_size' || key === 'max_rounds'
               const value =

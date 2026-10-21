@@ -74,6 +74,12 @@ export const CONTROL_TRAINING_FIELD_IDS = TRAINING_FORM_FIELDS.map(([key]) => `c
 
 export const CONTROL_CLEANING_FIELD_IDS = CLEANING_FORM_FIELDS.map(([key]) => `control-cleaning-${key}`)
 
+export const CONTROL_LIVE_JOB_FIELD_IDS = [
+  'control-live-training-job',
+  'control-live-training-summary',
+  'control-live-training-cancel',
+] as const
+
 export const RETRAINING_FIELD_IDS = [
   "retrain-config-select",
   "retrain-baseline-select",
