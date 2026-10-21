@@ -28,10 +28,10 @@ clientapp = "flower_silo1.client_app:app"
 [tool.flwr.app.config]
 num-server-rounds = 2
 save-model = true
-model-output-path = "artifacts/final_weights.npz"
+model-output-path = "/output/final_weights.npz"
 local-steps = 5
 l2 = 0.01
 step-size = 0.1
-feature-columns = []
-target-column = ""
-parameter-dim = 0
+feature-columns = "x1,x2,x3"
+target-column = "y"
+parameter-dim = 4

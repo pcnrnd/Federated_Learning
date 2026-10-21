@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from pathlib import Path
 
 import numpy as np
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
+from flower_silo1.config_util import parse_csv_columns
 from flower_silo1.task import hash_array_record, init_parameters
 
 app = ServerApp()
@@ -54,31 +56,29 @@ class Silo1FedAvg(FedAvg):
         replies: Iterable[Message],
     ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         global _round1_global_hash  # noqa: PLW0603
-        for msg in replies:
-            if msg.has_error():
-                continue
-            arrays = msg.content.get("arrays")
-            metrics = msg.content.get("metrics")
-            received_hash = (
-                hash_array_record(arrays) if arrays is not None else None
+        replies_list = list(replies)
+        valid = [msg for msg in replies_list if not msg.has_error()]
+        errors = [msg for msg in replies_list if msg.has_error()]
+        if len(valid) != 1:
+            raise RuntimeError(
+                f"round {server_round}: expected exactly 1 successful reply, "
+                f"got valid={len(valid)} errors={len(errors)} total={len(replies_list)}"
             )
-            loss = None
-            num_examples = None
-            local_hash = None
-            if metrics is not None:
-                loss = metrics.get("loss")
-                num_examples = metrics.get("num-examples")
-                local_hash = metrics.get("local-hash")
-            _log(
-                "server_round_received",
-                round=server_round,
-                node_id=msg.metadata.src_node_id,
-                received_hash=received_hash,
-                local_hash=local_hash,
-                num_examples=num_examples,
-                loss=loss,
-            )
-        agg_arrays, agg_metrics = super().aggregate_train(server_round, replies)
+        msg = valid[0]
+        arrays = msg.content.get("arrays")
+        metrics = msg.content.get("metrics")
+        received_hash = hash_array_record(arrays) if arrays is not None else None
+        loss = metrics.get("loss") if metrics is not None else None
+        num_examples = metrics.get("num-examples") if metrics is not None else None
+        _log(
+            "server_round_received",
+            round=server_round,
+            node_id=msg.metadata.src_node_id,
+            received_hash=received_hash,
+            num_examples=num_examples,
+            loss=loss,
+        )
+        agg_arrays, agg_metrics = super().aggregate_train(server_round, replies_list)
         if agg_arrays is not None:
             global_hash = hash_array_record(agg_arrays)
             _log(
@@ -99,16 +99,13 @@ class Silo1FedAvg(FedAvg):
 
 
 def _parameter_dim(context: Context) -> int:
-    features = list(context.run_config.get("feature-columns") or [])
-    if features:
-        return len(features) + 1
     dim = int(context.run_config.get("parameter-dim") or 0)
     if dim > 0:
+        expected = len(parse_csv_columns(context.run_config["feature-columns"], "feature-columns")) + 1
+        if dim != expected:
+            raise ValueError(f"parameter-dim {dim} != feature count + 1 ({expected})")
         return dim
-    raise ValueError(
-        "Set tool.flwr.app.config feature-columns or parameter-dim "
-        "(from Silo1 manifest columns + target)"
-    )
+    raise ValueError("parameter-dim must be set in tool.flwr.app.config")
 
 
 @app.main()
@@ -129,7 +126,12 @@ def main(grid: Grid, context: Context) -> None:
         num_rounds=num_rounds,
     )
     if context.run_config.get("save-model"):
-        out_path = str(context.run_config["model-output-path"])
+        out_path = Path(str(context.run_config["model-output-path"]))
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         ndarrays = result.arrays.to_numpy_ndarrays()
         np.savez(out_path, *ndarrays)
-        _log("saved_final_weights", path=out_path, global_hash=hash_array_record(result.arrays))
+        _log(
+            "saved_final_weights",
+            path=str(out_path),
+            global_hash=hash_array_record(result.arrays),
+        )

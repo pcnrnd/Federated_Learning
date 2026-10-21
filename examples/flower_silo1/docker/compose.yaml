@@ -1,11 +1,11 @@
-# Minimal two-container Flower 1.41 deployment (internal bridge, no host ports).
-# Build/run only after root authorization; see README.md for exact commands.
+# fed-flower-poc-20261021: internal bridge, no host ports, owned tags only.
 
-name: flower-silo1-example
+name: fed-flower-poc-20261021
 
 networks:
-  flower_silo1_internal:
+  fed_flower_poc_20261021_internal:
     driver: bridge
+    internal: true
 
 volumes:
   silo1_learning:
@@ -14,44 +14,35 @@ volumes:
 
 services:
   superlink:
-    image: flwr/superlink:1.41.0
+    image: fed-flower-poc-20261021-app:1.41.0
     build:
       context: ..
-      dockerfile_inline: |
-        FROM flwr/superlink:1.41.0
-        USER root
-        RUN apt-get update \
-          && apt-get install -y --no-install-recommends build-essential \
-          && rm -rf /var/lib/apt/lists/*
-        USER app
-        WORKDIR /app
-        COPY pyproject.toml README.md ./
-        COPY flower_silo1 ./flower_silo1
-        RUN python -m pip install -U --no-cache-dir .
-    networks: [flower_silo1_internal]
-    command:
-      - --insecure
-      - --host
-      - 0.0.0.0
-    # Subprocess isolation (default): ServerApp runs inside this container via `flwr run`.
+      dockerfile: docker/Dockerfile
+    container_name: fed-flower-poc-20261021-superlink
+    networks: [fed_flower_poc_20261021_internal]
+    entrypoint: ["flower-superlink"]
+    command: ["--insecure", "--host", "0.0.0.0"]
+    mem_limit: 512m
+    cpus: "1.0"
+    volumes:
+      - type: bind
+        source: ${POC_OUTPUT_DIR}
+        target: /output
 
   supernode:
-    image: flwr/supernode:1.41.0
-    build:
-      context: ..
-      dockerfile_inline: |
-        FROM flwr/supernode:1.41.0
-        USER root
-        RUN apt-get update \
-          && apt-get install -y --no-install-recommends build-essential \
-          && rm -rf /var/lib/apt/lists/*
-        USER app
-        WORKDIR /app
-        COPY pyproject.toml README.md ./
-        COPY flower_silo1 ./flower_silo1
-        RUN python -m pip install -U --no-cache-dir .
-    networks: [flower_silo1_internal]
+    image: fed-flower-poc-20261021-app:1.41.0
+    container_name: fed-flower-poc-20261021-supernode
+    networks: [fed_flower_poc_20261021_internal]
     depends_on: [superlink]
+    entrypoint: ["flower-supernode"]
+    command:
+      - --insecure
+      - --superlink
+      - superlink:8000
+      - --host
+      - "0.0.0.0"
+    mem_limit: 512m
+    cpus: "1.0"
     volumes:
       - type: volume
         source: silo1_learning
@@ -60,12 +51,3 @@ services:
     environment:
       SILO1_DATA_ROOT: /srv/silo-data
       SILO1_ROWS_SHA256: "8164fad0f8a29f18c677a99ad7e791b76e3c318dc15569d27bd2ea5432837356"
-      # Set after inspecting manifest.json beside rows.json on the volume:
-      # SILO1_TARGET_COLUMN: "..."
-      # SILO1_FEATURE_COLUMNS: "col1,col2,col3"
-    command:
-      - --insecure
-      - --superlink
-      - superlink:8000
-      - --host
-      - 0.0.0.0

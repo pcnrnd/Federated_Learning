@@ -8,6 +8,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from flwr.app.user_config import UserConfigValue
+
+from flower_silo1.config_util import parse_csv_columns, parse_target_column
+
 Row = dict[str, Any]
 
 DEFAULT_ROWS_REL = (
@@ -58,37 +62,14 @@ def resolve_feature_target(
     rows: list[Row],
     manifest: dict[str, Any] | None,
     *,
-    run_feature_columns: list[str],
-    run_target_column: str,
+    run_feature_columns: UserConfigValue,
+    run_target_column: UserConfigValue,
 ) -> tuple[list[str], str]:
-    """Pick feature and target columns from run config, env, or manifest metadata."""
-    target = (
-        os.environ.get("SILO1_TARGET_COLUMN")
-        or run_target_column
-        or (manifest or {}).get("target_column")
-        or ""
-    )
-    features = list(run_feature_columns)
-    if os.environ.get("SILO1_FEATURE_COLUMNS"):
-        features = [
-            c.strip()
-            for c in os.environ["SILO1_FEATURE_COLUMNS"].split(",")
-            if c.strip()
-        ]
-    if not features and manifest and manifest.get("columns"):
-        columns = list(manifest["columns"])
-        if not target and len(columns) >= 2:
-            target = str(columns[-1])
-        features = [c for c in columns if c != target]
-    if not target:
-        raise ValueError(
-            "Set SILO1_TARGET_COLUMN or tool.flwr.app.config target-column "
-            "after inspecting manifest/rows schema"
-        )
-    if not features:
-        raise ValueError(
-            "Set SILO1_FEATURE_COLUMNS or tool.flwr.app.config feature-columns"
-        )
+    """Use explicit run-config columns; validate against manifest/rows keys."""
+    features = parse_csv_columns(run_feature_columns, "feature-columns")
+    target = parse_target_column(run_target_column)
+    if target in features:
+        raise ValueError("target-column must not appear in feature-columns")
     if not rows:
         raise ValueError("rows.json is empty")
     sample = rows[0]
@@ -97,6 +78,11 @@ def resolve_feature_target(
     for name in [*features, target]:
         if name not in sample:
             raise KeyError(f"column {name!r} missing from rows")
+    if manifest and manifest.get("columns"):
+        manifest_cols = set(manifest["columns"])
+        missing = [c for c in [*features, target] if c not in manifest_cols]
+        if missing:
+            raise ValueError(f"columns not in manifest: {missing}")
     return features, target
 
 
