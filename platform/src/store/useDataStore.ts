@@ -25,17 +25,39 @@ export interface SiloDataFields {
 // 사일로별 정제율/샤드/레코드 시드 (SILO_SEEDS id 순서 대응, 결정적 값)
 const CLEANSE_SEED = [100, 72, 38, 88, 64, 95]
 
+/** 실서버 정제 레시피와 같은 step 이름 — 데모 카드·잡 표가 실서버와 같은 칩으로 보이게 한다 */
+const DEMO_COUNTER_STEPS = [
+  'map_schema.rows.entity', 'map_schema.cast_failed', 'union_sources.combined', 'union_sources.duplicates.within',
+  'join_sources.matched', 'join_sources.excluded.left_only', 'parse_records.out', 'parse_records.conversion_failed',
+  'reconcile.conflicts', 'reconcile.resolved.latest', 'validate_schema.excluded.missing', 'validate_schema.out',
+] as const
+
+function demoStepCounters(records: number): Record<string, number> {
+  return Object.fromEntries(DEMO_COUNTER_STEPS.map((step, i) => [step, Math.round(records / (8 + i * 11))]))
+}
+
 function seedDataBySilo(): Record<number, SiloDataFields> {
   const out: Record<number, SiloDataFields> = {}
   SILO_SEEDS.forEach((silo, i) => {
+    const cleansePct = CLEANSE_SEED[i] ?? 50
+    const records = 120_000 + silo.id * 47_300
     out[silo.id] = {
-      cleansePct: CLEANSE_SEED[i] ?? 50,
+      cleansePct,
       shardCount: ((silo.id * 2) % 6) + 3,
-      records: 120_000 + silo.id * 47_300,
+      records,
+      cleanseStatus: cleansePct >= 100 ? 'completed' : 'running',
+      stepCounters: demoStepCounters(records),
     }
   })
   return out
 }
+
+/** 정제 잡 현황 표의 데모 행 — 서버 잡 목록(liveCleaningJobs)과 섞지 않는다 */
+export const DEMO_CLEANING_JOBS: CleaningJobSummary[] = ([
+  { jobId: 'clean-daily-0601', status: 'completed', totalRowsIn: 1_412_400, totalRowsOut: 1_355_900 },
+  { jobId: 'clean-daily-0602', status: 'running', totalRowsIn: 1_398_700, totalRowsOut: 702_300 },
+] as const).map((job) => ({ ...job, recipe: 'silo-standard@1.0.0', datasetLabel: 'silo-sources',
+  counters: demoStepCounters(job.totalRowsIn), updatedAt: '2026-06-02T09:00:00Z' }))
 
 function seedJobs(): Job[] {
   return [

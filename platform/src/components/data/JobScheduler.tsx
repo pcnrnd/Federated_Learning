@@ -11,6 +11,7 @@ import { useLiveTrainingStore } from '@/store/useLiveTrainingStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { JobState } from '@/types/simulation'
+import { Pager, usePaged } from '@/components/common/Pager'
 import { PipelineLiveResults } from './PipelineLiveResults'
 import { UnifiedPipelineForm } from './UnifiedPipelineForm'
 
@@ -64,6 +65,8 @@ export function JobScheduler() {
     if (mode === 'demo') return demoJobsToSchedulerRows(jobs)
     return [...liveCleaningToSchedulerRows(liveCleaningJobs), ...liveTrainingToSchedulerRows(trainingJobs)]
   }, [mode, jobs, liveCleaningJobs, trainingJobs])
+
+  const paged = usePaged(rows)
 
   const siloName = (id?: number): string => {
     if (id === undefined) return '전체'
@@ -121,7 +124,7 @@ export function JobScheduler() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((job) => {
+            {paged.items.map((job) => {
               const running = job.state === 'running'
               const eligible = mode === 'demo' && canRun(job.id)
               const blocked = job.state === 'queued' && mode === 'demo' && !eligible
@@ -235,6 +238,7 @@ export function JobScheduler() {
           </tbody>
         </table>
       </div>
+      <Pager paged={paged} label="파이프라인 작업 페이지" />
       {mode === 'live' && <PipelineLiveResults />}
     </div>
   )

@@ -4,7 +4,6 @@ import { MonitorChart } from '@/components/analytics/MonitorChart'
 import { PerformanceChart } from '@/components/analytics/PerformanceChart'
 import { useEffect } from 'react'
 import { useMonitoringStore } from '@/store/useMonitoringStore'
-import { RetrainingPanel } from '@/components/analytics/RetrainingPanel'
 
 export function AnalyticsView() {
   useEffect(() => useMonitoringStore.getState().observeLive(), [])
@@ -39,7 +38,6 @@ export function AnalyticsView() {
             <div className="monitor-drift-section">
               <DriftCard />
               <DriftSettingsPanel />
-              <RetrainingPanel />
             </div>
             <MonitorChart />
           </div>

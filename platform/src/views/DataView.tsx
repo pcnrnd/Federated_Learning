@@ -1,9 +1,10 @@
 import { useMemo } from 'react'
-import { CleansingGrid } from '@/components/data/CleansingGrid'
+import { CleansingGrid, CounterList } from '@/components/data/CleansingGrid'
 import { JobScheduler } from '@/components/data/JobScheduler'
 import { ShardingDiagram } from '@/components/data/ShardingDiagram'
 import { formatNumber } from '@/lib/format'
-import { useDataStore } from '@/store/useDataStore'
+import { DEMO_CLEANING_JOBS, useDataStore } from '@/store/useDataStore'
+import { useSimulationStore } from '@/store/useSimulationStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import type { CleaningJobStatus, SiloData } from '@/types/simulation'
 
@@ -16,15 +17,17 @@ const JOB_STATUS_META: Record<CleaningJobStatus, { label: string; cls: string }>
 }
 
 function LiveCleaningJobsTable() {
-  const liveJobs = useDataStore((s) => s.liveCleaningJobs)
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
+  const serverJobs = useDataStore((s) => s.liveCleaningJobs)
+  const liveJobs = mockEnabled ? DEMO_CLEANING_JOBS : serverJobs
   if (liveJobs.length === 0) return null
   return (
     <>
       <div className="data-subhead">
-        <i className="fa-solid fa-list-check" /> 정제 잡 현황 (실서버)
+        <i className="fa-solid fa-list-check" /> 정제 잡 현황
       </div>
       <div className="model-table-wrapper">
-        <table className="model-table">
+        <table className="model-table cleaning-jobs-table">
           <thead>
             <tr>
               <th>잡 ID</th>
@@ -49,10 +52,8 @@ function LiveCleaningJobsTable() {
                   <td className="ta-right text-cyan">
                     {formatNumber(job.totalRowsIn)} → {formatNumber(job.totalRowsOut)}
                   </td>
-                  <td className="model-date-cell">
-                    {Object.entries(job.counters)
-                      .map(([step, n]) => `${step} ${formatNumber(n)}`)
-                      .join(' · ') || '—'}
+                  <td className="cleaning-jobs-counters">
+                    <CounterList counters={job.counters} />
                   </td>
                 </tr>
               )

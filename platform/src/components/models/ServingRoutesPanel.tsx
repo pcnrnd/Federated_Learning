@@ -49,43 +49,67 @@ export function ServingRoutesPanel() {
       return [key, value === null ? '' : String(value)]
     })) as unknown as ServingGateDraft)
   }
-  if (!live) return <div className="deploy-card glass-panel"><h4>실제 요청 경로·그림자 비교</h4><p>실서버 모드에서 관측할 수 있습니다.</p></div>
-  return <div className="deploy-card glass-panel">
-    <h4>실제 요청 경로·그림자 비교</h4>
-    {(state.error || draftError) && <p role="alert">{draftError ?? state.error}</p>}
-    <label htmlFor="serving-primary">실제 검증된 주 실행</label>
-    <select id="serving-primary" className="model-input" value={primary} onChange={(event) => setPrimary(event.target.value)}>
-      <option value="">선택하세요</option>
-      {deployments.filter((value) => !value.isSchedule && value.state === 'done' && value.verifiedAt).map((value) =>
-        <option key={value.id} value={value.id}>{value.modelLabel} · {value.id}</option>)}
-    </select>
-    <button type="button" disabled={!primary || state.pending} onClick={() => { void state.create(primary) }}>요청 경로 연결</button>
-    <select aria-label="요청 경로" className="model-input" value={state.selected ?? ''} onChange={(event) => state.select(event.target.value)}>
-      <option value="">경로 선택</option>
-      {state.routes.map((value) => <option key={value.route_id} value={value.route_id}>{value.route_id} · {value.status}</option>)}
-    </select>
+  const head = <div className="deploy-card-head">
+    <h4><i className="fa-solid fa-route" /> 실제 요청 경로·그림자 비교</h4>
+  </div>
+  if (!live) return <div className="deploy-card glass-panel serving-routes-panel">{head}
+    <div className="deploy-empty">실서버 데이터 조회 상태에서 요청 경로를 연결하고 관측할 수 있습니다.</div></div>
+  return <div className="deploy-card glass-panel serving-routes-panel">
+    {head}
+    {(state.error || draftError) && <p role="alert" className="text-red">{draftError ?? state.error}</p>}
+    <div className="serving-routes-row">
+      <div className="control-group">
+        <label htmlFor="serving-primary">실제 검증된 주 실행</label>
+        <select id="serving-primary" className="model-input" value={primary} onChange={(event) => setPrimary(event.target.value)}>
+          <option value="">선택하세요</option>
+          {deployments.filter((value) => !value.isSchedule && value.state === 'done' && value.verifiedAt).map((value) =>
+            <option key={value.id} value={value.id}>{value.modelLabel} · {value.id}</option>)}
+        </select>
+      </div>
+      <button type="button" className="model-action deploy" disabled={!primary || state.pending}
+        onClick={() => { void state.create(primary) }}>요청 경로 연결</button>
+    </div>
+    <div className="control-group">
+      <label htmlFor="serving-route">요청 경로</label>
+      <select id="serving-route" aria-label="요청 경로" className="model-input" value={state.selected ?? ''}
+        onChange={(event) => state.select(event.target.value)}>
+        <option value="">경로 선택</option>
+        {state.routes.map((value) => <option key={value.route_id} value={value.route_id}>{value.route_id} · {value.status}</option>)}
+      </select>
+    </div>
     {route && <>
-      <p>요청 주소: <code>/api/serving-routes/{route.route_id}/predict</code></p>
-      <p>주 실행 {route.primary_deployment_id} · 그림자 {route.shadow_deployment_id ?? '없음'} · 복원용 대기 실행 {route.previous_deployment_id ?? '없음'}</p>
-      <p>대기 실행은 복원용으로 유지됩니다. 경로 종료 후 정리 확인 전까지 실행 참조를 보존합니다.</p>
-      <input aria-label="그림자 모델 버전" className="model-input" value={version} placeholder="실제 등록된 비교 버전"
-        onChange={(event) => setVersion(event.target.value)} />
-      <input aria-label="그림자 전송 비율" type="number" min={0} max={100} value={mirror} onChange={(event) => setMirror(Number(event.target.value))} />
-      <button type="button" disabled={state.pending || !version.trim() || !!route.shadow_id || route.status === 'closed'
-        || !Number.isFinite(mirror) || mirror < 0 || mirror > 100} onClick={() => { void state.shadow(version.trim(), mirror) }}>실제 그림자 연결</button>
-      <details><summary>명시적 비교·승격 기준</summary>
-        <button type="button" disabled={!route.comparison_gate} onClick={loadGate}>서버 기준 불러오기</button>
-        {(Object.keys(LABELS) as Array<keyof ServingGateDraft>).map((key) => <label key={key}>
-          {LABELS[key]}<input className="model-input" type="number" value={gateDraft[key]}
-            onChange={(event) => setGateDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
-        </label>)}
-        <button type="button" disabled={state.pending || !route.shadow_deployment_id} onClick={submitGate}>기준 저장·새 비교 구간 시작</button>
+      <p className="desc">요청 주소: <code>/api/serving-routes/{route.route_id}/predict</code></p>
+      <p className="desc">주 실행 {route.primary_deployment_id} · 그림자 {route.shadow_deployment_id ?? '없음'} · 복원용 대기 실행 {route.previous_deployment_id ?? '없음'}</p>
+      <p className="desc">대기 실행은 복원용으로 유지됩니다. 경로 종료 후 정리 확인 전까지 실행 참조를 보존합니다.</p>
+      <div className="serving-routes-row">
+        <input aria-label="그림자 모델 버전" className="model-input" value={version} placeholder="실제 등록된 비교 버전"
+          onChange={(event) => setVersion(event.target.value)} />
+        <input aria-label="그림자 전송 비율" className="model-input serving-routes-ratio" type="number" min={0} max={100} value={mirror}
+          onChange={(event) => setMirror(Number(event.target.value))} />
+        <button type="button" className="model-action deploy" disabled={state.pending || !version.trim() || !!route.shadow_id || route.status === 'closed'
+          || !Number.isFinite(mirror) || mirror < 0 || mirror > 100} onClick={() => { void state.shadow(version.trim(), mirror) }}>실제 그림자 연결</button>
+      </div>
+      <details className="drift-settings-panel parity-advanced-section">
+        <summary className="drift-settings-header">
+          <span className="drift-settings-title"><i className="fa-solid fa-sliders" /> 명시적 비교·승격 기준</span>
+          <i className="fa-solid fa-chevron-down drift-settings-chevron" aria-hidden="true" />
+        </summary>
+        <div className="drift-settings-body">
+          <button type="button" className="model-action" disabled={!route.comparison_gate} onClick={loadGate}>서버 기준 불러오기</button>
+          {(Object.keys(LABELS) as Array<keyof ServingGateDraft>).map((key) => <label key={key} className="control-group">
+            {LABELS[key]}<input className="model-input" type="number" value={gateDraft[key]}
+              onChange={(event) => setGateDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
+          </label>)}
+          <button type="button" className="model-action deploy" disabled={state.pending || !route.shadow_deployment_id} onClick={submitGate}>기준 저장·새 비교 구간 시작</button>
+        </div>
       </details>
       <textarea aria-label="일시적 예측 확인 입력" className="model-input" value={inputText}
         onChange={(event) => setInputText(event.target.value)} placeholder="JSON 입력 배열" />
-      <button type="button" disabled={state.pending || route.status === 'closed' || !inputText.trim()} onClick={predict}>실제 요청 전송</button>
-      <p>입력·예측 값은 저장하지 않습니다. 예측 차이는 정확도 지표가 아닙니다.</p>
-      {state.lastResponse && <p>요청 {state.lastResponse.request_id} · 실제 응답 버전 {state.lastResponse.version} · 입력 {state.lastResponse.input_count}건</p>}
+      <div className="serving-routes-actions">
+        <button type="button" className="model-action deploy" disabled={state.pending || route.status === 'closed' || !inputText.trim()} onClick={predict}>실제 요청 전송</button>
+      </div>
+      <p className="desc">입력·예측 값은 저장하지 않습니다. 예측 차이는 정확도 지표가 아닙니다.</p>
+      {state.lastResponse && <p className="desc">요청 {state.lastResponse.request_id} · 실제 응답 버전 {state.lastResponse.version} · 입력 {state.lastResponse.input_count}건</p>}
       {state.comparison && <>
         <p>구간 {state.comparison.window_start} ~ {state.comparison.window_end} · 동일 요청 비교 N={state.comparison.pairs}
           · 예측 차이 평균 {metric(state.comparison.mean_abs_difference)} · 진행 {state.comparison.pending} · 재시작 중단 {state.comparison.interrupted}</p>
@@ -97,11 +121,13 @@ export function ServingRoutesPanel() {
         </li>)}</ul>
         <p>{state.comparison.gate_ready ? '관측 기준 충족 · 승격 시 현재 건강 상태를 다시 확인합니다' : state.comparison.gate_reasons.join(' · ')}</p>
       </>}
-      <button type="button" disabled={state.pending || !state.comparison?.gate_ready} onClick={() => { void state.action('promote') }}>실제 요청 경로 승격</button>
-      <button type="button" disabled={state.pending || route.status !== 'promoted'} onClick={() => { void state.action('rollback') }}>이전 정상 경로 복원</button>
-      <button type="button" disabled={state.pending || route.status === 'closed'} onClick={() => { void state.action('close') }}>경로 종료·정리</button>
-      {route.cleanup_pending && <button type="button" disabled={state.pending} onClick={() => { void state.action('cleanup') }}>미확인 정리 재시도</button>}
-      {route.error && <p role="alert">{route.error}</p>}
+      <div className="serving-routes-actions">
+        <button type="button" className="model-action deploy" disabled={state.pending || !state.comparison?.gate_ready} onClick={() => { void state.action('promote') }}>실제 요청 경로 승격</button>
+        <button type="button" className="model-action rollback" disabled={state.pending || route.status !== 'promoted'} onClick={() => { void state.action('rollback') }}>이전 정상 경로 복원</button>
+        <button type="button" className="model-action remove" disabled={state.pending || route.status === 'closed'} onClick={() => { void state.action('close') }}>경로 종료·정리</button>
+        {route.cleanup_pending && <button type="button" className="model-action" disabled={state.pending} onClick={() => { void state.action('cleanup') }}>미확인 정리 재시도</button>}
+      </div>
+      {route.error && <p role="alert" className="text-red">{route.error}</p>}
       <ul>{state.shadows.filter((value) => value.route_id === route.route_id).map((value) => <li key={value.shadow_id}>
         그림자 {value.shadow_version}: {value.status} {value.error}
         {(value.status === 'failed' || value.status === 'initializing') && !value.cleanup_pending && <button type="button" disabled={state.pending}

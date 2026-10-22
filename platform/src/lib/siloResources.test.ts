@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { exceedsThreshold, mapRegisteredSilos, registeredSiloNumber, resourceHistory, siloActionKey, siloDraftKey } from '@/lib/siloResources'
+import { exceedsThreshold, mapRegisteredSilos, registeredSiloNumber, resourceHistory, siloDisplayName, siloActionKey, siloDraftKey } from '@/lib/siloResources'
 import type { ResourceUsageSummary, SiloRegistrationApi } from '@/api/client'
 
 const registered: SiloRegistrationApi[] = [
@@ -27,7 +27,7 @@ describe('live silo resource mapping', () => {
   })
   test('retains registered nodes before collection, exact server identity and stored settings', () => {
     const silos = mapRegisteredSilos(registered, [observation], [], [{ group_id: 'edge', description: '', aggregator_node_id: 'silo-1', member_node_ids: ['hospital-A'] }], Date.parse(observation.last_sample_at))
-    expect(silos[0]).toMatchObject({ name: '첫 기관', serverId: 'silo-1', endpoint: 'tcp://silo-1:2375', cpu: 0.12, mem: null, memUsedBytes: 1048576, sampleState: 'fresh' })
+    expect(silos[0]).toMatchObject({ name: '사일로1', serverId: 'silo-1', endpoint: 'tcp://silo-1:2375', cpu: 0.12, mem: null, memUsedBytes: 1048576, sampleState: 'fresh' })
     expect(silos[1]).toMatchObject({ serverId: 'hospital-A', cpu: null, sampleState: 'uncollected', parentId: 1 })
     expect(silos[1].parentServerId).toBe('silo-1')
     expect(silos[0].thresholds).toEqual({ cpu: null, mem: null, disk: null })
@@ -57,4 +57,10 @@ describe('live silo resource mapping', () => {
     expect(resourceHistory(samples, 'cpu').map((p) => p.value)).toEqual([null, 0.12])
     expect(resourceHistory(samples, 'mem_used_bytes').map((p) => p.value)).toEqual([1048576, 1048576])
   })
+})
+
+test('silo-N 사일로는 서버 label과 관계없이 사일로N으로 표시하고 그 밖의 사일로는 label을 쓴다', () => {
+  expect(siloDisplayName('silo-3', '데모 사일로 3')).toBe('사일로3')
+  expect(siloDisplayName('silo-01', '실서버 기관')).toBe('사일로1')
+  expect(siloDisplayName('hospital-A', '두 번째 기관')).toBe('두 번째 기관')
 })

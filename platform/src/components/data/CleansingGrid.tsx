@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { formatNumber } from '@/lib/format'
 import type { SiloData } from '@/types/simulation'
 
@@ -45,18 +46,36 @@ function CounterKey({ name }: { name: string }) {
   )
 }
 
+/** 접힌 상태에서 보여 줄 카운터 칩 수 — 카드·표 행 높이를 제한한다 */
+export const COUNTER_PREVIEW_LIMIT = 8
+
 /**
  * step별 적용 건수를 카운터 하나당 칩 하나로, 들어온 순서 그대로 나열한다.
- * 상태 칩 행과 분리된 블록이라 카운터가 많아도 가로로 넘치지 않고 줄바꿈된다.
+ * 사일로 카드와 정제 잡 표가 같이 쓰며, 많으면 처음 몇 개만 보이고 "더 보기"로 펼친다.
  */
-function CounterList({ counters }: { counters: Record<string, number> }) {
+export function CounterList({ counters }: { counters: Record<string, number> }) {
+  const [expanded, setExpanded] = useState(false)
+  const entries = Object.entries(counters)
+  if (entries.length === 0) return <span className="cleanse-counter-empty">—</span>
+  const hidden = entries.length - COUNTER_PREVIEW_LIMIT
+  const visible = expanded || hidden <= 0 ? entries : entries.slice(0, COUNTER_PREVIEW_LIMIT)
   return (
     <div className="cleanse-counters" title="정제 step별 적용 건수">
-      {Object.entries(counters).map(([step, n]) => (
+      {visible.map(([step, n]) => (
         <span key={step} className="cleanse-counter">
           <CounterKey name={step} /> {formatNumber(n)}
         </span>
       ))}
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="cleanse-counter-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? '접기' : `+${hidden} 더 보기`}
+        </button>
+      )}
     </div>
   )
 }

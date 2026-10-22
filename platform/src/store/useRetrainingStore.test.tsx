@@ -1,7 +1,5 @@
 import '@/test/currentSnapshotSsr'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { renderToStaticMarkup } from 'react-dom/server'
-import { RetrainingPanel } from '@/components/analytics/RetrainingPanel'
 import { emptyRetrainingDraft } from '@/lib/retraining'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { RetrainingConfig, RetrainingEvent, RetrainingOverview } from '@/types/simulation'
@@ -20,7 +18,6 @@ const snapshot = (): RetrainingOverview => ({ configs: [config], events: [event]
   policy_id: config.definition.policy_id, model_name: '실제 모델', version: '1.0.0', feature: 'x' }], groups: [{ group_id: 'cohort', members: 2 }] })
 const releases: Array<() => void> = []
 const loaded = async () => { releases.push(store.getState().observe()); await vi.waitFor(() => expect(store.getState().polling).toBe(false)) }
-const html = () => renderToStaticMarkup(<RetrainingPanel />)
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done }); return { promise, resolve } }
 
 beforeEach(() => {
@@ -32,16 +29,14 @@ beforeEach(() => {
 })
 afterEach(() => { releases.splice(0).forEach((done) => done()); vi.restoreAllMocks() })
 
-test('서버 학습 진행을 표시하고 새 모델 등록·경고 확인·운영 전환과 구분한다', async () => {
+test('서버 학습 진행과 새 모델 등록 결과를 재조회로 반영한다', async () => {
   await loaded()
-  expect(html()).toContain('학습 진행')
-  expect(html()).not.toContain('새 모델 등록 완료')
-  expect(html()).toContain('경고 확인·해소와 새 모델 등록은 별도')
+  expect(store.getState().snapshot.events[0].status).toBe('training')
+  expect(store.getState().snapshot.events[0].registered_model).toBeNull()
   fetch.mockResolvedValue({ ...snapshot(), events: [{ ...event, status: 'registered', registered_model: {
     name: '실제 모델', version: '1.0.1', weights_sha256: 'weights', result_id: 'real-result', round_id: 'last-round' } }] })
   await store.getState().poll()
-  expect(html()).toContain('새 실험 모델 실제 모델@1.0.1 등록 완료')
-  expect(html()).toContain('운영 전환은 별도')
+  expect(store.getState().snapshot.events[0].registered_model?.version).toBe('1.0.1')
 })
 
 test('응답 유실은 같은 수동 명령으로 재전송하고 새 명령은 새 ID를 쓴다', async () => {
@@ -155,5 +150,4 @@ test('모델 버튼의 대상 선택은 유효한 저장 설정을 찾고 실제
   await loaded()
   expect(store.getState().selected).toBe(config.retrain_config_id)
   expect(run).not.toHaveBeenCalled()
-  expect(html()).toContain('저장한 설정으로 재교육')
 })

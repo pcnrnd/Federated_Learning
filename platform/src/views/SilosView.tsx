@@ -35,7 +35,6 @@ export function SilosView() {
           </span>
         </div>
         <div className="card-body">
-          <p className="silo-observation">{isLive ? '실서버 모드 · 등록과 설정을 서버에 저장합니다.' : '데모 모드 · 화면 안의 예시 상태입니다.'}</p>
           {error && <p role="alert" className="text-red">서버 변경 실패: {error}</p>}
           {isLive && pollError && <p role="alert" className="text-red">서버 연결 실패: {pollError}. 값은 마지막 관측이며 현재 판정을 확인할 수 없습니다.</p>}
           <div className="model-toolbar">
@@ -62,7 +61,8 @@ export function SilosView() {
               ))}
             </div>
           )}
-          {isLive && <><SiloGroups /><SiloResourceHistory /></>}
+          <SiloGroups />
+          <SiloResourceHistory />
         </div>
       </div>
     </div>

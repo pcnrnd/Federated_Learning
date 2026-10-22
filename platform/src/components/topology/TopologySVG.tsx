@@ -120,7 +120,7 @@ export function TopologySVG({ nodes: nodesOverride }: TopologySVGProps = {}) {
   if (isEmpty) {
     return (
       <div className="deploy-empty">
-        표시할 데모 네트워크가 없습니다. 설정에서 데모 데이터를 다시 켜면 예시가 복원됩니다.
+        표시할 사일로가 없습니다. 사일로를 등록하면 연합 토폴로지가 표시됩니다.
       </div>
     )
   }

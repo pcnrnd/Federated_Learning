@@ -16,14 +16,7 @@ export function GlobalHeader() {
   return (
     <header className="global-header glass-panel">
       <div className="page-title-area">
-        <h1>
-          {meta.title}
-          {mockEnabled && (
-            <span className="model-badge model-badge-experimental" title="설정에서 데모 데이터 시뮬레이션이 켜져 있습니다">
-              데모 데이터 모드
-            </span>
-          )}
-        </h1>
+        <h1>{meta.title}</h1>
         <p>{meta.desc}</p>
       </div>
       <div className="header-right">
