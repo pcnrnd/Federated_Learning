@@ -801,7 +801,8 @@ button {
   gap: 6px;
 }
 
-.control-group label {
+.control-group label,
+label.control-group {
   font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
