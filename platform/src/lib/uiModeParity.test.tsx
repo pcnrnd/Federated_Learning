@@ -10,7 +10,6 @@ import {
   MAIN_PIPELINE_FIELD_IDS,
   PIPE_CLEANING_FIELD_IDS,
   PIPE_TRAINING_FIELD_IDS,
-  RETRAINING_FIELD_IDS,
 } from '@/lib/pipelineFields'
 import { LIVE_JOB_SELECT_REASON } from '@/lib/uiMode'
 import { trainingJobActionPath } from '@/lib/trainingJobPaths'
@@ -44,6 +43,19 @@ test('라이브 JobScheduler는 데모와 같은 테이블 골격을 유지한�
   const html = renderToStaticMarkup(<JobScheduler />)
   expect(html).toContain('작업명')
   expect(html).toContain('파이프라인 등록')
+})
+
+test('JobScheduler는 11건 이상이면 10건씩 나누고 페이지 이동을 표시한다', async () => {
+  await prepareMode(true, 'http://central')
+  const { useDataStore } = await import('@/store/useDataStore')
+  const jobs = Array.from({ length: 12 }, (_, i) => ({ id: `job-${i}`, name: `작업 ${i}`, schedule: '0 * * * *', dependsOn: [], state: 'queued' as const }))
+  useDataStore.setState({ jobs })
+  const { JobScheduler } = await import('@/components/data/JobScheduler')
+  const html = renderToStaticMarkup(<JobScheduler />)
+  expect(html.match(/<tr>/g)?.length).toBe(11) // 머리글 1 + 작업 10
+  expect(html).toContain('1 / 2 · 전체 12건')
+  useDataStore.setState({ jobs: jobs.slice(0, 10) })
+  expect(renderToStaticMarkup(<JobScheduler />)).not.toContain('table-pager')
 })
 
 test('미설정 API에서도 ControlPanel·NewModelForm 공통 카드가 유지된다', async () => {
@@ -80,7 +92,7 @@ test('라이브 NodeCard 어댑터는 CPU 미수집을 대시로 렌더하고 ID
   expect(html).not.toContain('>IDLE<')
 })
 
-test('NewModelForm·UnifiedPipelineForm·Retraining·Drift는 세 모드에서 동일 field id를 유지한다', async () => {
+test('NewModelForm·UnifiedPipelineForm·Drift는 세 모드에서 동일 field id를 유지한다', async () => {
   const modes: Array<{ mock: boolean; api: string }> = [
     { mock: true, api: 'http://central' },
     { mock: false, api: 'http://central' },
@@ -93,7 +105,6 @@ test('NewModelForm·UnifiedPipelineForm·Retraining·Drift는 세 모드에서 �
     useMonitoringStore.setState({ settingsExpanded: true })
     const { NewModelForm } = await import('@/components/models/NewModelForm')
     const { UnifiedPipelineForm } = await import('@/components/data/UnifiedPipelineForm')
-    const { RetrainingPanel } = await import('@/components/analytics/RetrainingPanel')
     const { DriftSettingsPanel } = await import('@/components/analytics/DriftSettingsPanel')
     const { ControlPanel } = await import('@/components/controls/ControlPanel')
 
@@ -104,9 +115,6 @@ test('NewModelForm·UnifiedPipelineForm·Retraining·Drift는 세 모드에서 �
     assertIds(pipeHtml, MAIN_PIPELINE_FIELD_IDS)
     assertIds(pipeHtml, PIPE_CLEANING_FIELD_IDS)
     assertIds(pipeHtml, PIPE_TRAINING_FIELD_IDS)
-
-    const retrainHtml = renderToStaticMarkup(<RetrainingPanel />)
-    assertIds(retrainHtml, RETRAINING_FIELD_IDS)
 
     const driftHtml = renderToStaticMarkup(<DriftSettingsPanel />)
     assertIds(driftHtml, LIVE_DRIFT_POLICY_FIELD_IDS)
@@ -236,7 +244,7 @@ test('PipelineLiveResults는 정제 카운터·라운드 결과 섹션을 렌더
   })
   const { PipelineLiveResults } = await import('@/components/data/PipelineLiveResults')
   const html = renderToStaticMarkup(<PipelineLiveResults />)
-  expect(html).toContain('step 카운터')
+  expect(html).toContain('<span class="cleanse-counter"><span>filter</span> 2</span>')
   expect(html).toContain('step failed')
   expect(html).toContain('res-1')
   expect(html).toContain('abc')

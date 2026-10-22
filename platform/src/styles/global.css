@@ -743,6 +743,13 @@ button {
   gap: 8px;
 }
 
+/* 본문 보조 설명 — 카드 머리 밖에서도 caption 크기를 쓴다(머리 안 규칙이 더 구체적이라 우선) */
+.desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 .card-header .desc {
   font-size: 10px;
   color: var(--text-secondary);
@@ -1556,13 +1563,25 @@ input[type='range']::-webkit-slider-thumb:hover {
 }
 
 .parity-advanced-section {
-  margin-top: 0.75rem;
+  margin-top: var(--space-3);
 }
 
+/* 브라우저 기본 펼침 삼각형 대신 드리프트 설정 패널과 같은 제목·셰브런을 쓴다 */
 .parity-advanced-section > summary {
-  cursor: pointer;
-  list-style: revert;
-  margin-bottom: 0.5rem;
+  list-style: none;
+}
+
+.parity-advanced-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.parity-advanced-section > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.parity-advanced-section[open] > summary .drift-settings-chevron {
+  transform: rotate(180deg);
 }
 
 /* ==========================================================================
@@ -2353,6 +2372,44 @@ span.dep-state-failed.dep-state-badge {
   border: 1px solid rgba(239, 68, 68, 0.25);
 }
 
+/* 실제 요청 경로·그림자 비교 — 배포 상태 목록과 붙지 않도록 세로 간격을 둔다 */
+.serving-routes-panel {
+  margin-top: var(--space-6);
+}
+
+.serving-routes-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.serving-routes-row > .control-group,
+.serving-routes-row > .model-input:first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.serving-routes-ratio {
+  width: 96px;
+}
+
+.serving-routes-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.serving-routes-panel code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.deploy-item-error {
+  font-size: 12px;
+  color: var(--red);
+}
+
 .deploy-empty {
   text-align: center;
   color: var(--text-muted);
@@ -2651,6 +2708,73 @@ span.dep-state-failed.dep-state-badge {
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+.pipeline-live-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.pipeline-live-results > .data-subhead {
+  margin: 0 0 var(--space-1);
+}
+
+/* 표 아래 페이지 이동 — 10건 단위 */
+.table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.table-pager-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cleanse-counter-more {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgb(var(--ink) / 0.12);
+  background: transparent;
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cleanse-counter-more:hover {
+  background: rgb(var(--ink) / 0.04);
+}
+
+.cleanse-counter-more:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.cleanse-counter-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 정제 잡 표 — STEP 칩 칸이 나머지 칸을 밀어내지 않도록 너비를 나눈다 */
+.cleaning-jobs-table td {
+  vertical-align: top;
+}
+
+.cleaning-jobs-table .model-version-cell {
+  min-width: 180px;
+  overflow-wrap: anywhere;
+}
+
+.cleaning-jobs-counters {
+  width: 45%;
+  min-width: 280px;
 }
 
 .data-subhead {
@@ -3571,10 +3695,109 @@ span.dep-state-failed.dep-state-badge {
 .silo-observation, .silo-scope { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .silo-scope { margin: 4px 0 10px; font-size: 11px; }
 .silo-status-dot.unknown { background: var(--text-secondary); }
-.silo-group-panel { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgb(var(--ink) / 0.15); }
-.silo-group-list { display: grid; gap: 10px; margin-bottom: 16px; overflow-wrap: anywhere; }
-.silo-group-members { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px; }
-.silo-group-panel fieldset { margin: 12px 0; border: 1px solid rgb(var(--ink) / 0.15); }
+/* 사일로 그룹·자원 시계열 — 사일로 카드 아래 하위 블록. 데모·실서버가 같은 골격을 쓴다 */
+.silo-group-panel {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid rgb(var(--ink) / 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.silo-group-panel > .data-subhead {
+  margin: 0;
+}
+
+.silo-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.silo-group-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: rgb(var(--inset) / 0.4);
+  border: 1px solid rgb(var(--ink) / 0.06);
+  border-radius: var(--radius-lg);
+}
+
+.silo-group-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.silo-group-name {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  color: var(--text-strong);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.silo-group-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.silo-group-actions .btn {
+  flex: 0 0 auto;
+}
+
+.silo-group-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid rgb(var(--ink) / 0.06);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--inset) / 0.25);
+}
+
+.silo-group-fieldset {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid rgb(var(--ink) / 0.1);
+  border-radius: var(--radius-md);
+}
+
+.silo-group-fieldset legend {
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.silo-group-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.silo-group-member {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.silo-history-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 240px));
+  gap: var(--space-4);
+}
 
 /* 아래로 내려가는 간선이 라벨을 가로지르지 않도록 표면색 테두리로 띄운다 */
 .viz-node-label,

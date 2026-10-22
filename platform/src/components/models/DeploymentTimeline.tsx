@@ -66,7 +66,7 @@ export function DeploymentTimeline() {
                   {d.imageId && <span className="desc">이미지 {d.imageId} · 실제 검증 {d.verifiedAt ?? '미완료'}</span>}
                   {!mock && !d.isSchedule && d.state === 'done' && !d.verifiedAt && <span className="desc">기존 기록 · 실제 예측 검증 미확인</span>}
                   {d.env && Object.keys(d.env).length > 0 && <span className="desc">환경변수: {Object.keys(d.env).join(', ')}</span>}
-                  {d.error && <span role="alert">{d.error}{d.cleanupPending ? ' · 정리 확인 필요' : ''}</span>}
+                  {d.error && <span role="alert" className="deploy-item-error">{d.error}{d.cleanupPending ? ' · 정리 확인 필요' : ''}</span>}
                   {d.targets && <ul>{Object.entries(d.targets).map(([node, target]) => <li key={node}>
                     {node}: {target.status === 'running' ? '기동·예측 확인' : target.status === 'failed' ? '실패' : '확인 대기'}
                     {target.endpoint && ` · ${target.endpoint}`}{target.error_code && ` · ${target.error_code}`}

@@ -36,6 +36,15 @@ export function refreshSiloObservation(silo: Silo, now = Date.now(), connectionF
       ? silo.resourceGate === 'unmonitored' ? 'unmonitored' : 'unknown' : silo.resourceGate }
 }
 
+/**
+ * 화면 표시명은 데모 시드와 같은 `사일로N` 규칙으로 통일한다.
+ * 서버 label(예: 시드 스크립트의 "데모 사일로 N")은 `silo-N` 형식이 아닌 사일로에만 쓴다.
+ */
+export function siloDisplayName(siloId: string, label: string): string {
+  const n = /^silo-(\d+)$/.exec(siloId)?.[1]
+  return n ? `사일로${Number(n)}` : label
+}
+
 export function mapRegisteredSilos(
   registrations: readonly SiloRegistrationApi[],
   usage: readonly ResourceUsageSummary[],
@@ -51,7 +60,7 @@ export function mapRegisteredSilos(
       ? sample[`${metric}_pct`] : null
     return refreshSiloObservation({
       id: registeredSiloNumber(r.silo_id), serverId: r.silo_id,
-      name: r.label, endpoint: r.base_url, collectIntervalSec: r.collect_interval_seconds,
+      name: siloDisplayName(r.silo_id, r.label), endpoint: r.base_url, collectIntervalSec: r.collect_interval_seconds,
       cpu: value('cpu'), mem: value('mem'), disk: value('disk'),
       thresholds: { cpu: limit?.cpu_pct_max ?? null, mem: limit?.mem_pct_max ?? null, disk: limit?.disk_pct_max ?? null },
       ...(parent?.aggregator_node_id ? { parentId: registeredSiloNumber(parent.aggregator_node_id) } : {}),

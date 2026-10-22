@@ -349,11 +349,16 @@ export function ControlPanel() {
           </button>
         </div>
 
-        <details className="parity-advanced-section">
-          <summary>실제 학습 선행 조건 · 정제/학습 고급 필드</summary>
+        <details className="drift-settings-panel parity-advanced-section">
+          <summary className="drift-settings-header">
+            <span className="drift-settings-title">
+              <i className="fa-solid fa-sliders" /> 실제 학습 선행 조건 · 정제/학습 고급 필드
+            </span>
+            <i className="fa-solid fa-chevron-down drift-settings-chevron" aria-hidden="true" />
+          </summary>
           <div className="drift-settings-body">
             {mode !== 'live' && (
-              <p className="desc">{LIVE_TRAINING_JOB_CAPABILITY_REASON} 필드 레이아웃은 모든 모드에서 동일합니다.</p>
+              <p className="desc">{LIVE_TRAINING_JOB_CAPABILITY_REASON}</p>
             )}
             <label className="control-group" htmlFor="control-live-training-job">
               실제 학습 작업 선택

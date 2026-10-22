@@ -93,7 +93,6 @@ export function useDriftDisplay(): DriftDisplay {
       description: row.reason || `${row.model_name}@${row.version} · ${row.feature}`,
       showRetrain: level !== 'ok',
       retrainDisabled: true,
-      retrainTitle: '실제 재교육은 하단 재교육 패널에서 요청하세요.',
       alertThresholdLine: Math.min(100, critical * 100),
     }
   }, [mode, monitorPoints, warnThreshold, alertThreshold, liveRows, selectedScope])

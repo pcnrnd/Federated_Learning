@@ -80,16 +80,6 @@ export const CONTROL_LIVE_JOB_FIELD_IDS = [
   'control-live-training-cancel',
 ] as const
 
-export const RETRAINING_FIELD_IDS = [
-  "retrain-config-select",
-  "retrain-baseline-select",
-  "retrain-group-select",
-  "retrain-dataset-input",
-  "retrain-rounds-input",
-  "retrain-enabled-checkbox",
-  "retrain-automatic-checkbox",
-] as const
-
 export const LIVE_DRIFT_POLICY_FIELD_IDS = [
   "live-drift-warning",
   "live-drift-critical",

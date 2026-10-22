@@ -37,6 +37,42 @@ function seedSilos(): Silo[] {
   }))
 }
 
+export type GroupNode = Silo & { serverId: string }
+
+/** 그룹·시계열에서 고를 수 있는 사일로. 데모 시드는 서버 ID가 없어 실서버와 같은 `silo-N`을 붙인다. */
+export function groupNodes(silos: readonly Silo[], demo: boolean): GroupNode[] {
+  return demo
+    ? silos.map((s) => ({ ...s, serverId: s.serverId ?? `silo-${s.id}` }))
+    : silos.filter((s): s is GroupNode => typeof s.serverId === 'string')
+}
+
+/** 데모 그룹 — 실서버 그룹 응답과 같은 형태로 카드 레이아웃을 맞춘다 */
+export const DEMO_SILO_GROUPS: readonly SiloGroupApi[] = [
+  { group_id: 'all-silos', description: '전체 사일로', member_node_ids: SILO_SEEDS.map((s) => `silo-${s.id}`), aggregator_node_id: null },
+  { group_id: 'region-north', description: '북부 권역', member_node_ids: ['silo-2', 'silo-3'], aggregator_node_id: 'silo-1' },
+  { group_id: 'region-south', description: '남부 권역', member_node_ids: ['silo-5', 'silo-6'], aggregator_node_id: 'silo-4' },
+]
+
+const DEMO_SAMPLE_COUNT = 36
+const DEMO_SAMPLE_START = Date.parse('2026-06-02T08:00:00Z')
+const DEMO_SAMPLE_STEP_MS = 5 * 60_000
+const DEMO_SCOPE = { cpu: 'cgroup', mem: 'cgroup', disk: 'cgroup', cpu_cores: 'cgroup', mem_used_bytes: 'cgroup' }
+
+/** 데모 자원 시계열 — 사일로 시드 값을 중심으로 결정적으로 흔들리는 표본 */
+export function demoResourceSamples(node: GroupNode | undefined): ResourceSampleApi[] {
+  if (!node) return []
+  const wave = (base: number | null, i: number, amp: number) =>
+    base === null ? null : Math.max(0, Math.min(100, Math.round((base + amp * Math.sin(i / 3 + node.id)) * 10) / 10))
+  return Array.from({ length: DEMO_SAMPLE_COUNT }, (_, i) => ({
+    silo_id: node.serverId,
+    timestamp: new Date(DEMO_SAMPLE_START + i * DEMO_SAMPLE_STEP_MS).toISOString(),
+    cpu_pct: wave(node.cpu, i, 8), mem_pct: wave(node.mem, i, 4), disk_pct: wave(node.disk, i, 1),
+    cpu_cores: node.cpu === null ? null : Math.round(node.cpu * 4) / 100,
+    mem_used_bytes: node.mem === null ? null : Math.round(node.mem * 80) * 1048576,
+    measurement_scope: DEMO_SCOPE,
+  }))
+}
+
 export interface NewSiloInput {
   siloId?: string
   name: string

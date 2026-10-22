@@ -29,7 +29,7 @@ export function useDisplayNodes(): DisplayNodesResult {
         nodes: simulationNodes,
         emptyHint:
           simulationNodes.length === 0
-            ? '표시할 데모 사일로가 없습니다. 설정에서 데모 데이터를 다시 켜면 예시가 복원됩니다.'
+            ? '표시할 사일로가 없습니다. 사일로를 등록하면 여기에 표시됩니다.'
             : null,
       }
     }

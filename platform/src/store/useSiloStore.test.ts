@@ -16,7 +16,7 @@ test('401 live registration preserves server state and exposes the failure', asy
   expect(result).toBe(false)
   expect(useSiloStore.getState().silos).toEqual([])
   expect(useSiloStore.getState().pending).toBe(false)
-  expect(useSiloStore.getState().mutationError).toContain('HTTP 401')
+  expect(useSiloStore.getState().mutationError).toBe('권한이 없어 요청을 처리할 수 없습니다')
 })
 
 test('live threshold save waits for the server and refreshes persisted limits', async () => {
@@ -94,8 +94,8 @@ test('G1-F4 success then polling failure and elapsed time invalidate collection 
   expect(useSiloStore.getState().silos[0].sampleState).toBe('fresh')
   expect(useSiloStore.getState().silos[0].resourceGate).toBe('available')
   fail = true
-  await expect(useSiloStore.getState().refreshLive()).rejects.toThrow('HTTP 401')
-  expect(useSiloStore.getState().pollError).toContain('HTTP 401')
+  await expect(useSiloStore.getState().refreshLive()).rejects.toThrow('권한이 없어')
+  expect(useSiloStore.getState().pollError).toContain('권한이 없어')
   expect(useSiloStore.getState().silos[0].resourceGate).toBe('unknown')
   vi.setSystemTime(new Date('2026-10-19T00:02:00Z'))
   useSiloStore.getState().refreshObservationState()

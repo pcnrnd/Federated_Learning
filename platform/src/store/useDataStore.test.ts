@@ -9,7 +9,7 @@ test('live cleaning 401 preserves the previous result and exposes a failed save'
   useDataStore.getState().patchLiveDraft({ job_id: 'saved', recipe_name: 'r', group_id: 'g' })
   const before = useDataStore.getState().dataBySilo
   expect(await useDataStore.getState().createLiveJob()).toBe(false)
-  expect(useDataStore.getState().liveError).toContain('HTTP 401')
+  expect(useDataStore.getState().liveError).toBe('권한이 없어 요청을 처리할 수 없습니다')
   expect(useDataStore.getState().livePending).toBe(false)
   expect(useDataStore.getState().dataBySilo).toBe(before)
 })

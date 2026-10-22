@@ -208,8 +208,8 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     get().log(
       'system',
       enabled
-        ? '데모 데이터 시뮬레이션 활성화 — 데모 모드로 동작합니다.'
-        : '데모 데이터 시뮬레이션 비활성화 — 실서버 데이터 조회 모드입니다.',
+        ? '예시 데이터 시뮬레이션을 시작합니다.'
+        : '실서버 데이터 조회를 시작합니다.',
     )
   },
 

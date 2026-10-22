@@ -80,7 +80,7 @@ test('DEMO의 8개 메뉴는 같은 모드의 입력을 표시하고 서버를 �
     [(await import('@/views/ModelsView')).ModelsView, '프로젝트3'],
     [(await import('@/views/AnalyticsView')).AnalyticsView, '데이터 드리프트'],
     [(await import('@/views/VisualizationView')).VisualizationView, '사일로 × 라운드 참여 매트릭스'],
-    [(await import('@/views/LogsView')).LogsView, '데모 데이터'],
+    [(await import('@/views/LogsView')).LogsView, '예시 데이터 시뮬레이션'],
   ] as const
   for (const [View, label] of views) {
     const html = renderToStaticMarkup(<View />)
@@ -207,12 +207,12 @@ test('API503·빈 응답은 fixture를 만들지 않고 다른 API의 실서버 
   const { DataSourceStatus } = await import('@/components/layout/DataSourceStatus')
   expect(renderToStaticMarkup(<DataSourceStatus />)).toContain('서버 조회 실패')
   expect(models.getState().models[0].project).toBe(serverModel.name)
-  expect(silos.getState().silos[0].name).toBe('실서버 기관')
+  expect(silos.getState().silos[0].name).toBe('사일로1')
   expect(data.getState().jobs).toEqual([])
   vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/metrics?') ? { items: [], total: 0 } : []))))
   await pollLiveData()
   expect(mode.getState().liveStatus).toBe('empty')
-  expect(renderToStaticMarkup(<DataSourceStatus />)).toContain('서버가 빈 목록을 반환')
+  expect(renderToStaticMarkup(<DataSourceStatus />)).toContain('등록·실행된 데이터가 없습니다')
   expect(models.getState().models).toEqual([])
   expect(silos.getState().silos).toEqual([])
   expect(data.getState().dataBySilo).toEqual({})

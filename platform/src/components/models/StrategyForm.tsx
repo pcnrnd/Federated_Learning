@@ -71,7 +71,7 @@ export function StrategyForm({ modelId, packaged }: StrategyFormProps) {
         <h4>
           <i className="fa-solid fa-rocket" /> 배포 전략
         </h4>
-        {latest && <button type="button" className="btn" disabled={pending} onClick={loadSaved}>서버 설정 불러오기</button>}
+        {latest && <button type="button" className="model-action" disabled={pending} onClick={loadSaved}>서버 설정 불러오기</button>}
       </div>
 
       <div className="strategy-options">

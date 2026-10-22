@@ -90,7 +90,7 @@ test.each(['/api/deployments', '/api/serving-routes/actual/predict', '/api/shado
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: [{ loc: ['body', 'env'],
     msg: 'Value error, 환경변수 이름을 확인하세요', input: { SECRET: 'private-value' } }] }), { status: 422 })))
   const { apiPost } = await import('@/api/client')
-  await expect(apiPost(path, {})).rejects.toThrow('body.env')
+  await expect(apiPost(path, {})).rejects.toThrow('환경변수 이름을 확인하세요')
   await expect(apiPost(path, {})).rejects.not.toThrow('private-value')
 })
 

@@ -7,7 +7,7 @@ const counts = [120, 150, 180, 210, 240, 270]
 
 /** 기존 5종 차트와 같은 DTO. 시간·난수·서버 응답에 의존하지 않는 데모 입력이다. */
 export function demoVisualization(query: VizQuery): VizSnapshot {
-  const baseline = { model_name: query.modelName ?? '데모 모델', version: query.modelVersion ?? 'v1.0', feature: '측정 항목 A', bin_count: 5 }
+  const baseline = { model_name: query.modelName ?? '기준 모델', version: query.modelVersion ?? 'v1.0', feature: '측정 항목 A', bin_count: 5 }
   const key = baselineKey(baseline)
   return { query, failed: [], loading: [], data: {
     trend: { series: Object.fromEntries(silos.map((id, i) => [id, rounds.map((_, j) => ({

@@ -45,7 +45,7 @@ test('등록 401 실패는 기존 모델을 유지하고 화면 오류/대기 �
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"detail":"denied"}', { status: 401 })))
   expect(await store.getState().createLiveModel()).toBe(false)
   expect(store.getState().models).toBe(before)
-  expect(store.getState().liveModelError).toContain('HTTP 401')
+  expect(store.getState().liveModelError).toContain('권한이 없어 요청을 처리할 수 없습니다')
   expect(store.getState().liveModelPending).toBe(false)
 })
 

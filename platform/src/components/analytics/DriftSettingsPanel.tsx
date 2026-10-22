@@ -54,7 +54,7 @@ function DemoDriftSettingsPanel({ demoOnly }: { demoOnly?: boolean }) {
       {expanded && (
         <div className="drift-settings-body">
           {demoOnly && (
-            <p className="desc">데모 전용 임계치입니다. 실서버 PSI 정책은 아래 실제 비교 정책 섹션을 사용하세요.</p>
+            <p className="desc">실서버 PSI 정책은 아래 실제 비교 정책 섹션에서 설정하세요.</p>
           )}
           <div className="drift-settings-grid">
             <div className="control-group">
