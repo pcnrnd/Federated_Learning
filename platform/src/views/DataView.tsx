@@ -52,7 +52,7 @@ function LiveCleaningJobsTable() {
                   <td className="ta-right text-cyan">
                     {formatNumber(job.totalRowsIn)} → {formatNumber(job.totalRowsOut)}
                   </td>
-                  <td className="cleaning-jobs-counters">
+                  <td>
                     <CounterList counters={job.counters} />
                   </td>
                 </tr>
