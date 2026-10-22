@@ -2762,20 +2762,22 @@ span.dep-state-failed.dep-state-badge {
   color: var(--text-muted);
 }
 
-/* 정제 잡 표 — STEP 칩 칸이 나머지 칸을 밀어내지 않도록 너비를 나눈다 */
-.cleaning-jobs-table td {
-  vertical-align: top;
+/* 정제 잡 표 — 고정 열 배분. 긴 잡 ID·데이터셋 라벨은 칸 안에서 줄바꿈해 표 밖으로 밀지 않는다 */
+.cleaning-jobs-table {
+  table-layout: fixed;
 }
 
-.cleaning-jobs-table .model-version-cell {
-  min-width: 180px;
+.cleaning-jobs-table td {
+  vertical-align: top;
   overflow-wrap: anywhere;
 }
 
-.cleaning-jobs-counters {
-  width: 45%;
-  min-width: 280px;
-}
+.cleaning-jobs-table th:nth-child(1) { width: 17%; }
+.cleaning-jobs-table th:nth-child(2) { width: 14%; }
+.cleaning-jobs-table th:nth-child(3) { width: 12%; }
+.cleaning-jobs-table th:nth-child(4) { width: 10%; }
+.cleaning-jobs-table th:nth-child(5) { width: 13%; }
+.cleaning-jobs-table th:nth-child(6) { width: 34%; }
 
 .data-subhead {
   display: flex;
