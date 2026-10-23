@@ -15,6 +15,7 @@ import type {
   TrainingRoundSummary,
 } from '@/api/client'
 import type { SiloDataFields } from '@/store/useDataStore'
+import { registeredSiloNumber } from '@/lib/siloResources'
 import type {
   Algorithm,
   ChartPoint,
@@ -51,8 +52,8 @@ export function mapUsageToSilos(
       name: u.silo_id,
       endpoint: '(실서버)',
       collectIntervalSec: 0,
-      cpu: Math.round(u.cpu_pct),
-      mem: Math.round(u.mem_pct),
+      cpu: u.cpu_pct === null ? null : Math.round(u.cpu_pct),
+      mem: u.mem_pct === null ? null : Math.round(u.mem_pct),
       disk: Math.round(u.disk_pct ?? 0),
       thresholds: {
         cpu: limit?.cpu_pct_max ?? DEFAULT_THRESHOLDS.cpu,
@@ -110,12 +111,16 @@ export function mapModelsToVersions(
       id: modelKey(m.name, m.version),
       project: m.name,
       version: m.version,
-      status: running.has(modelKey(m.name, m.version)) ? 'deployed' : 'experimental',
+      status: m.status === 'archived' ? 'archived' : running.has(modelKey(m.name, m.version)) ? 'deployed' : 'experimental',
       // 서버 metadata.accuracy는 0~1 스케일 가정 (지표 API와 동일) → UI %
-      accuracy: Math.round((metaNumber(meta, 'accuracy') ?? 0) * 10000) / 100,
+      accuracy: metaNumber(meta, 'accuracy') === undefined ? null : Math.round(metaNumber(meta, 'accuracy')! * 10000) / 100,
       algorithm,
-      rounds: metaNumber(meta, 'rounds') ?? 0,
+      ...(ALGORITHMS.some((a) => a === meta.algorithm) ? {} : { algorithmRecorded: false }),
+      rounds: metaNumber(meta, 'rounds') ?? null,
       createdAt: m.created_at.slice(0, 10),
+      ...(typeof meta.artifact_id === 'string' ? { artifactId: meta.artifact_id } : {}),
+      ...(typeof meta.result_id === 'string' ? { resultId: meta.result_id } : {}),
+      ...(typeof meta.weights_sha256 === 'string' ? { weightsChecksum: meta.weights_sha256 } : {}),
       ...note,
     }
   })
@@ -131,6 +136,21 @@ export function mapApiDeployments(deployments: readonly DeploymentEntryApi[]): D
     targetSiloIds: d.target_node_ids.map((n) => siloIdToNumber(n, fallbackIndex++)),
     state: DEPLOY_STATE_MAP[d.status],
     ts: d.created_at.slice(11, 19),
+    targetNodeIds: d.target_node_ids,
+    env: d.configuration?.env,
+    inferencePort: d.configuration?.inference_port,
+    probeInputs: d.configuration?.probe_inputs,
+    intervalSec: d.interval_seconds ?? d.configuration?.interval_seconds,
+    verifiedAt: d.verified_at ?? undefined,
+    imageId: d.expected_image_id ?? undefined,
+    targets: d.target_results,
+    isSchedule: d.is_schedule,
+    scheduleActive: d.schedule_active,
+    nextDueAt: d.next_due_at ?? undefined,
+    occurrence: d.occurrence,
+    error: d.error ?? undefined,
+    cleanupPending: d.cleanup_pending,
+    previousDeploymentId: d.previous_deployment_id ?? undefined,
   }))
 }
 
@@ -145,14 +165,13 @@ export interface LiveCleaningMapped {
  */
 export function mapCleaningJobs(jobs: readonly CleaningJobApi[]): LiveCleaningMapped {
   const dataBySilo: Record<number, SiloDataFields> = {}
-  let fallbackIndex = 0
   for (const job of jobs) {
     for (const shard of job.shards) {
-      const id = siloIdToNumber(shard.silo_id, fallbackIndex++)
+      const id = registeredSiloNumber(shard.silo_id)
       if (dataBySilo[id]) continue // 더 최신 잡의 샤드가 이미 반영됨
       dataBySilo[id] = {
-        cleansePct: shard.status === 'completed' ? 100 : 0,
-        shardCount: 1, // 현 백엔드는 잡당 사일로 1샤드
+        cleansePct: shard.status === 'completed' ? 100 : Math.min(99, Math.floor(100 * (shard.processed_units ?? 0) / Math.max(1, shard.total_units ?? 0))),
+        shardCount: job.partitions ?? 1,
         records: shard.rows_in,
         cleanseStatus: shard.status,
         stepCounters: shard.step_counters,
@@ -170,6 +189,12 @@ export function mapCleaningJobs(jobs: readonly CleaningJobApi[]): LiveCleaningMa
       totalRowsOut: j.total_rows_out,
       counters: j.aggregated_counters,
       updatedAt: j.updated_at,
+      scheduledAt: j.scheduled_at, intervalSeconds: j.interval_seconds,
+      dependsOn: j.depends_on ?? [], occurrence: j.occurrence ?? 1, generation: j.generation ?? 0,
+      progress: Math.floor(j.shards.reduce((sum, shard) => sum + (shard.status === 'completed' ? 100
+        : Math.min(99, 100 * (shard.processed_units ?? 0) / Math.max(1, shard.total_units ?? 0))), 0) / Math.max(1, j.shards.length)),
+      attempts: j.shards.map((s) => `${s.silo_id}: ${s.attempt ?? 0}회 (${s.stage ?? s.status})`).join(' · '),
+      errors: j.shards.filter((s) => s.error).map((s) => `${s.silo_id}: ${s.error}`), events: j.events ?? [],
     })),
   }
 }
@@ -200,13 +225,17 @@ export function mapMetricsToMonitorPoints(
   throughput: readonly MetricSample[],
   latency: readonly MetricSample[],
 ): MonitorPoint[] {
-  const rps = averageByTimestamp(throughput)
-  const ms = averageByTimestamp(latency)
-  const count = Math.max(rps.length, ms.length)
-  return Array.from({ length: count }, (_, i) => ({
+  const means = (samples: readonly MetricSample[]) => {
+    const buckets = new Map<string, number[]>()
+    for (const s of samples) buckets.set(s.timestamp, [...(buckets.get(s.timestamp) ?? []), s.value])
+    return new Map([...buckets].map(([ts, values]) => [ts, Math.round(10 * values.reduce((a, b) => a + b, 0) / values.length) / 10]))
+  }
+  const rps = means(throughput)
+  const ms = means(latency)
+  return [...new Set([...rps.keys(), ...ms.keys()])].sort().map((ts, i) => ({
     round: i,
-    throughput: Math.round((rps[i] ?? 0) * 10) / 10,
-    latency: Math.round((ms[i] ?? 0) * 10) / 10,
+    throughput: rps.get(ts) ?? null,
+    latency: ms.get(ts) ?? null,
     drift: 0, // 드리프트 조회는 P0 범위 밖
   }))
 }

@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useRef } from 'react'
 import { Line } from 'react-chartjs-2'
 import { MONITOR_PREVIEW_POINTS } from '@/constants/simulation'
+import { AnalyticsChartFrame } from '@/components/analytics/AnalyticsChartFrame'
 import { getChartTheme, type ChartTheme } from '@/lib/chartTheme'
 import { useSimulationStore } from '@/store/useSimulationStore'
 
@@ -136,15 +137,29 @@ export function MonitorChart() {
     return () => window.cancelAnimationFrame(frame)
   }, [monitorPoints, showPreview])
 
+  const overlay =
+    !mockEnabled && monitorPoints.length === 0
+      ? '서버에서 수집된 처리량·지연 지표가 없습니다. 연결 상태와 실제 예측 요청을 확인하세요.'
+      : null
+
+  const chartData =
+    overlay !== null
+      ? {
+          labels: [0],
+          datasets: [
+            {
+              label: '처리량 (req/s)',
+              data: [null],
+              borderColor: 'rgba(168, 85, 247, 0.2)',
+              yAxisID: 'yThroughput',
+            },
+          ],
+        }
+      : data
+
   return (
-    !mockEnabled && monitorPoints.length === 0 ? (
-      <div className="deploy-empty">
-        표시할 운영 지표가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
-      </div>
-    ) : (
-    <div className="analytics-chart-box">
-      <Line ref={chartRef} data={data} options={options} />
-    </div>
-    )
+    <AnalyticsChartFrame overlayMessage={overlay}>
+      <Line ref={chartRef} data={chartData} options={options} />
+    </AnalyticsChartFrame>
   )
 }

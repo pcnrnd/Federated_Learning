@@ -130,13 +130,24 @@ describe('mapModelsToVersions', () => {
       note: '메모',
     })
     // 알 수 없는 metadata는 기본값으로 폴백, running 배포 없음 → 실험
-    expect(versions[1]).toMatchObject({ status: 'experimental', algorithm: 'fedavg', accuracy: 0 })
+    expect(versions[1]).toMatchObject({ status: 'experimental', algorithm: 'fedavg', algorithmRecorded: false, accuracy: null, rounds: null })
   })
 })
 
 describe('mapApiDeployments', () => {
-  test('maps ids, states and target silos', () => {
-    const [dep] = mapApiDeployments([deploymentEntry({ status: 'rolled_back' })])
+  test('maps ids, states, target results and persisted deployment configuration exactly', () => {
+    const targets: NonNullable<DeploymentEntryApi['target_results']> = {
+      'silo-1': { status: 'running', endpoint: 'http://silo-1:31001', image_id: 'sha256:actual' },
+      'silo-2': { status: 'failed', error_code: 'HTTPError' },
+    }
+    const [dep] = mapApiDeployments([deploymentEntry({ status: 'rolled_back',
+      configuration: { model_name: 'demo-alpha', version: '1.0.0', strategy: 'realtime',
+        target_node_ids: ['silo-1', 'silo-2'], env: { APP: 'preserved' }, inference_port: 8000,
+        probe_inputs: [[1, 2]], interval_seconds: 30 },
+      interval_seconds: 45, expected_image_id: 'sha256:actual', verified_at: 'observed-verify',
+      target_results: targets, is_schedule: true, schedule_active: false, next_due_at: 'observed-due',
+      occurrence: 2, error: 'actual failure', cleanup_pending: true, previous_deployment_id: 'dep-before',
+    })])
     expect(dep).toEqual({
       id: 'dep-abc',
       modelId: 'demo-alpha@1.0.0',
@@ -145,7 +156,39 @@ describe('mapApiDeployments', () => {
       targetSiloIds: [1, 2],
       state: 'rolled_back',
       ts: '08:45:12',
+      targetNodeIds: ['silo-1', 'silo-2'],
+      env: { APP: 'preserved' },
+      inferencePort: 8000,
+      probeInputs: [[1, 2]],
+      intervalSec: 45,
+      verifiedAt: 'observed-verify',
+      imageId: 'sha256:actual',
+      targets,
+      isSchedule: true,
+      scheduleActive: false,
+      nextDueAt: 'observed-due',
+      occurrence: 2,
+      error: 'actual failure',
+      cleanupPending: true,
+      previousDeploymentId: 'dep-before',
     })
+  })
+
+  test('absent optional server fields stay undefined rather than fabricated deployment facts', () => {
+    const [dep] = mapApiDeployments([deploymentEntry()])
+    expect(dep.targetNodeIds).toEqual(['silo-1', 'silo-2'])
+    for (const key of ['env', 'inferencePort', 'probeInputs', 'intervalSec', 'verifiedAt', 'imageId',
+      'targets', 'isSchedule', 'scheduleActive', 'nextDueAt', 'occurrence', 'error', 'cleanupPending',
+      'previousDeploymentId'] as const) {
+      expect(dep[key]).toBeUndefined()
+    }
+  })
+
+  test('schedule interval falls back to the saved command only when the top-level value is absent', () => {
+    const [dep] = mapApiDeployments([deploymentEntry({ interval_seconds: null, configuration: {
+      model_name: 'demo-alpha', version: '1.0.0', strategy: 'batch', target_node_ids: ['silo-1'], interval_seconds: 30,
+    } })])
+    expect(dep.intervalSec).toBe(30)
   })
 
   test('running maps to done (rollback-eligible)', () => {
@@ -185,6 +228,19 @@ const cleaningJob = (overrides: Partial<CleaningJobApi> = {}): CleaningJobApi =>
 })
 
 describe('mapCleaningJobs', () => {
+  test('uses real stage progress, retry status, partitions and distinct registered silo identities', () => {
+    const input = cleaningJob({ status: 'running', partitions: 4, occurrence: 2, generation: 1,
+      depends_on: ['pre'], events: [{ event_id: 'failed:1', kind: 'failed', at: 'now', message: '최종 실패' }],
+      shards: [{ shard_index: 0, silo_id: 'silo-1', status: 'running', rows_in: 0, rows_out: 0,
+        step_counters: {}, processed_units: 2, total_units: 4, attempt: 1 },
+      { shard_index: 1, silo_id: 'silo-01', status: 'retry_wait', rows_in: 0, rows_out: 0,
+        step_counters: {}, processed_units: 0, total_units: 4, attempt: 2, error: '일시 실패' }] })
+    const result = mapCleaningJobs([input])
+    expect(Object.keys(result.dataBySilo)).toHaveLength(2)
+    expect(Object.values(result.dataBySilo).map((s) => s.cleansePct).sort()).toEqual([0, 50])
+    expect(Object.values(result.dataBySilo).every((s) => s.shardCount === 4)).toBe(true)
+    expect(result.jobs[0]).toMatchObject({ progress: 25, occurrence: 2, generation: 1, dependsOn: ['pre'], errors: ['silo-01: 일시 실패'], events: input.events })
+  })
   test('maps shard status/counters into per-silo data and job summaries', () => {
     const { dataBySilo, jobs } = mapCleaningJobs([cleaningJob()])
 
@@ -197,7 +253,7 @@ describe('mapCleaningJobs', () => {
     })
     expect(dataBySilo[2]).toMatchObject({ cleansePct: 0, cleanseStatus: 'running' })
 
-    expect(jobs).toEqual([
+    expect(jobs).toMatchObject([
       {
         jobId: 'job-1',
         recipe: 'basic@1.0.0',
@@ -255,7 +311,7 @@ describe('mapMetricsToChartPoints', () => {
 })
 
 describe('mapMetricsToMonitorPoints', () => {
-  test('pairs throughput and latency series by round index', () => {
+  test('pairs actual timestamps and preserves an uncollected metric as null', () => {
     const points = mapMetricsToMonitorPoints(
       [sample('throughput_rps', 51.26, '2026-08-21T00:00:00Z')],
       [
@@ -266,7 +322,7 @@ describe('mapMetricsToMonitorPoints', () => {
 
     expect(points).toEqual([
       { round: 0, throughput: 51.3, latency: 130.5, drift: 0 },
-      { round: 1, throughput: 0, latency: 128.1, drift: 0 },
+      { round: 1, throughput: null, latency: 128.1, drift: 0 },
     ])
   })
 })

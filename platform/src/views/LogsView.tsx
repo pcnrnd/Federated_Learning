@@ -7,6 +7,7 @@ export function LogsView() {
       <div className="glass-panel content-card full-card logs-full-panel">
         <div className="card-header-logs">
           <div className="logs-title-area">
+            <p className="desc">현재 모드의 브라우저 관측·작업 알림입니다. 서버 전체 로그를 대신하지 않습니다.</p>
             <h3>
               <i className="fa-solid fa-terminal" /> 시스템 연합 학습 오케스트레이터 실시간 로그
             </h3>
