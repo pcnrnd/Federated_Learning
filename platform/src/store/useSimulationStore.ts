@@ -48,10 +48,14 @@ export interface SimulationStore {
   activeTab: TabId
   theme: ThemeMode
   /**
-   * 목 데이터 시뮬레이션 on/off.
+   * 데모 데이터 시뮬레이션 on/off.
    * false면 하트비트 로그·학습 시작이 멈춘다 — 실서버 연동 어댑터가 붙을 자리.
    */
   mockEnabled: boolean
+  dataGeneration: number
+  liveStatus: 'loading' | 'ready' | 'empty' | 'error'
+  liveError: string | null
+  setLiveStatus: (status: SimulationStore['liveStatus'], error?: string | null) => void
 
   // Actions: config
   setAlgorithm: (algorithm: Algorithm) => void
@@ -138,7 +142,7 @@ function applyTheme(theme: ThemeMode): void {
   }
 }
 
-// --- 목 데이터 스위치 영속화 -------------------------------------------------
+// --- 데모 데이터 스위치 영속화 -------------------------------------------------
 const MOCK_STORAGE_KEY = 'fed-mock-enabled'
 
 /** 저장된 값이 없으면 꺼짐 — 기본은 실데이터(라이브) 모드, 데모는 설정에서 켠다. */
@@ -161,6 +165,7 @@ function initialChartPoint(): ChartPoint {
   return { round: 0, accuracy: INITIAL_GLOBAL.accuracy, loss: INITIAL_GLOBAL.loss }
 }
 
+const initialDemo = readInitialMockEnabled()
 export const useSimulationStore = create<SimulationStore>((set, get) => ({
   config: { ...DEFAULT_CONFIG },
 
@@ -168,33 +173,43 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   isPaused: false,
   currentRound: 0,
 
-  nodes: createInitialNodes(),
-  global: { ...INITIAL_GLOBAL },
+  nodes: initialDemo ? createInitialNodes() : [],
+  global: initialDemo ? { ...INITIAL_GLOBAL } : { accuracy: 0, loss: 0, accumulatedTraffic: 0 },
 
   packetDirection: 'idle',
 
-  chartPoints: [initialChartPoint()],
+  chartPoints: initialDemo ? [initialChartPoint()] : [],
   monitorPoints: [],
 
-  logs: [SYSTEM_INIT_LOG],
+  logs: initialDemo ? [SYSTEM_INIT_LOG] : [],
   logFilter: 'all',
 
   activeTab: 'dashboard',
   theme: readInitialTheme(),
-  mockEnabled: readInitialMockEnabled(),
+  mockEnabled: initialDemo,
+  dataGeneration: 0,
+  liveStatus: 'loading', liveError: null,
+  setLiveStatus: (liveStatus, liveError = null) => set({ liveStatus, liveError }),
 
   setMockEnabled: (enabled) => {
+    if (enabled === get().mockEnabled) return
     try {
       window.localStorage.setItem(MOCK_STORAGE_KEY, String(enabled))
     } catch {
       // 저장 실패는 무시 — 세션 내 전환은 정상 동작
     }
-    set({ mockEnabled: enabled })
+    // 세대 변경으로 이전 타이머/응답을 무효화하고 구독자를 동기적으로 비운다.
+    set((state) => ({ mockEnabled: enabled, dataGeneration: state.dataGeneration + 1,
+      isRunning: false, isPaused: false, currentRound: 0, packetDirection: 'idle',
+      nodes: enabled ? createInitialNodes() : [],
+      global: enabled ? { ...INITIAL_GLOBAL } : { accuracy: 0, loss: 0, accumulatedTraffic: 0 },
+      chartPoints: enabled ? [initialChartPoint()] : [], monitorPoints: [], logs: [], logFilter: 'all',
+      liveStatus: 'loading', liveError: null }))
     get().log(
       'system',
       enabled
-        ? '목 데이터 시뮬레이션 활성화 — 데모 모드로 동작합니다.'
-        : '목 데이터 시뮬레이션 비활성화 — 실서버 연동 대기 모드입니다.',
+        ? '예시 데이터 시뮬레이션을 시작합니다.'
+        : '실서버 데이터 조회를 시작합니다.',
     )
   },
 
@@ -212,7 +227,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       logs: [],
     }),
 
-  applyLiveSnapshot: (partial) => set(partial),
+  applyLiveSnapshot: (partial) => { if (!get().mockEnabled) set(partial) },
 
   setAlgorithm: (algorithm) =>
     set((state) => ({ config: { ...state.config, algorithm } })),
@@ -240,7 +255,8 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   startRunning: () => set({ isRunning: true, isPaused: false }),
   pauseRunning: () => set({ isPaused: true }),
 
-  reset: () =>
+  reset: () => {
+    if (!get().mockEnabled) return
     set((state) => ({
       isRunning: false,
       isPaused: false,
@@ -264,7 +280,8 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       packetDirection: 'idle',
       chartPoints: [initialChartPoint()],
       monitorPoints: [],
-    })),
+    }))
+  },
 
   incrementRound: () =>
     set((state) => ({

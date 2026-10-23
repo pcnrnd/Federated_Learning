@@ -55,8 +55,9 @@ export const TOPOLOGY = {
   childGapY: 126,
   /** 최하단 여백 (노드명 라벨 + 저장소 계층 공간 포함) */
   marginBottom: 96,
-  /** 노드 반지름 — viewBox가 카드 폭에 맞춰 축소되므로 실제 렌더 크기보다 크게 잡는다 */
-  serverRadius: 44,
+  /** 노드 반지름 — viewBox가 카드 폭에 맞춰 축소되므로 실제 렌더 크기보다 크게 잡는다.
+   *  서버 지름은 사일로 지름의 1.5배 이하로 둔다(시각 균형). */
+  serverRadius: 36,
   siloRadius: 24,
   childRadius: 18,
   /**

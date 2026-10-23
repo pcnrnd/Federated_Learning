@@ -1,6 +1,7 @@
 import { DeploymentSection } from '@/components/models/DeploymentSection'
 import { MODELS_DEPLOY_ANCHOR, ModelRegistry } from '@/components/models/ModelRegistry'
 import { PackagingSection } from '@/components/models/PackagingSection'
+import { ServingRoutesPanel } from '@/components/models/ServingRoutesPanel'
 import { scrollToElement } from '@/lib/scroll'
 
 const MODELS_REGISTRY_ANCHOR = 'models-registry-card'
@@ -60,6 +61,7 @@ export function ModelsView() {
         </div>
         <div className="card-body">
           <DeploymentSection />
+          <ServingRoutesPanel />
         </div>
       </div>
     </div>

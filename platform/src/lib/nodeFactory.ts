@@ -12,18 +12,19 @@ export interface NodeIdentity {
 /**
  * 학습 참여자 한 명의 초기 런타임 상태를 만든다.
  * 정체성(id·이름·상위)은 호출자가 주고, 동적 학습 지표는 0/idle에서 시작하며
- * 데이터 크기·지연·학습 계수는 목 시뮬레이션용 난수로 채운다.
+ * 데이터 크기·지연·학습 계수는 ID별 고정 데모 입력으로 채운다.
  * 1단 사일로와 하위 노드가 같은 규칙을 공유한다.
  */
 export function createNode(identity: NodeIdentity): NodeState {
-  const normalPct = Math.floor(Math.random() * 20) + 48
+  const seed = Math.abs(identity.id)
+  const normalPct = (seed * 7) % 20 + 48
   return {
     id: identity.id,
     name: identity.name,
     shortName: identity.shortName,
-    size: Math.floor(Math.random() * 850) + 450,
-    delay: Math.floor(Math.random() * 110) + 12,
-    mult: 0.95 + Math.random() * 0.1,
+    size: (seed * 137) % 850 + 450,
+    delay: (seed * 19) % 110 + 12,
+    mult: 0.95 + (seed * 17) % 100 / 1000,
     acc: 0,
     loss: 0,
     cpu: 0,

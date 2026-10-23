@@ -2,8 +2,11 @@ import { DriftCard } from '@/components/analytics/DriftCard'
 import { DriftSettingsPanel } from '@/components/analytics/DriftSettingsPanel'
 import { MonitorChart } from '@/components/analytics/MonitorChart'
 import { PerformanceChart } from '@/components/analytics/PerformanceChart'
+import { useEffect } from 'react'
+import { useMonitoringStore } from '@/store/useMonitoringStore'
 
 export function AnalyticsView() {
+  useEffect(() => useMonitoringStore.getState().observeLive(), [])
   return (
     <div className="tab-pane">
       <div className="glass-panel content-card full-card">

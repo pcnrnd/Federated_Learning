@@ -97,15 +97,27 @@ export interface ModelVersion {
   project: string
   version: string
   status: ModelStatus
-  accuracy: number
+  accuracy: number | null
   algorithm: Algorithm
-  rounds: number
+  algorithmRecorded?: boolean
+  rounds: number | null
   createdAt: string
   note?: string
+  artifactId?: string
+  resultId?: string
+  weightsChecksum?: string
+}
+
+export interface LiveModelDraft {
+  mode: 'training' | 'artifact'
+  round_id: string
+  version: string
+  name: string
+  weights_path: string
 }
 
 /** 모델 패키징(컨테이너화) 진행 상태 */
-export type PackageState = 'idle' | 'building' | 'built'
+export type PackageState = 'idle' | 'building' | 'built' | 'failed' | 'unknown'
 
 /** 배포 전략: 일괄 / 실시간 / 에지 */
 export type DeployStrategy = 'batch' | 'realtime' | 'edge'
@@ -119,6 +131,102 @@ export interface ModelPackage {
   runtime: string
   imageTag: string
   builtAt?: string
+  imageDigest?: string
+  artifactId?: string
+  weightsChecksum?: string
+  error?: string
+}
+
+export interface ServingGate {
+  min_pairs: number
+  window_seconds: number
+  max_age_seconds: number
+  max_error_rate: number
+  max_mean_abs_difference: number
+  max_latency_ratio: number | null
+}
+
+export interface ServingRoute {
+  route_id: string
+  primary_deployment_id: string
+  shadow_deployment_id: string | null
+  previous_deployment_id: string | null
+  shadow_id: string | null
+  status: 'active' | 'promoted' | 'rolled_back' | 'closed'
+  generation: number
+  mirror_pct: number
+  comparison_gate: ServingGate | null
+  comparison_started_at: string | null
+  created_at: string
+  changed_at: string
+  cleanup_deployment_ids: string[]
+  cleanup_pending: boolean
+  error: string | null
+}
+
+export interface ServingRoleSummary {
+  requests: number
+  completed_requests?: number
+  successes: number
+  errors: number
+  interrupted: number
+  measured_requests: number
+  mean_latency_ms: number | null
+  throughput_rps: number | null
+}
+
+export interface ServingComparison {
+  route_id: string
+  generation: number
+  window_start: string
+  window_end: string
+  window_seconds: number
+  request_count: number
+  pending: number
+  interrupted: number
+  pairs: number
+  difference_count: number
+  mean_abs_difference: number | null
+  latest_pair_at: string | null
+  roles: Record<string, ServingRoleSummary>
+  paired_roles: Record<string, ServingRoleSummary>
+  gate_ready: boolean
+  gate_reasons: string[]
+  gate: ServingGate | null
+}
+
+export interface ServingEvent {
+  request_id: string
+  route_id: string
+  generation: number
+  started_at: string
+  completed_at: string | null
+  status: 'pending' | 'completed' | 'interrupted'
+  input_count: number
+  paired: boolean
+  mean_abs_difference: number | null
+  comparison_error: string | null
+  roles: Record<string, { deployment_id: string; model_name: string; version: string; node_id: string | null;
+    image_id: string | null; status: 'ok' | 'error' | 'interrupted'; duration_ms: number | null; error_code: string | null }>
+}
+
+export interface ServingGateDraft {
+  min_pairs: string
+  window_seconds: string
+  max_age_seconds: string
+  max_error_rate: string
+  max_mean_abs_difference: string
+  max_latency_ratio: string
+}
+
+export interface ServingShadow {
+  shadow_id: string
+  route_id: string | null
+  shadow_deployment_id: string
+  shadow_version: string
+  status: 'initializing' | 'active' | 'promoted' | 'aborted' | 'rolled_back' | 'failed'
+  cleanup_pending: boolean
+  error: string | null
 }
 
 export interface Deployment {
@@ -133,27 +241,55 @@ export interface Deployment {
   intervalSec?: number
   state: DeployState
   ts: string
+  targetNodeIds?: string[]
+  env?: Record<string, string>
+  inferencePort?: number
+  probeInputs?: unknown[]
+  verifiedAt?: string
+  imageId?: string
+  targets?: Record<string, { status: 'pending' | 'launching' | 'running' | 'failed'; endpoint?: string | null;
+    image_id?: string | null; weights_checksum?: string | null; error_code?: string | null }>
+  isSchedule?: boolean
+  scheduleActive?: boolean
+  nextDueAt?: string
+  occurrence?: number
+  error?: string
+  cleanupPending?: boolean
+  previousDeploymentId?: string
 }
 
 // --- 6.6 사일로 리소스 모니터링 + 등록 ---
 
 export interface SiloThresholds {
-  cpu: number
-  mem: number
-  disk: number
+  cpu: number | null
+  mem: number | null
+  disk: number | null
 }
+
+export type ResourceHistoryMetric = keyof SiloThresholds | 'cpu_cores' | 'mem_used_bytes'
 
 export interface Silo {
   id: number
   name: string
   endpoint: string
   collectIntervalSec: number
-  cpu: number
-  mem: number
-  disk: number
+  cpu: number | null
+  mem: number | null
+  disk: number | null
   thresholds: SiloThresholds
   /** 상위 사일로 id. undefined면 1단 사일로. `NodeState.parentId`와 동일 의미 */
   parentId?: number
+  serverId?: string
+  parentServerId?: string
+  lastSampleAt?: string
+  sampleState?: 'fresh' | 'stale' | 'uncollected' | 'unsupported' | 'unverified'
+  measurementScope?: Record<string, string>
+  unavailable?: Record<string, string>
+  cpuCores?: number | null
+  memUsedBytes?: number | null
+  capabilities?: Record<string, boolean>
+  resourceGate?: 'unknown' | 'unmonitored' | 'available' | 'over_budget'
+  gpuThreshold?: number | null
 }
 
 // --- 6.4 사일로 데이터 정제 · 샤딩 ---
@@ -168,7 +304,7 @@ export interface SiloData {
   /** 원본 레코드 수 */
   records: number
   /** 실서버 정제 샤드 상태. undefined면 목 시드 데이터 */
-  cleanseStatus?: 'pending' | 'running' | 'completed' | 'failed'
+  cleanseStatus?: 'pending' | 'running' | 'retry_wait' | 'completed' | 'failed'
   /** 실서버 step별 정제 카운터 (해당 사일로 샤드분) */
   stepCounters?: Record<string, number>
 }
@@ -188,6 +324,15 @@ export interface CleaningJobSummary {
   /** step별 합산 카운터 (예: {drop_nulls: 20}) */
   counters: Record<string, number>
   updatedAt: string
+  scheduledAt?: string | null
+  intervalSeconds?: number | null
+  dependsOn?: string[]
+  occurrence?: number
+  generation?: number
+  progress?: number
+  attempts?: string
+  errors?: string[]
+  events?: Array<{ event_id: string; message: string; at: string; kind: string }>
 }
 
 // --- 6.5 배치 스케줄러 · 데이터 파이프라인 ---
@@ -211,9 +356,147 @@ export interface Job {
 export interface MonitorPoint {
   round: number
   /** 처리량 (req/s) */
-  throughput: number
+  throughput: number | null
   /** 처리시간 (ms) */
-  latency: number
+  latency: number | null
   /** 데이터 드리프트 점수 (0~1) */
   drift: number
+}
+
+/** 실제 분포의 원본 값은 수신하지 않는다. PSI는 백분율이 아니다. */
+export interface DistributionConfig {
+  config_id: string
+  model_name: string
+  version: string
+  node_ids: string[]
+  feature: string
+  bin_edges: number[]
+  window_seconds: number
+}
+
+export interface DistributionPolicyInput {
+  config_id: string
+  warning_threshold: number
+  critical_threshold: number
+  min_valid_count: number
+  max_age_seconds: number
+}
+
+export interface DistributionPolicy extends DistributionPolicyInput {
+  policy_id: string
+  policy_version: number
+  created_at: string
+  resolution: 'next_valid_stable'
+}
+
+export type DriftAvailability = 'ready' | 'unconfigured' | 'missing_baseline' | 'missing_current' | 'stale' | 'invalid' | 'insufficient'
+
+export interface DriftObservation {
+  event_id: string
+  config_id: string
+  node_id: string
+  model_name: string
+  version: string
+  feature: string
+  state: DriftAvailability
+  reason: string
+  psi: number | null
+  severity: 'stable' | 'warning' | 'critical' | null
+  policy: DistributionPolicy | null
+  baseline_id: string | null
+  baseline_report_id: string | null
+  current_report_id: string | null
+  baseline_at: string | null
+  current_at: string | null
+  window_start: string | null
+  window_end: string | null
+  baseline_window_start: string | null
+  baseline_window_end: string | null
+  baseline_total_count: number | null
+  baseline_valid_count: number | null
+  baseline_excluded_count: number | null
+  current_total_count: number | null
+  current_valid_count: number | null
+  current_excluded_count: number | null
+  bin_edges: number[]
+  baseline_bin_counts: number[] | null
+  current_bin_counts: number[] | null
+  evaluated_at: string
+  basis_revision: number
+}
+
+export interface DistributionAlert {
+  alert_id: string
+  event_id: string
+  config_id: string
+  node_id: string
+  model_name: string
+  version: string
+  feature: string
+  policy_id: string
+  policy_version: number
+  severity: 'stable' | 'warning' | 'critical'
+  cause: DriftAvailability
+  psi: number | null
+  message: string
+  status: 'open' | 'acked' | 'resolved'
+  triggered_at: string
+  acked_at: string | null
+  resolved_at: string | null
+  resolved_by_event_id: string | null
+}
+
+export interface DistributionOverview {
+  configs: DistributionConfig[]
+  items: DriftObservation[]
+  alerts: DistributionAlert[]
+}
+export interface RetrainingConfigInput {
+  config_id: string
+  policy_id: string
+  group_id: string
+  dataset_label: string
+  max_rounds: number
+  enabled: boolean
+  auto_enabled: boolean
+  cleaning?: { max_attempts: number; retry_backoff_seconds: number; timeout_seconds: number; partitions: number; parallelism: number }
+  learning?: { l2: number; step_size: number; steps: number }
+  worker_endpoints?: Record<string, string>
+}
+
+export interface RetrainingConfig {
+  retrain_config_id: string
+  config_version: number
+  error_code?: string | null
+  definition: RetrainingConfigInput & { model_name: string; version: string }
+}
+
+export interface RetrainingOption {
+  config_id: string
+  model_name: string
+  version: string
+  feature: string
+  policy_id: string | null
+}
+
+export interface RetrainingEvent {
+  event_id: string
+  request_id?: string
+  retrain_config_id: string
+  status: string
+  automatic: boolean
+  error_code: string | null
+  created_at: string
+  updated_at: string
+  cleaning_request: { job_id: string }
+  training_request: { job_id: string; model_name: string; version: string }
+  round_ids: string[]
+  registered_model: { name: string; version: string; weights_sha256: string; result_id: string; round_id: string } | null
+}
+
+export interface RetrainingOverview {
+  configs: RetrainingConfig[]
+  events: RetrainingEvent[]
+  options: RetrainingOption[]
+  groups: Array<{ group_id: string; members: number }>
 }

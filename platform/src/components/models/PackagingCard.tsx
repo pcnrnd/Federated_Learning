@@ -12,21 +12,25 @@ const PACKAGE_LABEL: Record<PackageState, string> = {
   idle: '대기',
   building: '빌드 중',
   built: '빌드됨',
+  failed: '빌드 실패',
+  unknown: '빌드 결과 미확인',
 }
 
 const PACKAGE_CLASS: Record<PackageState, string> = {
   idle: 'pkg-badge-idle',
   building: 'pkg-badge-building',
   built: 'pkg-badge-built',
+  failed: 'pkg-badge-idle',
+  unknown: 'pkg-badge-idle',
 }
 
 export function PackagingCard({ model, pkg }: PackagingCardProps) {
   const buildPackage = useModelStore((s) => s.buildPackage)
-  const [runtime, setRuntime] = useState<string>(pkg?.runtime ?? RUNTIME_OPTIONS[0])
+  const [runtime, setRuntime] = useState<string>(pkg?.runtime || RUNTIME_OPTIONS[0])
 
   // 모델 전환 시 해당 패키지의 런타임을 반영
   useEffect(() => {
-    if (pkg?.runtime) setRuntime(pkg.runtime)
+    setRuntime(pkg?.runtime || RUNTIME_OPTIONS[0])
   }, [pkg?.runtime, model.id])
 
   const state: PackageState = pkg?.state ?? 'idle'
@@ -44,13 +48,16 @@ export function PackagingCard({ model, pkg }: PackagingCardProps) {
       <dl className="deploy-meta">
         <div>
           <dt>이미지 태그</dt>
-          <dd className="mono">{pkg?.imageTag ?? '미생성'}</dd>
+          <dd className="mono">{pkg?.imageTag || '미생성'}</dd>
         </div>
         <div>
           <dt>빌드 시각</dt>
           <dd className="mono">{pkg?.builtAt ?? '—'}</dd>
         </div>
       </dl>
+      {pkg?.imageDigest && <p className="mono">이미지 digest: {pkg.imageDigest}</p>}
+      {pkg?.weightsChecksum && <p className="mono">가중치 checksum: {pkg.weightsChecksum}</p>}
+      {pkg?.error && <p role="alert">{pkg.error}</p>}
 
       <div className="control-group">
         <label htmlFor="pkg-runtime">컨테이너 런타임</label>
