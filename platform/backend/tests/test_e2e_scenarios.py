@@ -5,14 +5,13 @@
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 from fastapi.testclient import TestClient
 
 from config.server_manager import save_servers
+from g5_helpers import IMAGE, IDENTITY, setup_world
 from models.monitoring_schemas import MetricIngest
-from services import metric_store
+from services import deployment_runtime, metric_store
 
 
 @pytest.fixture()
@@ -46,16 +45,6 @@ def seeded_world(tmp_path):
     weights = tmp_path / "e2e-model.pt"
     weights.write_bytes(b"e2e-weights")
     return {"weights_path": str(weights)}
-
-
-def _fake_docker_client() -> MagicMock:
-    client = MagicMock()
-    container = MagicMock()
-    container.id = "e2e-container-id"
-    container.short_id = "e2e"
-    client.containers.create.return_value = container
-    client.images.get.return_value = MagicMock()
-    return client
 
 
 @pytest.mark.unit
@@ -136,9 +125,12 @@ def test_e2e_training_round_lifecycle(client, seeded_world):
 
 
 @pytest.mark.unit
-def test_e2e_model_register_version_deploy_rollback(client, seeded_world):
-    """모델 등록 → 버전 추가 → 배포 → 롤백."""
+def test_e2e_model_register_version_deploy_rollback(client, seeded_world, tmp_path, monkeypatch):
+    """실제 API/등록·배포·복원 원장 흐름. 프레임워크/daemon/health는 단위 대역이다."""
     wp = seeded_world["weights_path"]
+    setup_world(tmp_path, monkeypatch)
+    monkeypatch.setattr(deployment_runtime, "pinned_package", lambda model, _request:
+        (IMAGE, {**IDENTITY, "model": model.name, "version": model.version}))
 
     v1 = client.post(
         "/api/models",
@@ -170,41 +162,43 @@ def test_e2e_model_register_version_deploy_rollback(client, seeded_world):
     assert versions.status_code == 200
     assert len(versions.json()) == 2
 
-    fake = _fake_docker_client()
-    with patch("services.deployment_service.get_docker_client", return_value=fake):
-        dep1 = client.post(
-            "/api/deployments",
-            json={
-                "model_name": "e2e-deploy",
-                "version": "1.0.0",
-                "strategy": "realtime",
-                "target_node_ids": ["silo-1"],
-            },
-        )
-        assert dep1.status_code == 201
-        dep1_id = dep1.json()["deployment_id"]
+    dep1 = client.post(
+        "/api/deployments",
+        json={
+            "model_name": "e2e-deploy",
+            "version": "1.0.0",
+            "strategy": "realtime",
+            "target_node_ids": ["silo-1"],
+        },
+    )
+    assert dep1.status_code == 201
+    dep1_id = dep1.json()["deployment_id"]
+    first = client.get(f"/api/deployments/{dep1_id}").json()
+    assert first["status"] == "running" and first["verified_at"]
 
-        dep2_fake = _fake_docker_client()
-        with patch("services.deployment_service.get_docker_client", return_value=dep2_fake):
-            dep2 = client.post(
-                "/api/deployments",
-                json={
-                    "model_name": "e2e-deploy",
-                    "version": "1.1.0",
-                    "strategy": "realtime",
-                    "target_node_ids": ["silo-1"],
-                },
-            )
-        assert dep2.status_code == 201
-        dep2_id = dep2.json()["deployment_id"]
+    dep2 = client.post(
+        "/api/deployments",
+        json={
+            "model_name": "e2e-deploy",
+            "version": "1.1.0",
+            "strategy": "realtime",
+            "target_node_ids": ["silo-1"],
+        },
+    )
+    assert dep2.status_code == 201
+    dep2_id = dep2.json()["deployment_id"]
+    second = client.get(f"/api/deployments/{dep2_id}").json()
+    assert second["status"] == "running" and second["verified_at"]
 
-        rollback_fake = _fake_docker_client()
-        with patch("services.deployment_service.get_docker_client", return_value=rollback_fake):
-            rb = client.post(f"/api/deployments/{dep2_id}/rollback")
+    rb = client.post(f"/api/deployments/{dep2_id}/rollback")
 
     assert rb.status_code == 200
     assert rb.json()["status"] == "running"
     assert rb.json()["deployment_id"] != dep2_id
+    assert rb.json()["model_name"] == "e2e-deploy" and rb.json()["version"] == "1.0.0"
+    assert rb.json()["configuration"] == first["configuration"]
+    assert rb.json()["expected_identity"] == first["expected_identity"]
+    assert rb.json()["verified_at"]
 
     rolled = client.get(f"/api/deployments/{dep2_id}")
     assert rolled.status_code == 200

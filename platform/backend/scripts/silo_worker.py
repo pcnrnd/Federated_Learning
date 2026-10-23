@@ -41,10 +41,11 @@ import sys
 import time
 
 from silo_sdk import SiloClient, apply_recipe, synthetic, train_ridge
+from silo_sdk.resources import sample_resources
 from silo_sdk.alignment import align_rows, hash_ids, load_align_key, order_digest
-from silo_sdk.client import SiloClientError
+from silo_sdk.client import SiloClientError, is_transient_error
 from silo_sdk.edge import combine
-from silo_sdk.integration import load_sources, schema_fingerprint
+from silo_sdk.integration import load_sources, schema_fingerprint, CleaningError
 
 FEATURES = ["x1", "x2", "x3"]
 # 사일로 로컬 원천 파일 위치 (컨테이너 안 — 사일로 밖으로 나가지 않는다)
@@ -131,7 +132,23 @@ def _clean_shard(client: SiloClient, args: argparse.Namespace, job_id: str, shar
     형식과 메시지(통계·컬럼명)뿐이다 — 원시 행은 담지 않는다.
     """
     recipe = client.fetch_cleaning_recipe(recipe_name, recipe_version)
-    client.start_cleaning_shard(job_id, shard_index)
+    claimed = client.start_cleaning_shard(job_id, shard_index)
+    if claimed.get("shards"):
+        from silo_sdk.cleaning_output import execute
+        shard = claimed["shards"][shard_index]
+        try:
+            manifest = execute(getattr(args, "data_dir", DEFAULT_DATA_DIR), args.silo_id,
+                               claimed, shard, recipe)
+            fields = {key: manifest[key] for key in ("rows_in", "rows_out", "step_counters",
+                "schema_fingerprint", "output_id", "output_hash", "source_hash", "recipe_hash")}
+            client.report_cleaning_shard(job_id, shard_index, **fields, attempt_id=shard["attempt_id"])
+            return True
+        except Exception as exc:  # noqa: BLE001
+            client.report_cleaning_shard(job_id, shard_index, rows_in=0, rows_out=0, step_counters={},
+                attempt_id=shard["attempt_id"], retryable=isinstance(exc, (OSError, TimeoutError)),
+                error=(str(exc)[:MAX_ERROR_CHARS] if isinstance(exc, CleaningError)
+                       else f"로컬 정제 실행 실패: {type(exc).__name__}"))
+            return False
 
     try:
         rows_in, cleaned, counters = clean_local(
@@ -273,45 +290,7 @@ def run_align(args: argparse.Namespace) -> None:
                       "intersection": len(intersection), **report}, ensure_ascii=False))
 
 
-# ---------- 리소스 실측 (/proc — 리눅스 컨테이너 전용) ----------
-
-
-def _cpu_pct(sample_interval: float = 0.25) -> float:
-    """/proc/stat 2회 스냅샷 차이로 CPU 사용률(%)을 계산한다."""
-
-    def snap() -> tuple[int, int]:
-        with open("/proc/stat", encoding="ascii") as f:
-            fields = [int(v) for v in f.readline().split()[1:]]
-        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)  # idle + iowait
-        return idle, sum(fields)
-
-    idle_a, total_a = snap()
-    time.sleep(sample_interval)
-    idle_b, total_b = snap()
-    delta_total = total_b - total_a
-    if delta_total <= 0:
-        return 0.0
-    return round(100.0 * (1.0 - (idle_b - idle_a) / delta_total), 1)
-
-
-def _mem_pct() -> float:
-    info: dict[str, int] = {}
-    with open("/proc/meminfo", encoding="ascii") as f:
-        for line in f:
-            key, _, rest = line.partition(":")
-            info[key] = int(rest.split()[0])
-    total = info.get("MemTotal", 0)
-    if total <= 0:
-        return 0.0
-    return round(100.0 * (1.0 - info.get("MemAvailable", total) / total), 1)
-
-
-def _disk_pct(path: str = "/") -> float:
-    st = os.statvfs(path)
-    total = st.f_blocks * st.f_frsize
-    if total <= 0:
-        return 0.0
-    return round(100.0 * (1.0 - st.f_bavail * st.f_frsize / total), 1)
+# ---------- 사일로 자기 cgroup 리소스 실측 ----------
 
 
 def _is_transient(exc: BaseException) -> bool:
@@ -320,9 +299,7 @@ def _is_transient(exc: BaseException) -> bool:
     그 외 4xx(잘못된 payload 등)와 코딩 오류는 다시 보내도 같은 결과이므로 영구 오류로
     본다 — 즉시 종료해 원인이 로그에 드러나게 한다.
     """
-    if isinstance(exc, SiloClientError):
-        return exc.status == 429 or exc.status >= 500
-    return isinstance(exc, (TimeoutError, OSError))  # urllib URLError ⊂ OSError
+    return is_transient_error(exc)
 
 
 def run_monitor(args: argparse.Namespace) -> None:
@@ -336,10 +313,26 @@ def run_monitor(args: argparse.Namespace) -> None:
     client = SiloClient(args.central, args.silo_id)
     pushed = 0
     failures = 0  # 연속 실패 — 성공 시 0으로
+    interval = args.interval
     while True:
-        cpu, mem, disk = _cpu_pct(), _mem_pct(), _disk_pct()
+        resources = sample_resources()
+        cpu, mem, disk = resources["cpu_pct"], resources["mem_pct"], resources["disk_pct"]
         try:
-            client.push_resource_sample(cpu, mem, disk_pct=disk)
+            try:
+                config = client.get_silo()
+                interval = config["collect_interval_seconds"]
+            except SiloClientError as config_error:
+                if config_error.status != 404:
+                    raise
+                interval = args.interval  # 이전 서버 설정과도 동작한다.
+            client.push_resource_sample(
+                cpu, mem, disk_pct=disk, measurement_scope=resources["measurement_scope"],
+                unavailable=resources["unavailable"],
+                cpu_cores=resources.get("cpu_cores"),
+                mem_used_bytes=resources.get("mem_used_bytes"),
+                mem_limit_bytes=resources.get("mem_limit_bytes"),
+                capabilities=resources.get("capabilities"),
+            )
         except Exception as exc:  # noqa: BLE001 — 분류 후 영구 오류는 그대로 다시 던진다
             if not _is_transient(exc):
                 raise
@@ -369,7 +362,7 @@ def run_monitor(args: argparse.Namespace) -> None:
             )
             if args.count > 0 and pushed >= args.count:
                 return
-        time.sleep(args.interval)
+        time.sleep(interval)
 
 
 # ---------- 학습 ----------
@@ -391,8 +384,17 @@ def _local_accuracy(rows: list[dict], parameters: list[float]) -> float:
 _STAT_KEYS = ("rows_before_cleaning", "rows_after_cleaning", "train_rmse")
 
 
-def _training_rows(args: argparse.Namespace, client: SiloClient) -> tuple[list[dict], dict]:
+def _training_rows(args: argparse.Namespace, client: SiloClient,
+                   *, resolve_round: bool = True) -> tuple[list[dict], dict]:
     """학습 입력 행과 정제 통계 — 레시피를 지정하면 로컬 원천 정제 결과, 아니면 기존 합성 행."""
+    round_id = getattr(args, "round_id", None)
+    if round_id and resolve_round:
+        entry = client.get_round(round_id)
+        if entry.get("learning") is not None:
+            raise SystemExit("live 라운드는 전역 초기값/실제 HTTP를 사용하는 live-loop 경로로 실행하세요")
+        reference = entry.get("cleaning_job_id")
+        if reference:
+            return _linked_output(args, client, reference, entry.get("cleaning_snapshot"))
     name = getattr(args, "recipe_name", None)
     version = getattr(args, "recipe_version", None)
     if not name and not version:
@@ -404,6 +406,23 @@ def _training_rows(args: argparse.Namespace, client: SiloClient) -> tuple[list[d
         args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
     )
     return cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
+
+
+def _linked_output(args, client, job_id, snapshot=None):
+    from silo_sdk.cleaning_output import load_output
+    if snapshot is not None:
+        if args.silo_id not in snapshot:
+            raise ValueError("라운드 정제 출력 스냅샷에 사일로가 없습니다")
+        rows, manifest = load_output(getattr(args, "data_dir", DEFAULT_DATA_DIR), snapshot[args.silo_id])
+        return rows, {"rows_before_cleaning": manifest["rows_in"], "rows_after_cleaning": len(rows)}
+    job = client.get_cleaning_job(job_id)
+    if job["status"] != "completed":
+        raise ValueError("선행 정제 성공 전 학습 불가")
+    shard = next((s for s in job["shards"] if s["silo_id"] == args.silo_id), None)
+    if shard is None or shard["status"] != "completed" or not shard.get("output_id"):
+        raise ValueError("이 사일로의 보존 정제 출력이 없습니다")
+    rows, manifest = load_output(getattr(args, "data_dir", DEFAULT_DATA_DIR), shard)
+    return rows, {"rows_before_cleaning": manifest["rows_in"], "rows_after_cleaning": len(rows)}
 
 
 def _rmse(rows: list[dict], parameters: list[float]) -> float:
@@ -444,25 +463,22 @@ def run_train_loop(args: argparse.Namespace) -> None:
     없으면 잔여 라운드 없이 종료된 것으로 보고 현황을 남기고 빠져나온다.
     """
     client = SiloClient(args.central, args.silo_id)
-    rows, stats = _training_rows(args, client)
-    explicit = bool(getattr(args, "recipe_name", None))
-    linked: dict[str, tuple[list[dict], dict]] = {}
+    fallback: tuple[list[dict], dict] | None = None
+    linked: dict[tuple[str, str | None], tuple[list[dict], dict]] = {}
 
     def inputs_for(entry: dict) -> tuple[list[dict], dict]:
-        """라운드에 정제 작업이 연결돼 있으면(레시피 미지정 시) 그 레시피로 정제한 행."""
-        job_ref = None if explicit else entry.get("cleaning_job_id")
+        """연결 출력은 즉시 로드. 비연결 라운드의 입력만 필요할 때 준비한다."""
+        nonlocal fallback
+        job_ref = entry.get("cleaning_job_id")
         if not job_ref:
-            return rows, stats
-        if job_ref not in linked:
-            job = client.get_cleaning_job(job_ref)
-            recipe = client.fetch_cleaning_recipe(job["recipe_name"], job["recipe_version"])
-            rows_in, cleaned, _ = clean_local(
-                args.silo_id, getattr(args, "data_dir", DEFAULT_DATA_DIR), recipe
-            )
-            linked[job_ref] = (
-                cleaned, {"rows_before_cleaning": rows_in, "rows_after_cleaning": len(cleaned)}
-            )
-        return linked[job_ref]
+            if fallback is None:
+                fallback = _training_rows(args, client, resolve_round=False)
+            return fallback
+        snapshot = entry.get("cleaning_snapshot")
+        identity = (job_ref, snapshot.get(args.silo_id, {}).get("output_id") if snapshot is not None else None)
+        if identity not in linked:
+            linked[identity] = _linked_output(args, client, job_ref, snapshot)
+        return linked[identity]
 
     contributed_rounds: set[str] = set()
     idle_deadline = time.monotonic() + args.max_idle
@@ -496,6 +512,10 @@ def run_train_loop(args: argparse.Namespace) -> None:
         for entry in open_rounds:
             round_id = entry["round_id"]
             if round_id in contributed_rounds or args.silo_id in entry.get("contributors", []):
+                continue
+            if entry.get("learning") is not None:
+                # live-loop가 6개 실제 entrypoint의 학습·HTTP inbox/outbox를 소유한다.
+                # legacy CLI는 listener 없는 별도 live 실행자를 만들지 않고 기존 라운드만 처리한다.
                 continue
             try:
                 round_rows, round_stats = inputs_for(entry)
@@ -703,6 +723,33 @@ def main(argv: list[str]) -> None:
     clean.add_argument("--recipe-version")
     clean.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="로컬 원천 파일 디렉터리")
     clean.set_defaults(func=run_clean)
+
+    continuous = sub.add_parser("clean-loop", help="실제 예약 정제 지속 pull worker")
+    continuous.add_argument("--central", required=True)
+    continuous.add_argument("--silo-id", required=True)
+    continuous.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    continuous.add_argument("--poll-interval", type=float, default=2)
+    continuous.add_argument("--concurrency", type=int, default=2)
+    continuous.add_argument("--max-cycles", type=int, default=0)
+    def run_clean_loop(args):
+        from silo_sdk.cleaning_runtime import run_with_signals
+        # 종료 때 metadata I/O가 긴 SDK 재시도를 기다리지 않도록 단일 요청 한도를 둔다.
+        run_with_signals(SiloClient(args.central, args.silo_id, timeout=2, retries=0), args.data_dir,
+                         args.poll_interval, args.concurrency, args.max_cycles)
+    continuous.set_defaults(func=run_clean_loop)
+
+    live = sub.add_parser("live-loop", help="보존 정제 출력으로 전역 피드백 ridge/실제 HTTP 계층 학습")
+    live.add_argument("--central", required=True)
+    live.add_argument("--silo-id", required=True)
+    live.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    live.add_argument("--host", default="0.0.0.0")
+    live.add_argument("--port", type=int, default=8081)
+    live.add_argument("--poll-interval", type=float, default=2)
+    def run_live(args):
+        from silo_sdk.training_runtime import run
+        run(SiloClient(args.central, args.silo_id, timeout=2, retries=0), args.data_dir,
+            args.host, args.port, args.poll_interval)
+    live.set_defaults(func=run_live)
 
     train = sub.add_parser("train", help="로컬 릿지 학습 + 기여 push")
     train.add_argument("--central", required=True)

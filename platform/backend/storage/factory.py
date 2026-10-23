@@ -28,6 +28,7 @@ class StorageDomain(str, Enum):
     METRICS = "metrics"
     RESOURCE_LIMITS = "resource_limits"
     ALERTS = "alerts"
+    DISTRIBUTIONS = "distributions"
 
 
 def reset_repositories() -> None:
@@ -72,6 +73,7 @@ def _build_sqlite(domain: StorageDomain, db_path: Path) -> DictRepository:
         StorageDomain.TRAINING_ROUNDS: ("training_rounds", "id"),
         StorageDomain.RESOURCE_LIMITS: ("resource_limits", "node_id"),
         StorageDomain.ALERTS: ("alerts", "id"),
+        StorageDomain.DISTRIBUTIONS: ("distribution_state", "id"),
     }
     table, id_col = table_map[domain]
     return SqliteFlatRepository(db_path, table=table, id_column=id_col)

@@ -78,7 +78,8 @@ class RoundScheduler:
     def _tick_blocking(self) -> list[str]:
         """tick의 동기 본체 — 저장소 I/O를 포함하므로 이벤트 루프에서 직접 부르지 않는다."""
         aggregated_ids: list[str] = []
-        open_rounds = training_round_service.list_rounds(status="open")
+        open_rounds = (training_round_service.list_rounds(status="open")
+                       + training_round_service.list_rounds(status="aggregating"))
         for entry in open_rounds:
             # open 라운드별 조회 — 전체 기여 이력을 매 tick 읽지 않는다
             count = len(load_round_contributions(entry.round_id))
@@ -94,6 +95,9 @@ class RoundScheduler:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("라운드 %s 집계 예외: %s", entry.round_id, exc)
+        # G4 adapter: G3 결과의 원자 게시 뒤 모델 등록. 실패/재시작은 같은 결과 원장으로 복구한다.
+        from services.training_model_service import reconcile_completed_results
+        reconcile_completed_results()
         return aggregated_ids
 
     async def tick(self) -> list[str]:
@@ -112,6 +116,22 @@ class RoundScheduler:
             logger.error("잡 tick 오류: %s", exc)
             return []
 
+    async def tick_cleaning(self) -> list[str]:
+        from services import cleaning_execution
+        try:
+            return await asyncio.to_thread(cleaning_execution.tick)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("정제 tick 오류: %s", exc)
+            return []
+
+    async def tick_retraining(self) -> list[str]:
+        from services.retraining_service import tick
+        try:
+            return await asyncio.to_thread(tick)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("재교육 상태 복구 대기: %s", type(exc).__name__)
+            return []
+
     async def _loop(self) -> None:
         assert self._stop_event is not None
         while not self._stop_event.is_set():
@@ -119,9 +139,12 @@ class RoundScheduler:
                 # 1. 충분히 모인 라운드 집계 (잡 reconcile 전에 수행해야 카운터 정확)
                 await self.tick()
                 # 2. 잡 진행 — 완료된 라운드 reconcile + 다음 라운드 open
-                await self.tick_jobs()
+                await asyncio.gather(self.tick_jobs(), self.tick_cleaning())
+                await self.tick_retraining()
                 # 3. running/pending 배포 상태를 Docker 실제 상태와 동기화
                 try:
+                    from services.deployment_scheduling import tick as tick_deployments
+                    await asyncio.to_thread(tick_deployments)
                     await asyncio.to_thread(deployment_service.reconcile_all_active)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("배포 reconcile 실패: %s", exc)
