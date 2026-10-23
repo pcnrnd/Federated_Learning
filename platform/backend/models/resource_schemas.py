@@ -21,11 +21,17 @@ class ResourceSample(BaseModel):
     """사일로 → 중앙 push: 시점 t의 자원 사용률 스냅샷"""
 
     silo_id: str
-    cpu_pct: float = Field(..., ge=0.0, le=100.0)
-    mem_pct: float = Field(..., ge=0.0, le=100.0)
+    cpu_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    mem_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     gpu_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     disk_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     timestamp: str
+    measurement_scope: dict[str, str] = Field(default_factory=dict)
+    unavailable: dict[str, str] = Field(default_factory=dict)
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    cpu_cores: float | None = Field(default=None, ge=0)
+    mem_used_bytes: int | None = Field(default=None, ge=0)
+    mem_limit_bytes: int | None = Field(default=None, ge=0)
 
 
 class ResourceAlert(BaseModel):
@@ -41,8 +47,15 @@ class ResourceAlert(BaseModel):
 class ResourceUsageSummary(BaseModel):
     silo_id: str
     last_sample_at: str
-    cpu_pct: float
-    mem_pct: float
+    cpu_pct: float | None
+    mem_pct: float | None
     gpu_pct: float | None
     disk_pct: float | None
     over_budget: bool
+    availability: str = "unknown"
+    measurement_scope: dict[str, str] = Field(default_factory=dict)
+    unavailable: dict[str, str] = Field(default_factory=dict)
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    cpu_cores: float | None = None
+    mem_used_bytes: int | None = None
+    mem_limit_bytes: int | None = None

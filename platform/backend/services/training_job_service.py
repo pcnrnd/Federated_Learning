@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -16,6 +17,7 @@ from fastapi import HTTPException
 
 from config.federated_manager import load_training_jobs, save_training_jobs
 from models.federated_schemas import (
+    RoundOpeningIntent,
     TrainingJob,
     TrainingJobRequest,
     TrainingRoundCreate,
@@ -31,7 +33,8 @@ from services.model_registry import get_model
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONCURRENT_ROUNDS = 3
-_job_lock = threading.Lock()
+_job_lock = threading.RLock()
+_tick_lock = threading.RLock()  # tick끼리만 직렬화. pause/cancel은 API에서 계속 수행 가능하다.
 
 
 def _now() -> datetime:
@@ -65,7 +68,8 @@ def _update_job(
 
 
 def list_jobs(*, status: str | None = None) -> list[TrainingJob]:
-    raw = load_training_jobs()
+    with _job_lock:
+        raw = load_training_jobs()
     jobs = [TrainingJob(**v) for v in raw.values()]
     if status:
         jobs = [j for j in jobs if j.status == status]
@@ -74,7 +78,8 @@ def list_jobs(*, status: str | None = None) -> list[TrainingJob]:
 
 
 def get_job(job_id: str) -> TrainingJob:
-    raw = load_training_jobs()
+    with _job_lock:
+        raw = load_training_jobs()
     if job_id not in raw:
         raise HTTPException(status_code=404, detail=f"잡 '{job_id}'을 찾을 수 없습니다")
     return TrainingJob(**raw[job_id])
@@ -90,7 +95,9 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
     get_model(request.model_name, request.version)
     silo_group_service.get_group(request.group_id)
     if request.cleaning_job_id:
-        cleaning_job_service.get_job(request.cleaning_job_id)  # 없으면 404
+        cleaning_job_service.get_job(request.cleaning_job_id)  # 예약은 허용, 실행 시 성공 출력 검사
+    elif request.learning is not None:
+        raise HTTPException(status_code=422, detail="live 학습에는 성공할 정제 작업 연결이 필요합니다")
 
     now = _now_iso()
     job = TrainingJob(
@@ -110,7 +117,10 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
         created_at=now,
         updated_at=now,
         notes=request.notes,
+        retraining_event_id=request.retraining_event_id,
         cleaning_job_id=request.cleaning_job_id,
+        learning=request.learning,
+        worker_endpoints=dict(request.worker_endpoints),
     )
     # 중복 ID 검사와 저장을 같은 잠금 구간에서 — 동시 생성 요청이 서로를 덮어쓰지 않는다
     with _job_lock:
@@ -165,29 +175,53 @@ def _open_round_for_job(job_id: str) -> tuple[TrainingJob, bool]:
     tick 스냅샷과 실제 open 사이에 cancel/pause가 끼어들면 (스냅샷은 active였어도)
     라운드를 만들지 않는다 — create_round 부수효과까지 잠금 구간에 포함한다.
     """
-    opened = False
-
-    def mutate(job: TrainingJob) -> TrainingJob | None:
-        nonlocal opened
+    with _job_lock:
+        job = get_job(job_id)
         if job.status != "active" or job.current_round_id is not None:
-            return None
-        new_round = training_round_service.create_round(
-            TrainingRoundCreate(
-                model_name=job.model_name,
-                version=job.version,
-                group_id=job.group_id,
-                min_contributions=job.min_contributions,
-                notes=f"auto from job={job.job_id}",
-                cleaning_job_id=job.cleaning_job_id,
-            )
-        )
-        opened = True
-        logger.info("잡 %s: 새 라운드 %s open", job.job_id, new_round.round_id)
-        return job.model_copy(
-            update={"current_round_id": new_round.round_id, "updated_at": _now_iso()}
-        )
+            return job, False
+        if job.opening_intent is None:
+            intent = RoundOpeningIntent(round_id=uuid.uuid4().hex,
+                occurrence=job.rounds_completed + job.rounds_failed + 1,
+                request=TrainingRoundCreate(
+                    model_name=job.model_name,
+                    version=job.version,
+                    group_id=job.group_id,
+                    min_contributions=job.min_contributions,
+                    notes=f"auto from job={job.job_id}",
+                    cleaning_job_id=job.cleaning_job_id,
+                    learning=job.learning,
+                    parent_round_id=job.last_completed_round_id if job.learning else None,
+                    worker_endpoints=job.worker_endpoints,
+                ))
+            job = _update_job(job_id, lambda fresh: fresh.model_copy(
+                update={"opening_intent": intent, "updated_at": _now_iso()}))
+        intent = job.opening_intent
+        new_round = training_round_service.create_round(intent.request, opening_id=intent.round_id,
+            job_id=job_id, occurrence=intent.occurrence)
+        linked = _update_job(job_id, lambda fresh: fresh.model_copy(update={
+            "current_round_id": new_round.round_id, "opening_intent": None, "updated_at": _now_iso()}))
+        logger.info("잡 %s: 회차 %d 라운드 %s 연결", job_id, intent.occurrence, new_round.round_id)
+        return linked, True
 
-    return _update_job(job_id, mutate), opened
+
+def _recover_opening(job_id: str) -> TrainingJob:
+    """이미 게시된 라운드를 capacity/due 검사보다 먼저 재연결한다. 새 실행은 만들지 않는다."""
+    with _job_lock:
+        job = get_job(job_id)
+        intent = job.opening_intent
+        if intent is None or job.current_round_id is not None:
+            return job
+        try:
+            training_round_service.get_round(intent.round_id)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return job
+            raise
+        # 기존 라운드와 intent의 명시적 정체성도 검사한다(현재 그룹 재검증 없음).
+        entry = training_round_service.create_round(intent.request, opening_id=intent.round_id,
+            job_id=job_id, occurrence=intent.occurrence)
+        return _update_job(job_id, lambda fresh: fresh.model_copy(update={
+            "current_round_id": entry.round_id, "opening_intent": None, "updated_at": _now_iso()}))
 
 
 def _is_due(job: TrainingJob) -> bool:
@@ -218,6 +252,12 @@ def _reconcile_current_round(job: TrainingJob) -> TrainingJob:
         rnd = training_round_service.get_round(round_id)
     except HTTPException:
         rnd = None  # 라운드가 외부에서 삭제된 경우 — 카운터 변경 없이 current_round_id만 비움
+    if rnd is not None and rnd.status == "completed" and job.learning is not None:
+        try:
+            training_round_service.get_result(round_id)
+        except HTTPException:
+            return _update_job(job.job_id, lambda fresh: fresh.model_copy(
+                update={"error": "완료 라운드의 영속 결과가 준비되지 않았습니다"}))
 
     def mutate(fresh: TrainingJob) -> TrainingJob | None:
         if fresh.current_round_id != round_id:
@@ -230,6 +270,7 @@ def _reconcile_current_round(job: TrainingJob) -> TrainingJob:
                     "rounds_completed": fresh.rounds_completed + 1,
                     "current_round_id": None,
                     "last_round_completed_at": rnd.aggregated_at or _now_iso(),
+                    "last_completed_round_id": rnd.round_id,
                     "updated_at": _now_iso(),
                 }
             )
@@ -249,6 +290,10 @@ def _reconcile_current_round(job: TrainingJob) -> TrainingJob:
 
 def _maybe_complete(job: TrainingJob) -> TrainingJob:
     def mutate(fresh: TrainingJob) -> TrainingJob | None:
+        if (fresh.learning is not None and fresh.status == "active" and fresh.current_round_id is None
+                and fresh.rounds_completed + fresh.rounds_failed >= fresh.max_rounds):
+            return fresh.model_copy(update={"status": "completed" if not fresh.rounds_failed else "failed",
+                                             "updated_at": _now_iso()})
         if (
             fresh.status == "active"
             and fresh.rounds_completed >= fresh.max_rounds
@@ -262,11 +307,19 @@ def _maybe_complete(job: TrainingJob) -> TrainingJob:
 
 
 def tick(max_concurrent_rounds: int = DEFAULT_MAX_CONCURRENT_ROUNDS) -> list[str]:
+    with _tick_lock:
+        return _tick(max_concurrent_rounds)
+
+
+def _tick(max_concurrent_rounds: int) -> list[str]:
     """잡 스케줄러 단일 tick.
 
     Returns: 이 tick에서 새로 라운드를 연 잡 ID 목록
     """
     triggered: list[str] = []
+    for entry in list_jobs():
+        if entry.opening_intent is not None:
+            _recover_opening(entry.job_id)
     with _job_lock:
         active_jobs = [j for j in list_jobs() if j.status == "active"]
 
@@ -285,8 +338,17 @@ def tick(max_concurrent_rounds: int = DEFAULT_MAX_CONCURRENT_ROUNDS) -> list[str
         if job.rounds_completed + job.rounds_failed >= job.max_rounds:
             _maybe_complete(job)
             continue
-        if not _is_due(job):
+        if job.opening_intent is None and not _is_due(job):
             continue
+        if job.cleaning_job_id:
+            from services.cleaning_execution import require_training_output
+            try:
+                require_training_output(job.cleaning_job_id)
+            except HTTPException as exc:
+                # 대기/실패 선행은 실제 학습 라운드를 만들거나 실패 횟수를 소비하지 않는다.
+                detail = str(exc.detail)
+                _update_job(job.job_id, lambda fresh: fresh.model_copy(update={"error": detail}))
+                continue
         # 자원 게이트 — 그룹 멤버 중 한 노드라도 임계값 초과면 다음 라운드 보류
         try:
             group = silo_group_service.get_group(job.group_id)
@@ -301,6 +363,9 @@ def tick(max_concurrent_rounds: int = DEFAULT_MAX_CONCURRENT_ROUNDS) -> list[str
             _, opened = _open_round_for_job(job.job_id)
         except HTTPException as exc:
             logger.warning("잡 %s 라운드 생성 실패: %s", job.job_id, exc.detail)
+            # 일시 저장/API 실패는 같은 intent로 재시도한다. 실패 회차를 소비하지 않는다.
+            if exc.status_code == 429 or exc.status_code >= 500:
+                continue
             detail = str(exc.detail)
             _update_job(
                 job.job_id,
@@ -309,6 +374,7 @@ def tick(max_concurrent_rounds: int = DEFAULT_MAX_CONCURRENT_ROUNDS) -> list[str
                         "rounds_failed": fresh.rounds_failed + 1,
                         "updated_at": _now_iso(),
                         "error": detail,
+                        "opening_intent": None,
                     }
                 ),
             )

@@ -34,8 +34,13 @@ export function useSimulationEngine(): {
 } {
   const generationRef = useRef(0)
 
+  useEffect(() => useSimulationStore.subscribe((state, previous) => {
+    if (state.mockEnabled !== previous.mockEnabled) generationRef.current++
+  }), [])
+
   const isLive = useCallback((gen: number): boolean => {
-    return gen === generationRef.current && !useSimulationStore.getState().isPaused
+    const state = useSimulationStore.getState()
+    return gen === generationRef.current && state.mockEnabled && !state.isPaused
   }, [])
 
   const sleep = useCallback(
@@ -296,6 +301,7 @@ export function useSimulationEngine(): {
 
   const start = useCallback(() => {
     const store = useSimulationStore.getState()
+    if (!store.mockEnabled) return
     if (store.isRunning && !store.isPaused) return
 
     if (store.currentRound >= store.config.totalRounds) {
@@ -325,6 +331,7 @@ export function useSimulationEngine(): {
   const reset = useCallback(() => {
     generationRef.current++
     const store = useSimulationStore.getState()
+    if (!store.mockEnabled) return
     store.reset()
     store.log('system', '연합 학습 대시보드 리셋 완료. 새로운 오케스트레이션 세션 대기 중.')
   }, [])

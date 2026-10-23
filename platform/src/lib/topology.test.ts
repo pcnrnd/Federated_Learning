@@ -87,3 +87,7 @@ describe('computeLayout', () => {
     expect(layout.width).toBe(TOPOLOGY.marginX * 2 + 12 * TOPOLOGY.siloGapX)
   })
 })
+
+test('중앙 서버 노드 지름은 사일로 노드 지름의 1.5배 이하다', () => {
+  expect(TOPOLOGY.serverRadius / TOPOLOGY.siloRadius).toBeLessThanOrEqual(1.5)
+})

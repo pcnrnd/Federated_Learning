@@ -68,6 +68,7 @@ export function ModelRegistry() {
   const models = useModelStore((s) => s.models)
   const projectFilter = useModelStore((s) => s.projectFilter)
   const setProjectFilter = useModelStore((s) => s.setProjectFilter)
+  const liveError = useModelStore((s) => s.liveModelError)
   const [showForm, setShowForm] = useState(false)
 
   const visibleModels = useMemo(
@@ -79,7 +80,8 @@ export function ModelRegistry() {
     const total = visibleModels.length
     const deployed = visibleModels.filter((m) => m.status === 'deployed').length
     const experimental = visibleModels.filter((m) => m.status === 'experimental').length
-    const avgAccuracy = total > 0 ? visibleModels.reduce((sum, m) => sum + m.accuracy, 0) / total : 0
+    const values = visibleModels.map((m) => m.accuracy).filter((a): a is number => a !== null)
+    const avgAccuracy = values.length ? values.reduce((sum, a) => sum + a, 0) / values.length : null
     return { total, deployed, experimental, avgAccuracy }
   }, [visibleModels])
 
@@ -118,6 +120,7 @@ export function ModelRegistry() {
       </div>
 
       {showForm && <NewModelForm defaultProject={defaultProject} onClose={() => setShowForm(false)} />}
+      {!showForm && liveError && <p role="alert">{liveError}</p>}
 
       <div className="model-stat-grid">
         <div className="model-stat-card">
@@ -134,7 +137,7 @@ export function ModelRegistry() {
         </div>
         <div className="model-stat-card">
           <span className="lbl">평균 정확도</span>
-          <span className="val text-purple">{formatPercent(summary.avgAccuracy, 1)}</span>
+          <span className="val text-purple">{summary.avgAccuracy === null ? '미수집' : formatPercent(summary.avgAccuracy, 1)}</span>
         </div>
       </div>
 
@@ -165,9 +168,9 @@ export function ModelRegistry() {
                     {STATUS_LABEL[model.status]}
                   </span>
                 </td>
-                <td className="model-algo-cell">{ALGORITHM_LABEL[model.algorithm]}</td>
-                <td className="ta-right text-cyan">{formatPercent(model.accuracy)}</td>
-                <td className="ta-right">{model.rounds}</td>
+                <td className="model-algo-cell">{model.algorithmRecorded === false ? '기록 없음' : ALGORITHM_LABEL[model.algorithm]}</td>
+                <td className="ta-right text-cyan">{model.accuracy === null ? '미수집' : formatPercent(model.accuracy)}</td>
+                <td className="ta-right">{model.rounds ?? '기록 없음'}</td>
                 <td className="model-date-cell">{model.createdAt}</td>
                 <td>
                   <RowActions model={model} />

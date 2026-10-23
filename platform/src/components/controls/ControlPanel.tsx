@@ -1,8 +1,49 @@
+import { useEffect, useState } from 'react'
+import type { TrainingJobApi } from '@/api/client'
+import { isLiveConfigured } from '@/api/client'
 import { ALGORITHM_LABEL, ALGORITHM_OPTIONS, CONFIG_BOUNDS } from '@/constants/simulation'
 import { getSimulationControls } from '@/hooks/useSimulationEngine'
+import { liveTrainingRequest } from '@/lib/liveTraining'
+import {
+  CLEANING_FORM_FIELDS,
+  initialTrainingDraftRecord,
+  TRAINING_FORM_FIELDS,
+} from '@/lib/pipelineFields'
+import { trainingJobActionPath } from '@/lib/trainingJobPaths'
+import {
+  LIVE_ALGORITHM_REASON,
+  LIVE_JOB_SELECT_REASON,
+  LIVE_SIMULATION_RESET_REASON,
+  LIVE_TERMINAL_JOB_REASON,
+  LIVE_TRAINING_JOB_CAPABILITY_REASON,
+  resolveUiDataMode,
+  UNCONFIGURED_API_MESSAGE,
+} from '@/lib/uiMode'
+import { useDataStore } from '@/store/useDataStore'
+import { useLiveTrainingStore } from '@/store/useLiveTrainingStore'
+import { useSiloStore } from '@/store/useSiloStore'
 import { useSimulationStore } from '@/store/useSimulationStore'
 import type { Algorithm } from '@/types/simulation'
 import { Slider } from './Slider'
+
+const ADVANCED_PREREQ_KEYS = [
+  'job_id',
+  'model_name',
+  'version',
+  'features',
+  'target',
+  'initial',
+  'l2',
+  'min_contributions',
+] as const
+
+function isManageableTrainingJob(job: TrainingJobApi): boolean {
+  return job.status === 'active' || job.status === 'paused'
+}
+
+function isTerminalTrainingJob(job: TrainingJobApi): boolean {
+  return job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
+}
 
 export function ControlPanel() {
   const config = useSimulationStore((s) => s.config)
@@ -15,29 +56,171 @@ export function ControlPanel() {
   const setLearningRate = useSimulationStore((s) => s.setLearningRate)
   const log = useSimulationStore((s) => s.log)
   const mockEnabled = useSimulationStore((s) => s.mockEnabled)
+  const mode = resolveUiDataMode(mockEnabled)
 
-  // 엔진 컨트롤은 SimulationEngineHost의 effect에서 등록되므로 첫 커밋 시점엔 아직 비어 있다.
-  // 렌더 시점에 구조분해하면 그 no-op을 붙잡은 채 굳어버리므로(탭 전환 전까지 버튼이 죽는다)
-  // 클릭 시점에 해석한다.
+  const groups = useSiloStore((s) => s.groups)
+  const cleaning = useDataStore((s) => s.liveCleaningJobs)
+  const liveDraft = useDataStore((s) => s.liveDraft)
+  const patchLiveDraft = useDataStore((s) => s.patchLiveDraft)
+  const liveJobs = useLiveTrainingStore((s) => s.jobs)
+  const livePending = useLiveTrainingStore((s) => s.pending)
+  const liveError = useLiveTrainingStore((s) => s.error)
+  const mutate = useLiveTrainingStore((s) => s.mutate)
+  const observe = useLiveTrainingStore((s) => s.observe)
+
+  const [selectedJobId, setSelectedJobId] = useState('')
+  const [trainingDraft, setTrainingDraft] = useState(initialTrainingDraftRecord)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (mode !== 'live') return
+    return observe()
+  }, [mode, observe])
+
+  const selectedJob = liveJobs.find((job) => job.job_id === selectedJobId) ?? null
+
   const start = () => getSimulationControls().start()
-  const pause = () => getSimulationControls().pause()
+  const pauseSim = () => getSimulationControls().pause()
   const reset = () => getSimulationControls().reset()
 
-  const inputsDisabled = isRunning && !isPaused
-  const isFinished = !isRunning && currentRound > 0 && currentRound >= config.totalRounds
+  const inputsDisabled = mode === 'demo' && isRunning && !isPaused
+  const isFinished = mode === 'demo' && !isRunning && currentRound > 0 && currentRound >= config.totalRounds
+  const liveJobControlsDisabled = mode !== 'live' || livePending
+  const sliderDisabled =
+    mode === 'unconfigured' || (mode === 'demo' && inputsDisabled) || (mode === 'live' && livePending)
+
+  const patchDraft = (patch: Record<string, string>) => {
+    setTrainingDraft((prev) => ({ ...prev, ...patch }))
+  }
+
+  const syncLiveSteps = (epochs: number) => {
+    setLocalEpochs(epochs)
+    patchDraft({ steps: String(epochs) })
+  }
+
+  const syncLiveLearningRate = (lr: number) => {
+    setLearningRate(lr)
+    patchDraft({ step_size: String(lr) })
+  }
+
+  const syncLiveMaxRounds = (rounds: number) => {
+    setTotalRounds(rounds)
+    patchDraft({ max_rounds: String(rounds) })
+  }
+
+  useEffect(() => {
+    if (mode !== 'live') return
+    patchDraft({
+      steps: String(config.localEpochs),
+      step_size: String(config.learningRate),
+      max_rounds: String(config.totalRounds),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
 
   const handleAlgorithm = (algorithm: Algorithm) => {
     setAlgorithm(algorithm)
     log('system', `합산 알고리즘 구성 변동 -> ${ALGORITHM_LABEL[algorithm]}`)
   }
 
-  const startLabel = isPaused
-    ? '학습 재개'
-    : isRunning
-      ? '실시간 학습 중...'
-      : isFinished
-        ? '학습 재시작'
-        : '학습 시작'
+  const prerequisitesReady = () =>
+    Boolean(
+      trainingDraft.group_id &&
+        trainingDraft.cleaning_job_id &&
+        trainingDraft.job_id.trim() &&
+        ADVANCED_PREREQ_KEYS.every((key) => trainingDraft[key]?.trim()),
+    )
+
+  const submitLiveTraining = async () => {
+    setFormError(null)
+    try {
+      const body = liveTrainingRequest({
+        ...trainingDraft,
+        steps: String(config.localEpochs),
+        step_size: String(config.learningRate),
+        max_rounds: String(config.totalRounds),
+      })
+      const ok = await mutate('/api/training-jobs', body)
+      if (ok) setSelectedJobId(trainingDraft.job_id.trim())
+    } catch (reason) {
+      setFormError(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+
+  const onPrimaryLive = async () => {
+    if (!isLiveConfigured()) return
+    setFormError(null)
+    if (selectedJob) {
+      if (isTerminalTrainingJob(selectedJob)) {
+        setFormError(LIVE_TERMINAL_JOB_REASON)
+        return
+      }
+      if (selectedJob.status === 'active') {
+        await mutate(trainingJobActionPath(selectedJob.job_id, 'pause'))
+        return
+      }
+      if (selectedJob.status === 'paused') {
+        await mutate(trainingJobActionPath(selectedJob.job_id, 'resume'))
+        return
+      }
+      setFormError(LIVE_TERMINAL_JOB_REASON)
+      return
+    }
+    if (!prerequisitesReady()) {
+      setFormError('고급 설정에서 그룹·정제 작업·모델·특징을 모두 지정하세요.')
+      return
+    }
+    await submitLiveTraining()
+  }
+
+  const onPauseLive = async () => {
+    if (!selectedJob || !isManageableTrainingJob(selectedJob) || selectedJob.status !== 'active') return
+    await mutate(trainingJobActionPath(selectedJob.job_id, 'pause'))
+  }
+
+  const onCancelLive = async () => {
+    if (!selectedJob || !isManageableTrainingJob(selectedJob)) return
+    await mutate(trainingJobActionPath(selectedJob.job_id, 'cancel'))
+  }
+
+  const primaryDisabledLive =
+    livePending ||
+    (selectedJob ? !isManageableTrainingJob(selectedJob) : !prerequisitesReady())
+
+  const primaryLabel =
+    mode === 'demo'
+      ? isPaused
+        ? '학습 재개'
+        : isRunning
+          ? '실시간 학습 중...'
+          : isFinished
+            ? '학습 재시작'
+            : '학습 시작'
+      : selectedJob?.status === 'active'
+        ? '선택 작업 일시정지'
+        : selectedJob?.status === 'paused'
+          ? '선택 작업 재개'
+          : selectedJob && isTerminalTrainingJob(selectedJob)
+            ? '종료된 작업 선택됨'
+            : '실제 학습 시작'
+
+  const roundDisplay = selectedJob
+    ? `${selectedJob.rounds_completed}/${selectedJob.max_rounds}`
+    : String(currentRound)
+
+  const jobSelectDisabled = liveJobControlsDisabled
+  const jobSelectTitle = mode !== 'live' ? LIVE_TRAINING_JOB_CAPABILITY_REASON : undefined
+  const cancelDisabled = liveJobControlsDisabled || !selectedJob || !isManageableTrainingJob(selectedJob)
+  const cancelTitle =
+    mode !== 'live'
+      ? LIVE_TRAINING_JOB_CAPABILITY_REASON
+      : !selectedJob
+        ? LIVE_JOB_SELECT_REASON
+        : selectedJob && isTerminalTrainingJob(selectedJob)
+          ? LIVE_TERMINAL_JOB_REASON
+          : undefined
+  const primaryTitleLive =
+    selectedJob && isTerminalTrainingJob(selectedJob) ? LIVE_TERMINAL_JOB_REASON : undefined
 
   return (
     <div className="glass-panel content-card">
@@ -48,6 +231,17 @@ export function ControlPanel() {
         <span className="desc">Simulation Settings</span>
       </div>
       <div className="card-body">
+        {mode === 'unconfigured' && (
+          <p className="deploy-empty" role="status">
+            {UNCONFIGURED_API_MESSAGE}
+          </p>
+        )}
+        {(liveError || formError) && (
+          <p className="text-red" role="alert">
+            {formError ?? liveError}
+          </p>
+        )}
+
         <div className="control-grid-vertical">
           <div className="control-group">
             <label htmlFor="config-algorithm">합산 알고리즘 (Aggregation Method)</label>
@@ -55,7 +249,8 @@ export function ControlPanel() {
               <select
                 id="config-algorithm"
                 value={config.algorithm}
-                disabled={inputsDisabled}
+                disabled={mode !== 'demo' || inputsDisabled}
+                title={mode !== 'demo' ? LIVE_ALGORITHM_REASON : undefined}
                 onChange={(e) => handleAlgorithm(e.target.value as Algorithm)}
               >
                 {ALGORITHM_OPTIONS.map((opt) => (
@@ -65,6 +260,7 @@ export function ControlPanel() {
                 ))}
               </select>
             </div>
+            {mode !== 'demo' && <p className="desc">{LIVE_ALGORITHM_REASON}</p>}
           </div>
 
           <Slider
@@ -74,8 +270,8 @@ export function ControlPanel() {
             min={CONFIG_BOUNDS.rounds.min}
             max={CONFIG_BOUNDS.rounds.max}
             display={String(config.totalRounds)}
-            disabled={inputsDisabled}
-            onChange={setTotalRounds}
+            disabled={sliderDisabled}
+            onChange={(value) => (mode === 'live' ? syncLiveMaxRounds(value) : setTotalRounds(value))}
           />
 
           <Slider
@@ -85,8 +281,8 @@ export function ControlPanel() {
             min={CONFIG_BOUNDS.epochs.min}
             max={CONFIG_BOUNDS.epochs.max}
             display={String(config.localEpochs)}
-            disabled={inputsDisabled}
-            onChange={setLocalEpochs}
+            disabled={sliderDisabled}
+            onChange={(value) => (mode === 'live' ? syncLiveSteps(value) : setLocalEpochs(value))}
           />
 
           <Slider
@@ -97,8 +293,8 @@ export function ControlPanel() {
             max={CONFIG_BOUNDS.learningRate.max}
             step={CONFIG_BOUNDS.learningRate.step}
             display={config.learningRate.toFixed(3)}
-            disabled={inputsDisabled}
-            onChange={setLearningRate}
+            disabled={sliderDisabled}
+            onChange={(value) => (mode === 'live' ? syncLiveLearningRate(value) : setLearningRate(value))}
           />
         </div>
 
@@ -106,25 +302,181 @@ export function ControlPanel() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={(isRunning && !isPaused) || !mockEnabled}
-            title={mockEnabled ? undefined : '목 데이터가 꺼져 있습니다 — 설정에서 활성화하세요'}
-            onClick={start}
+            disabled={mode === 'demo' ? isRunning && !isPaused : primaryDisabledLive}
+            title={mode === 'live' ? primaryTitleLive : undefined}
+            onClick={() => {
+              if (mode === 'demo') start()
+              else void onPrimaryLive()
+            }}
           >
-            <i className={`fa-solid ${isRunning && !isPaused ? 'fa-spinner fa-spin' : 'fa-play'}`} />{' '}
-            {startLabel}
+            <i
+              className={`fa-solid ${
+                (mode === 'demo' && isRunning && !isPaused) || livePending ? 'fa-spinner fa-spin' : 'fa-play'
+              }`}
+            />{' '}
+            {primaryLabel}
           </button>
           <button
             type="button"
             className="btn btn-secondary"
-            disabled={!isRunning || isPaused}
-            onClick={pause}
+            disabled={
+              mode === 'demo'
+                ? !isRunning || isPaused
+                : liveJobControlsDisabled || !selectedJob || selectedJob.status !== 'active'
+            }
+            title={
+              mode === 'live' && !selectedJob
+                ? LIVE_JOB_SELECT_REASON
+                : mode === 'live' && selectedJob && isTerminalTrainingJob(selectedJob)
+                  ? LIVE_TERMINAL_JOB_REASON
+                  : undefined
+            }
+            onClick={() => {
+              if (mode === 'demo') pauseSim()
+              else void onPauseLive()
+            }}
           >
             <i className="fa-solid fa-pause" /> 일시 정지
           </button>
-          <button type="button" className="btn btn-danger" onClick={reset}>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={mode !== 'demo'}
+            title={mode !== 'demo' ? LIVE_SIMULATION_RESET_REASON : undefined}
+            onClick={reset}
+          >
             <i className="fa-solid fa-rotate-left" /> 초기화
           </button>
         </div>
+
+        <details className="drift-settings-panel parity-advanced-section">
+          <summary className="drift-settings-header">
+            <span className="drift-settings-title">
+              <i className="fa-solid fa-sliders" /> 실제 학습 선행 조건 · 정제/학습 고급 필드
+            </span>
+            <i className="fa-solid fa-chevron-down drift-settings-chevron" aria-hidden="true" />
+          </summary>
+          <div className="drift-settings-body">
+            {mode !== 'live' && (
+              <p className="desc">{LIVE_TRAINING_JOB_CAPABILITY_REASON}</p>
+            )}
+            <label className="control-group" htmlFor="control-live-training-job">
+              실제 학습 작업 선택
+            </label>
+            <select
+              id="control-live-training-job"
+              className="model-input"
+              value={selectedJobId}
+              disabled={jobSelectDisabled}
+              title={jobSelectTitle}
+              onChange={(event) => {
+                setFormError(null)
+                setSelectedJobId(event.target.value)
+              }}
+            >
+              <option value="">작업 선택 (일시정지·재개·취소에 필요)</option>
+              {liveJobs.map((job) => (
+                <option key={job.job_id} value={job.job_id}>
+                  {job.job_id} · {job.status} · {job.rounds_completed}/{job.max_rounds}
+                </option>
+              ))}
+            </select>
+            <p id="control-live-training-summary" className="desc" role="status">
+              등록된 학습 작업 {liveJobs.length}건 · 선택 작업 라운드 {roundDisplay}
+            </p>
+            <button
+              id="control-live-training-cancel"
+              type="button"
+              className="btn btn-secondary"
+              disabled={cancelDisabled}
+              title={cancelTitle}
+              onClick={() => void onCancelLive()}
+            >
+              선택 작업 취소
+            </button>
+            {TRAINING_FORM_FIELDS.map(([key, label]) => {
+              const sliderBound = key === 'steps' || key === 'step_size' || key === 'max_rounds'
+              const value =
+                key === 'steps'
+                  ? String(config.localEpochs)
+                  : key === 'step_size'
+                    ? String(config.learningRate)
+                    : key === 'max_rounds'
+                      ? String(config.totalRounds)
+                      : trainingDraft[key]
+              return (
+                <label key={key} className="control-group">
+                  {label}
+                  <input
+                    id={`control-training-${key}`}
+                    className="model-input"
+                    value={value}
+                    disabled={mode !== 'live' || livePending || sliderBound}
+                    title={sliderBound ? '메인 슬라이더와 연동됩니다.' : undefined}
+                    onChange={(event) => patchDraft({ [key]: event.target.value })}
+                  />
+                </label>
+              )
+            })}
+            <label className="control-group">
+              학습 루트 그룹
+              <select
+                id="control-training-group"
+                className="model-input"
+                value={trainingDraft.group_id}
+                disabled={mode !== 'live' || livePending}
+                onChange={(event) =>
+                  patchDraft({
+                    group_id: event.target.value,
+                    min_contributions: String(
+                      groups.find((group) => group.group_id === event.target.value)?.member_node_ids.length ?? 1,
+                    ),
+                  })
+                }
+              >
+                <option value="">그룹 선택</option>
+                {groups
+                  .filter((group) => !group.aggregator_node_id)
+                  .map((group) => (
+                    <option key={group.group_id} value={group.group_id}>
+                      {group.group_id}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="control-group">
+              정제 작업
+              <select
+                id="control-training-cleaning"
+                className="model-input"
+                value={trainingDraft.cleaning_job_id}
+                disabled={mode !== 'live' || livePending}
+                onChange={(event) => patchDraft({ cleaning_job_id: event.target.value })}
+              >
+                <option value="">작업 선택</option>
+                {cleaning.map((job) => (
+                  <option key={job.jobId} value={job.jobId}>
+                    {job.jobId} · {job.status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="data-subhead">정제 예약 필드 (LiveCleaningScheduler 동일)</p>
+            {CLEANING_FORM_FIELDS.map(([key, label, type]) => (
+              <label key={key} className="control-group">
+                {label}
+                <input
+                  id={`control-cleaning-${key}`}
+                  className="model-input"
+                  type={type}
+                  value={liveDraft[key] ?? ''}
+                  disabled={mode !== 'live' || livePending}
+                  onChange={(event) => patchLiveDraft({ [key]: event.target.value })}
+                />
+              </label>
+            ))}
+          </div>
+        </details>
       </div>
     </div>
   )

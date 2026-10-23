@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from datetime import datetime, timezone
 
 from config.server_manager import save_servers
 from models.federated_schemas import SiloGroupRequest, TrainingJobRequest
@@ -16,7 +17,8 @@ from services import (
 
 
 @pytest.fixture(autouse=True)
-def _seed(tmp_path):
+def _seed(tmp_path, monkeypatch):
+    monkeypatch.setattr(resource_service, "_now_utc", lambda: datetime(2026, 5, 14, 0, 1, tzinfo=timezone.utc))
     save_servers(
         {
             "silo-1": {
@@ -66,6 +68,7 @@ def _sample(
         gpu_pct=gpu,
         disk_pct=disk,
         timestamp=ts,
+        measurement_scope={metric: "unit-scoped observation" for metric in ("cpu", "mem", "gpu", "disk")},
     )
 
 

@@ -1,23 +1,21 @@
 """알림 서비스 및 자동 롤백 트리거 테스트"""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from config.server_manager import save_servers
+from g5_helpers import request, setup_world
 from models.monitoring_schemas import (
     AlertRule,
     BaselineRequest,
     DistributionStats,
     MetricSample,
 )
-from models.packaging_schemas import DeploymentRequest, ModelRegisterRequest
 from services import (
     alert_service,
     deployment_service,
     drift_detector,
-    model_registry,
 )
 
 
@@ -135,61 +133,30 @@ def test_drift_stable_no_retrain_trigger():
 
 
 @pytest.mark.unit
-def test_auto_rollback_invokes_deployment_service(tmp_path):
-    # 모델 등록 + 노드 설정
-    weights = tmp_path / "m.pt"
-    weights.write_bytes(b"")
-    model_registry.register_model(
-        ModelRegisterRequest(
-            name="alpha",
-            version="1.0.0",
-            framework="pytorch",
-            weights_path=str(weights),
-        )
-    )
-    save_servers(
-        {
-            "silo-2": {
-                "base_url": "tcp://localhost:2372",
-                "label": "silo-2",
-                "type": "remote",
-                "role": "client",
-                "tls": False,
-            }
-        }
-    )
+def test_auto_rollback_invokes_deployment_service(tmp_path, monkeypatch):
+    # 검증된 패키지/HTTP/Docker 경계만 대역으로 두고 실제 배포·복원 서비스를 호출한다.
+    world = setup_world(tmp_path, monkeypatch)
+    deployment_request = request(target_node_ids=["silo-2"])
+    first = deployment_service.create_deployment(deployment_request)
+    second = deployment_service.create_deployment(deployment_request)
+    assert first.status == second.status == "running"
+    assert second.previous_deployment_id == first.deployment_id
 
-    fake = MagicMock()
-    container = MagicMock()
-    container.id = "cid"
-    fake.containers.create.return_value = container
-    fake.images.get.return_value = MagicMock()
-    fake.containers.get.return_value = container
+    rule = _rule_accuracy_lt(0.5, auto_rollback=True).model_copy(update={"model_name": world.model.name})
+    sample = _sample(0.3).model_copy(update={"model_name": world.model.name})
+    alert_service.upsert_rule(rule)
+    with patch.object(deployment_service, "rollback_deployment", wraps=deployment_service.rollback_deployment) as rollback:
+        triggered = alert_service.evaluate_metric(sample)
 
-    with patch("services.deployment_service.get_docker_client", return_value=fake):
-        first = deployment_service.create_deployment(
-            DeploymentRequest(
-                model_name="alpha",
-                version="1.0.0",
-                strategy="realtime",
-                target_node_ids=["silo-2"],
-            )
-        )
-        # 두 번째 배포 — previous_deployment_id 가 first 가 됨
-        second = deployment_service.create_deployment(
-            DeploymentRequest(
-                model_name="alpha",
-                version="1.0.0",
-                strategy="realtime",
-                target_node_ids=["silo-2"],
-            )
-        )
-        assert second.previous_deployment_id == first.deployment_id
-
-        # auto_rollback 규칙 등록 + 위반 메트릭 평가
-        alert_service.upsert_rule(_rule_accuracy_lt(0.5, auto_rollback=True))
-        triggered = alert_service.evaluate_metric(_sample(0.3))
-
+    rollback.assert_called_once_with(second.deployment_id)
+    assert len(triggered) == 1
     assert triggered[0].triggered_rollback_deployment_id is not None
     after = deployment_service.get_deployment(second.deployment_id)
     assert after.status == "rolled_back"
+    restored = deployment_service.get_deployment(triggered[0].triggered_rollback_deployment_id)
+    assert restored.deployment_id == after.rollback_run_id
+    assert restored.status == "running" and restored.verified_at
+    assert restored.model_name == world.model.name and restored.version == "1.0.0"
+    assert restored.target_node_ids == first.target_node_ids == ["silo-2"]
+    assert restored.configuration == first.configuration
+    assert restored.target_results["silo-2"].status == "running"

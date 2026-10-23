@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useRef } from 'react'
 import { Line } from 'react-chartjs-2'
 import { CHART_PREVIEW_POINTS } from '@/constants/simulation'
+import { AnalyticsChartFrame } from '@/components/analytics/AnalyticsChartFrame'
 import { getChartTheme, type ChartTheme } from '@/lib/chartTheme'
 import { useSimulationStore } from '@/store/useSimulationStore'
 
@@ -166,8 +167,9 @@ export function PerformanceChart() {
       datasets[1] = { ...datasets[1], label: '예상 Loss 추이' }
     }
 
-    return { labels, datasets }
-  }, [chartPoints, showPreview])
+    // 서버 accuracy 조회에는 loss가 포함되지 않는다. 미관측 loss=0 선을 만들지 않는다.
+    return { labels, datasets: mockEnabled ? datasets : datasets.slice(0, 1) }
+  }, [chartPoints, showPreview, mockEnabled])
 
   // Analytics 탭 마운트·데이터 갱신 시 Chart.js 캔버스 크기를 재계산한다.
   useEffect(() => {
@@ -178,18 +180,29 @@ export function PerformanceChart() {
     return () => window.cancelAnimationFrame(frame)
   }, [chartPoints, showPreview])
 
-  // 목 off + 실데이터 없음 — 빈 축을 그리는 대신 안내 문구
-  if (!mockEnabled && chartPoints.length === 0) {
-    return (
-      <div className="deploy-empty">
-        표시할 성능 데이터가 없습니다. 목 데이터가 꺼져 있다면 설정에서 활성화하세요.
-      </div>
-    )
-  }
+  const overlay =
+    !mockEnabled && chartPoints.length === 0
+      ? '서버에서 수집된 성능 지표가 없습니다. 연결 상태와 실제 학습·관측 결과를 확인하세요.'
+      : null
+
+  const chartData =
+    overlay !== null
+      ? {
+          labels: [0],
+          datasets: [
+            {
+              label: '글로벌 모델 정확도 (%)',
+              data: [null],
+              borderColor: 'rgba(6, 182, 212, 0.2)',
+              yAxisID: 'yAccuracy',
+            },
+          ],
+        }
+      : data
 
   return (
-    <div className="analytics-chart-box">
-      <Line ref={chartRef} data={data} options={options} />
-    </div>
+    <AnalyticsChartFrame overlayMessage={overlay}>
+      <Line ref={chartRef} data={chartData} options={options} />
+    </AnalyticsChartFrame>
   )
 }

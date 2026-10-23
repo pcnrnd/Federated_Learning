@@ -25,6 +25,13 @@ class SiloClientError(Exception):
         self.body = body
 
 
+def is_transient_error(exc: BaseException) -> bool:
+    """통신/작업 정책 공통 분류. 응답 본문은 재시도 판정에 쓰지 않는다."""
+    if isinstance(exc, SiloClientError):
+        return exc.status == 429 or 500 <= exc.status < 600
+    return isinstance(exc, (TimeoutError, OSError))
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -101,9 +108,9 @@ class SiloClient:
                     return parsed
             except urllib.error.HTTPError as exc:
                 body_text = exc.read().decode("utf-8", errors="replace")
-                if 400 <= exc.code < 500:
-                    raise SiloClientError(exc.code, body_text) from exc
                 last_exc = SiloClientError(exc.code, body_text)
+                if not is_transient_error(last_exc):
+                    raise last_exc from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 last_exc = exc
             if attempt < self.retries:
@@ -205,8 +212,30 @@ class SiloClient:
             idempotency_key=idempotency_key,
         )
 
+    def list_distribution_configs(self) -> list[dict]:
+        result = self._request("GET", "/api/monitoring/distributions/configs" + _query(node_id=self.silo_id))
+        return result if isinstance(result, list) else []
+
+    def push_distribution_report(self, report: dict) -> dict:
+        if report.get("node_id") != self.silo_id:
+            raise ValueError("SDK 발신자와 분포 보고서 불일치")
+        return self._request("POST", "/api/monitoring/distributions/reports", report)
+
     def get_round(self, round_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/training-rounds/{round_id}")
+
+    def get_result(self, round_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/training-rounds/{round_id}/result")
+
+    def report_training_failure(self, round_id: str, error_code: str) -> dict[str, Any]:
+        return self._request("POST", f"/api/training-rounds/{round_id}/execution-errors",
+                             {"silo_id": self.silo_id, "error_code": error_code})
+
+    def push_live_parameters(self, envelope: dict) -> dict[str, Any]:
+        if envelope.get("silo_id") != self.silo_id:
+            raise ValueError("SDK 발신자와 대표 기여 불일치")
+        return self._request("POST", f"/api/training-rounds/{envelope['round_id']}/contributions",
+                             envelope, idempotency_key=envelope["envelope_checksum"])
 
     def list_rounds(
         self,
@@ -238,25 +267,40 @@ class SiloClient:
 
     def push_resource_sample(
         self,
-        cpu_pct: float,
-        mem_pct: float,
+        cpu_pct: float | None,
+        mem_pct: float | None,
         *,
         gpu_pct: float | None = None,
         disk_pct: float | None = None,
         timestamp: str | None = None,
+        measurement_scope: dict[str, str] | None = None,
+        unavailable: dict[str, str] | None = None,
+        cpu_cores: float | None = None,
+        mem_used_bytes: int | None = None,
+        mem_limit_bytes: int | None = None,
+        capabilities: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         """리소스 사용률 스냅샷을 push (0~100 백분율)"""
         payload: dict[str, Any] = {
             "silo_id": self.silo_id,
-            "cpu_pct": float(cpu_pct),
-            "mem_pct": float(mem_pct),
+            "cpu_pct": float(cpu_pct) if cpu_pct is not None else None,
+            "mem_pct": float(mem_pct) if mem_pct is not None else None,
             "timestamp": timestamp or _now_iso(),
+            "measurement_scope": measurement_scope or {},
+            "unavailable": unavailable or {},
+            "cpu_cores": cpu_cores,
+            "mem_used_bytes": mem_used_bytes,
+            "mem_limit_bytes": mem_limit_bytes,
+            "capabilities": capabilities or {},
         }
         if gpu_pct is not None:
             payload["gpu_pct"] = float(gpu_pct)
         if disk_pct is not None:
             payload["disk_pct"] = float(disk_pct)
         return self._request("POST", "/api/resources/samples", payload)
+
+    def get_silo(self) -> dict[str, Any]:
+        return self._request("GET", f"/api/silos/{self.silo_id}")
 
     def fetch_cleaning_recipe(self, name: str, version: str) -> dict[str, Any]:
         return self._request("GET", f"/api/cleaning-recipes/{name}/{version}")
@@ -266,16 +310,19 @@ class SiloClient:
         result = self._request(
             "GET", "/api/cleaning-shards" + _query(silo_id=self.silo_id, status=status)
         )
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            raise SiloClientError(502, "정제 샤드 목록 응답 형식이 올바르지 않습니다")
+        return result
 
     def get_cleaning_job(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/cleaning-jobs/{job_id}")
 
-    def start_cleaning_shard(self, job_id: str, shard_index: int) -> dict[str, Any]:
+    def start_cleaning_shard(self, job_id: str, shard_index: int,
+                             claim_id: str | None = None) -> dict[str, Any]:
         return self._request(
             "POST",
             f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/start",
-            {"silo_id": self.silo_id},
+            {"silo_id": self.silo_id, "claim_id": claim_id},
         )
 
     def report_cleaning_shard(
@@ -290,6 +337,12 @@ class SiloClient:
         completed_at: str | None = None,
         error: str | None = None,
         schema_fingerprint: str | None = None,
+        attempt_id: str | None = None,
+        retryable: bool = False,
+        output_id: str | None = None,
+        output_hash: str | None = None,
+        source_hash: str | None = None,
+        recipe_hash: str | None = None,
     ) -> dict[str, Any]:
         """정제 샤드 처리 결과 보고 — 통계만, 원시 데이터 없음.
 
@@ -308,11 +361,19 @@ class SiloClient:
         }
         if schema_fingerprint is not None:
             payload["schema_fingerprint"] = schema_fingerprint
+        payload.update(attempt_id=attempt_id, retryable=retryable, output_id=output_id,
+                       output_hash=output_hash, source_hash=source_hash, recipe_hash=recipe_hash)
         return self._request(
             "POST",
             f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/report",
             payload,
         )
+
+    def cleaning_progress(self, job_id: str, shard_index: int, attempt_id: str,
+                          processed_units: int, total_units: int, stage: str) -> dict[str, Any]:
+        return self._request("POST", f"/api/cleaning-jobs/{job_id}/shards/{shard_index}/progress",
+            {"silo_id": self.silo_id, "attempt_id": attempt_id, "processed_units": processed_units,
+             "total_units": total_units, "stage": stage})
 
     # ---------- 사일로 간 수직 정렬 (HMAC 다이제스트만 — 원본 id 없음) ----------
 
