@@ -202,17 +202,37 @@ async def _failure(client, job_id, index, shard, message, retryable):
         pass  # 연결 실패 시 중앙의 persisted deadline sweep가 정리한다.
 
 
+async def _claim(client, assignment, claimed_at):
+    """늦거나 잃은 claim 응답은 같은 claim_id 재전송으로 회수한다.
+
+    서버 start는 같은 claim의 running shard를 그대로 돌려준다(새 attempt 없음). 응답을 버리면
+    서버에만 running이 남아 admission이 막히고 deadline에 "정제 실행 시간초과"가 된다.
+    """
+    claim_id = uuid.uuid4().hex
+    budget = assignment.get("timeout_seconds", 300)  # 서버 deadline 이후 재전송은 무의미하다.
+    while True:
+        try:
+            return await asyncio.to_thread(client.start_cleaning_shard,
+                assignment["job_id"], assignment["shard_index"], claim_id)
+        except SiloClientError as exc:
+            if exc.status in (404, 409):
+                return None
+            if not is_transient_error(exc) or time.monotonic() - claimed_at >= budget:
+                raise
+        except OSError:
+            if time.monotonic() - claimed_at >= budget:
+                raise
+        await asyncio.sleep(1)
+
+
 async def process_assignment(client: SiloClient, assignment: dict, data_dir: str,
                              executor=None) -> bool:
     """executor 인자는 이전 단발 호출 호환용이며 CPU thread 실행에는 사용하지 않는다."""
     job_id, index = assignment["job_id"], assignment["shard_index"]
     claimed_at = time.monotonic()
-    try:
-        job = await asyncio.to_thread(client.start_cleaning_shard, job_id, index, uuid.uuid4().hex)
-    except SiloClientError as exc:
-        if exc.status in (404, 409):
-            return False
-        raise
+    job = await _claim(client, assignment, claimed_at)
+    if job is None:
+        return False
     shard = job["shards"][index]
     try:
         recipe = await asyncio.to_thread(client.fetch_cleaning_recipe, job["recipe_name"], job["recipe_version"])
@@ -292,8 +312,11 @@ async def run(client: SiloClient, data_dir: str, poll_interval: float = 2,
                     del active[key]
                     try:
                         task.result()
-                    except (OSError, SiloClientError):
-                        pass
+                    except (OSError, SiloClientError) as exc:
+                        # 통신 실패도 사일로 로그에 이유를 남긴다(원천·token 없음).
+                        print(json.dumps({"event": "cleaning_task_error", "job_id": key[0],
+                            "shard_index": key[1], "error": f"{type(exc).__name__}: {exc}"[:200]},
+                            ensure_ascii=False), flush=True)
             if len(active) < limit and await _admission_ready(client, active):
                 try:
                     assignments = await asyncio.to_thread(client.list_assigned_shards, "pending")

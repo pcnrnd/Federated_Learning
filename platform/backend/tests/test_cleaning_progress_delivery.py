@@ -326,7 +326,9 @@ def test_preexecutor_timeout_remains_distinct_and_never_claims_compute_success(w
             raise TimeoutError("recipe read unavailable")
 
     client = Pre(nodes[0])
-    action = worker.process_assignment(client, {"job_id": "pre", "shard_index": 0}, str(path / nodes[0]))
+    # 재전송 예산 0: claim 확인을 포기한 경계(재전송 회수는 test_cleaning_claim_latency).
+    action = worker.process_assignment(client, {"job_id": "pre", "shard_index": 0, "timeout_seconds": 0},
+                                       str(path / nodes[0]))
     if boundary == "claim":
         with pytest.raises(TimeoutError):
             asyncio.run(action)
