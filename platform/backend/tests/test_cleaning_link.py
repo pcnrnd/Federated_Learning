@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from config.server_manager import save_servers
-from models.cleaning_schemas import CleaningJobCreate, CleaningRecipeRequest, CleaningStep
+from models.cleaning_schemas import CleaningJobCreate, CleaningRecipeRequest, CleaningStep, ShardReport
 from models.federated_schemas import SiloGroupRequest, TrainingJobRequest, TrainingRoundCreate
 from models.packaging_schemas import ModelRegisterRequest
 from services import (
@@ -17,6 +17,15 @@ from services import (
     training_job_service,
     training_round_service,
 )
+
+
+def _complete(identity="c1"):
+    for shard in cleaning_job_service.get_job(identity).shards:
+        cleaning_job_service.report_shard(ShardReport(job_id=identity,
+            shard_index=shard.shard_index, silo_id=shard.silo_id, rows_in=10, rows_out=8,
+            started_at="2026-10-19T00:00:00Z", completed_at="2026-10-19T00:01:00Z",
+            schema_fingerprint="a" * 64, output_id="b" * 64, output_hash="c" * 64,
+            source_hash="d" * 64, recipe_hash="e" * 64))
 
 
 @pytest.fixture(autouse=True)
@@ -44,10 +53,24 @@ def _seed(tmp_path):
 
 @pytest.mark.unit
 def test_round_records_cleaning_job_id_and_checks_it_exists():
+    with pytest.raises(HTTPException) as waiting:
+        training_round_service.create_round(TrainingRoundCreate(
+            model_name="alpha", version="1.0.0", group_id="g1", cleaning_job_id="c1"))
+    assert waiting.value.status_code == 409
+    _complete()
     rnd = training_round_service.create_round(TrainingRoundCreate(
         model_name="alpha", version="1.0.0", group_id="g1", cleaning_job_id="c1"))
 
     assert training_round_service.get_round(rnd.round_id).cleaning_job_id == "c1"
+    snapshot = training_round_service.get_round(rnd.round_id).cleaning_snapshot
+    assert snapshot["silo-1"]["output_hash"] == "c" * 64
+    from services.cleaning_execution import reschedule
+    reschedule("c1", "2099-01-01T00:00:00+00:00")
+    assert training_round_service.get_round(rnd.round_id).cleaning_snapshot == snapshot
+    with pytest.raises(HTTPException) as pending:
+        training_round_service.create_round(TrainingRoundCreate(
+            model_name="alpha", version="1.0.0", group_id="g1", cleaning_job_id="c1"))
+    assert pending.value.status_code == 409
     with pytest.raises(HTTPException) as exc:
         training_round_service.create_round(TrainingRoundCreate(
             model_name="alpha", version="1.0.0", group_id="g1", cleaning_job_id="ghost"))
@@ -60,7 +83,10 @@ def test_training_job_passes_cleaning_job_id_to_rounds():
         job_id="t1", model_name="alpha", version="1.0.0", group_id="g1",
         cleaning_job_id="c1", max_rounds=1))
     assert job.cleaning_job_id == "c1"
-
+    assert training_job_service.tick() == []
+    assert training_round_service.list_rounds() == []
+    assert training_job_service.get_job("t1").rounds_failed == 0
+    _complete()
     assert training_job_service.tick() == ["t1"]
     round_id = training_job_service.get_job("t1").current_round_id
     assert training_round_service.get_round(round_id).cleaning_job_id == "c1"

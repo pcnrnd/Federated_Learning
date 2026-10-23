@@ -26,13 +26,16 @@ from api import (
     cleaning_recipes,
     dashboard,
     deployments,
+    distributions,
     lineage,
     models_api,
     monitoring,
     packaging,
     resources,
+    serving,
     shadow,
     silo_groups,
+    silos,
     training_jobs,
     training_rounds,
     visualizations,
@@ -110,9 +113,11 @@ app.include_router(deployments.router)
 
 # 모델 모니터링 (P0 #2)
 app.include_router(monitoring.router)
+app.include_router(distributions.router)
 
 # 사일로 링크 + 파라미터 수집 (P1)
 app.include_router(silo_groups.router)
+app.include_router(silos.router)
 app.include_router(training_rounds.router)
 
 # Batch Scheduling 자동화 (P1)
@@ -124,6 +129,7 @@ app.include_router(resources.router)
 # 모델 유지관리 — lineage / 섀도우 배포 / A·B 테스트 (P1)
 app.include_router(lineage.router)
 app.include_router(shadow.router)
+app.include_router(serving.router)
 app.include_router(ab_tests.router)
 
 # 데이터 정제 (P1)

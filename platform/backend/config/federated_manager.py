@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,16 @@ from .settings import CONFIG_DIR
 from .yaml_store import load_yaml, save_yaml_atomic
 
 logger = logging.getLogger(__name__)
+_io_lock = threading.RLock()
+
+
+def _serialized_io(function):
+    """YAML 파일을 열어 읽는 동안 Windows atomic replace가 겹치지 않게 한다."""
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        with _io_lock:
+            return function(*args, **kwargs)
+    return guarded
 
 SILO_GROUPS_FILE: Path = CONFIG_DIR / "silo_groups.yaml"
 TRAINING_ROUNDS_FILE: Path = CONFIG_DIR / "training_rounds.yaml"
@@ -27,26 +39,32 @@ def _save(path: Path, data: dict[str, Any]) -> None:
     save_yaml_atomic(path, data)
 
 
+@_serialized_io
 def load_silo_groups() -> dict[str, Any]:
     return get_repository(StorageDomain.SILO_GROUPS, SILO_GROUPS_FILE).load()
 
 
+@_serialized_io
 def save_silo_groups(data: dict[str, Any]) -> None:
     get_repository(StorageDomain.SILO_GROUPS, SILO_GROUPS_FILE).save(data)
 
 
+@_serialized_io
 def load_training_rounds() -> dict[str, Any]:
     return get_repository(StorageDomain.TRAINING_ROUNDS, TRAINING_ROUNDS_FILE).load()
 
 
+@_serialized_io
 def save_training_rounds(data: dict[str, Any]) -> None:
     get_repository(StorageDomain.TRAINING_ROUNDS, TRAINING_ROUNDS_FILE).save(data)
 
 
+@_serialized_io
 def get_training_round(round_id: str) -> dict[str, Any] | None:
     return get_repository(StorageDomain.TRAINING_ROUNDS, TRAINING_ROUNDS_FILE).get(round_id)
 
 
+@_serialized_io
 def upsert_training_round(round_id: str, payload: dict[str, Any]) -> None:
     """라운드 1건 저장 — 전체 라운드 이력을 다시 쓰지 않는다."""
     get_repository(StorageDomain.TRAINING_ROUNDS, TRAINING_ROUNDS_FILE).upsert(round_id, payload)
@@ -74,6 +92,7 @@ def _legacy_contributions() -> dict[str, Any]:
     return _legacy_cache[1]
 
 
+@_serialized_io
 def load_round_contributions(round_id: str) -> dict[str, Any]:
     """라운드 1건의 기여 {silo_id: record}.
 
@@ -92,15 +111,18 @@ def load_round_contributions(round_id: str) -> dict[str, Any]:
     return {**legacy, **bucket}
 
 
+@_serialized_io
 def upsert_contribution(round_id: str, silo_id: str, record: dict[str, Any]) -> None:
     get_repository(StorageDomain.CONTRIBUTIONS, CONTRIBUTIONS_FILE).upsert(
         round_id, silo_id, record
     )
 
 
+@_serialized_io
 def load_training_jobs() -> dict[str, Any]:
     return _load(TRAINING_JOBS_FILE)
 
 
+@_serialized_io
 def save_training_jobs(data: dict[str, Any]) -> None:
     _save(TRAINING_JOBS_FILE, data)

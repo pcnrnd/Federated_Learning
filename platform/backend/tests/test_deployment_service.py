@@ -4,16 +4,16 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from docker.errors import ImageNotFound
+from docker.errors import ImageNotFound, NotFound
 from fastapi import HTTPException
 
 from config.server_manager import save_servers
-from models.packaging_schemas import DeploymentRequest, ModelRegisterRequest
-from services import deployment_service, model_registry
+from models.packaging_schemas import DeploymentRequest, DeploymentTargetResult, ModelRegisterRequest
+from services import deployment_runtime, deployment_service, model_registry
 
 
 @pytest.fixture()
-def setup_world(tmp_path):
+def setup_world(tmp_path, monkeypatch):
     """모델 + 노드 설정 셋업"""
     weights = tmp_path / "m.pt"
     weights.write_bytes(b"")
@@ -42,6 +42,13 @@ def setup_world(tmp_path):
             },
         }
     )
+    # 이 파일은 전략 단위 시험이다. 실제 image transfer/HTTP 확인은 test_deployment_runtime에서 검증.
+    monkeypatch.setattr(deployment_runtime, "pinned_package", lambda *_args: ("sha256:fixture", {}))
+    monkeypatch.setattr(deployment_runtime, "probe_inputs", lambda *_args: [[1]])
+    monkeypatch.setattr(deployment_runtime, "ensure_image", lambda *_args: None)
+    monkeypatch.setattr(deployment_runtime, "verify_target", lambda _c, container, *_args, **_kw:
+        DeploymentTargetResult(status="running", container_id=container.id, image_id="sha256:fixture",
+            verified_at=deployment_service._now_iso()))
 
 
 def _fake_docker_client() -> MagicMock:
@@ -50,6 +57,13 @@ def _fake_docker_client() -> MagicMock:
     container.id = "container-id-abc"
     container.short_id = "abc"
     client.containers.create.return_value = container
+    def get(identity):
+        if identity == container.id:
+            return container
+        raise NotFound("fixture name absent")
+    client.containers.get.side_effect = get
+    client.containers.list.return_value = []
+    container.status = "created"
     client.images.get.return_value = MagicMock()  # 이미지 존재
     return client
 
@@ -69,7 +83,7 @@ def test_realtime_deployment_creates_and_starts_container(setup_world):
 
     assert entry.status == "running"
     assert entry.container_map == {"silo-2": "container-id-abc"}
-    assert entry.image_tag == "fed-model-alpha:1.0.0"
+    assert entry.image_tag == "sha256:fixture"
     # restart policy=always, autostart=True
     create_kwargs = fake.containers.create.call_args.kwargs
     assert create_kwargs["restart_policy"] == {"Name": "always"}
@@ -77,7 +91,7 @@ def test_realtime_deployment_creates_and_starts_container(setup_world):
 
 
 @pytest.mark.unit
-def test_batch_deployment_does_not_autostart(setup_world):
+def test_batch_deployment_reserves_schedule_without_creating_before_due(setup_world):
     fake = _fake_docker_client()
     request = DeploymentRequest(
         model_name="alpha",
@@ -89,10 +103,9 @@ def test_batch_deployment_does_not_autostart(setup_world):
     with patch("services.deployment_service.get_docker_client", return_value=fake):
         entry = deployment_service.create_deployment(request)
 
-    assert entry.status == "running"
-    fake.containers.create.return_value.start.assert_not_called()
-    labels = fake.containers.create.call_args.kwargs["labels"]
-    assert labels["fed.batch"] == "pending"
+    assert entry.status == "pending" and entry.is_schedule and entry.schedule_active
+    assert entry.next_due_at and entry.interval_seconds == 60
+    fake.containers.create.assert_not_called()
 
 
 @pytest.mark.unit
@@ -106,9 +119,8 @@ def test_edge_strategy_rejects_central_role(setup_world):
     )
 
     with patch("services.deployment_service.get_docker_client", return_value=fake):
-        with pytest.raises(HTTPException) as exc:
-            deployment_service.create_deployment(request)
-    assert exc.value.status_code == 400
+        result = deployment_service.create_deployment(request)
+    assert result.status == "failed" and result.target_results["main"].error_code == "HTTPException"
     # 실패한 배포 기록도 남아 있어야 함
     deployments = deployment_service.list_deployments()
     assert any(d.status == "failed" for d in deployments)
@@ -181,13 +193,9 @@ def test_rollback_to_previous_deployment(setup_world):
 
 @pytest.mark.unit
 def test_image_pulled_when_missing_locally(setup_world):
-    fake = MagicMock()
+    fake = _fake_docker_client()
     fake.images.get.side_effect = ImageNotFound("missing")
     fake.images.pull.return_value = MagicMock()
-    container = MagicMock()
-    container.id = "cid"
-    fake.containers.create.return_value = container
-
     request = DeploymentRequest(
         model_name="alpha",
         version="1.0.0",
@@ -198,5 +206,5 @@ def test_image_pulled_when_missing_locally(setup_world):
     with patch("services.deployment_service.get_docker_client", return_value=fake):
         entry = deployment_service.create_deployment(request)
 
-    fake.images.pull.assert_called_once_with("fed-model-alpha:1.0.0")
+    fake.images.pull.assert_called_once_with("sha256:fixture")
     assert entry.status == "running"
