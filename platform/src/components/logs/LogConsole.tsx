@@ -43,6 +43,7 @@ export function LogConsole() {
   return (
     <div className="console-box">
       <div ref={scrollerRef} className="console-log-expanded">
+        {visible.length === 0 && <p className="deploy-empty">현재 모드에서 이 브라우저가 관측한 알림이 없습니다.</p>}
         {visible.map((entry) => (
           <div key={entry.id} className={`log-entry ${kindClass(entry.kind)}`}>
             <span className="time">[{entry.time}]</span>

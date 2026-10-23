@@ -26,6 +26,9 @@ x-silo-env: &silo-env
   FED_SILO_DATA_DIR: /srv/silo-data # 로컬 원천 파일 (컨테이너 안, 사일로 밖으로 나가지 않음)
   FED_ALIGN_KEY: ${FED_ALIGN_KEY:-}
   FED_MONITOR_AUTOSTART: ${FED_MONITOR_AUTOSTART:-1} # 1이면 기동 때 수집기 자동 시작
+  FED_CLEANING_AUTOSTART: ${FED_CLEANING_AUTOSTART:-1} # 예약 정제 pull worker
+  FED_TRAINING_AUTOSTART: ${FED_TRAINING_AUTOSTART:-1} # live ridge/child HTTP worker
+  FED_TRAINING_PORT: 8081 # fed-net 내부 HTTP 전용. host 포트를 공개하지 않는다.
 x-silo-env-1: &silo-env-1
   <<: *silo-env
   FED_SILO_ID: silo-1
@@ -103,6 +106,7 @@ services:
       # 쓰는 이유: 내부 dockerd의 데이터 루트가 drvfs/9p(Windows 마운트) 위에 놓이면
       # containerd 스냅샷 마운트 콜백(/dev/shm 등 생성)이 실패해 MinIO가 뜨지 못한다.
       - silo1-data:/var/lib/docker
+      - silo1-learning-data:/srv/silo-data # 배포 전 기존 writable-layer 원천/결과의 보존 이전 필요
       - ./backend/silo_sdk:/opt/silo_sdk:ro # PYTHONPATH=/opt → `import silo_sdk`
       - ./backend/scripts:/opt/silo_scripts:ro # silo_worker.py — docker cp 없이 재기동만으로 최신 워커
     environment: *silo-env-1
@@ -122,6 +126,7 @@ services:
       - "7004:9001"
     volumes:
       - silo2-data:/var/lib/docker # named volume 사유는 silo-1 참조
+      - silo2-learning-data:/srv/silo-data
       - ./backend/silo_sdk:/opt/silo_sdk:ro
       - ./backend/scripts:/opt/silo_scripts:ro
     environment: *silo-env-2
@@ -141,6 +146,7 @@ services:
       - "7006:9001"
     volumes:
       - silo3-data:/var/lib/docker # named volume 사유는 silo-1 참조
+      - silo3-learning-data:/srv/silo-data
       - ./backend/silo_sdk:/opt/silo_sdk:ro
       - ./backend/scripts:/opt/silo_scripts:ro
     environment: *silo-env-3
@@ -160,6 +166,7 @@ services:
       - "7008:9001"
     volumes:
       - silo4-data:/var/lib/docker # named volume 사유는 silo-1 참조
+      - silo4-learning-data:/srv/silo-data
       - ./backend/silo_sdk:/opt/silo_sdk:ro
       - ./backend/scripts:/opt/silo_scripts:ro
     environment: *silo-env-4
@@ -182,6 +189,7 @@ services:
       - "7010:9001"
     volumes:
       - silo5-data:/var/lib/docker # named volume 사유는 silo-1 참조
+      - silo5-learning-data:/srv/silo-data
       - ./backend/silo_sdk:/opt/silo_sdk:ro
       - ./backend/scripts:/opt/silo_scripts:ro
     environment: *silo-env-5
@@ -201,6 +209,7 @@ services:
       - "7012:9001"
     volumes:
       - silo6-data:/var/lib/docker # named volume 사유는 silo-1 참조
+      - silo6-learning-data:/srv/silo-data
       - ./backend/silo_sdk:/opt/silo_sdk:ro
       - ./backend/scripts:/opt/silo_scripts:ro
     environment: *silo-env-6
@@ -219,3 +228,9 @@ volumes:
   silo4-data:
   silo5-data:
   silo6-data:
+  silo1-learning-data:
+  silo2-learning-data:
+  silo3-learning-data:
+  silo4-learning-data:
+  silo5-learning-data:
+  silo6-learning-data:

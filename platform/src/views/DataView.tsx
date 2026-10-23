@@ -1,9 +1,10 @@
 import { useMemo } from 'react'
-import { CleansingGrid } from '@/components/data/CleansingGrid'
+import { CleansingGrid, CounterList } from '@/components/data/CleansingGrid'
 import { JobScheduler } from '@/components/data/JobScheduler'
 import { ShardingDiagram } from '@/components/data/ShardingDiagram'
 import { formatNumber } from '@/lib/format'
-import { useDataStore } from '@/store/useDataStore'
+import { DEMO_CLEANING_JOBS, useDataStore } from '@/store/useDataStore'
+import { useSimulationStore } from '@/store/useSimulationStore'
 import { useSiloStore } from '@/store/useSiloStore'
 import type { CleaningJobStatus, SiloData } from '@/types/simulation'
 
@@ -15,18 +16,18 @@ const JOB_STATUS_META: Record<CleaningJobStatus, { label: string; cls: string }>
   failed: { label: '실패', cls: 'dep-state-failed' },
 }
 
-/** 실서버 정제 잡 현황 표 — 라이브 폴링이 채운 목록만 그린다 */
-function LiveCleaningJobs() {
-  const liveJobs = useDataStore((s) => s.liveCleaningJobs)
+function LiveCleaningJobsTable() {
+  const mockEnabled = useSimulationStore((s) => s.mockEnabled)
+  const serverJobs = useDataStore((s) => s.liveCleaningJobs)
+  const liveJobs = mockEnabled ? DEMO_CLEANING_JOBS : serverJobs
   if (liveJobs.length === 0) return null
-
   return (
     <>
       <div className="data-subhead">
-        <i className="fa-solid fa-list-check" /> 정제 잡 현황 (실서버)
+        <i className="fa-solid fa-list-check" /> 정제 잡 현황
       </div>
       <div className="model-table-wrapper">
-        <table className="model-table">
+        <table className="model-table cleaning-jobs-table">
           <thead>
             <tr>
               <th>잡 ID</th>
@@ -51,10 +52,8 @@ function LiveCleaningJobs() {
                   <td className="ta-right text-cyan">
                     {formatNumber(job.totalRowsIn)} → {formatNumber(job.totalRowsOut)}
                   </td>
-                  <td className="model-date-cell">
-                    {Object.entries(job.counters)
-                      .map(([step, n]) => `${step} ${formatNumber(n)}`)
-                      .join(' · ') || '—'}
+                  <td>
+                    <CounterList counters={job.counters} />
                   </td>
                 </tr>
               )
@@ -70,11 +69,10 @@ export function DataView() {
   const silos = useSiloStore((s) => s.silos)
   const dataBySilo = useDataStore((s) => s.dataBySilo)
 
-  // 사일로 식별자는 useSiloStore(단일 소스), 파이프라인 수치는 useDataStore에서 병합
   const siloData = useMemo<SiloData[]>(
     () =>
-      silos.map((s) => {
-        const d = dataBySilo[s.id] ?? { cleansePct: 0, shardCount: 1, records: 0 }
+      silos.filter((s) => dataBySilo[s.id] !== undefined).map((s) => {
+        const d = dataBySilo[s.id]
         return { siloId: s.id, name: s.name, ...d }
       }),
     [silos, dataBySilo],
@@ -94,17 +92,19 @@ export function DataView() {
         <div className="card-body">
           {siloData.length === 0 ? (
             <div className="deploy-empty">
-              등록된 사일로가 없습니다. “사일로 리소스” 탭에서 사일로를 등록하세요.
+              조회된 정제 결과가 없습니다. 연결 상태와 정제 작업 현황을 확인하세요.
             </div>
           ) : (
-            <>
-              <CleansingGrid siloData={siloData} />
-              <LiveCleaningJobs />
-              <div className="data-subhead">
-                <i className="fa-solid fa-diagram-project" /> 샤딩 분할 흐름 (원본 → N 샤드)
-              </div>
-              <ShardingDiagram siloData={siloData} />
-            </>
+            <CleansingGrid siloData={siloData} />
+          )}
+          <LiveCleaningJobsTable />
+          <div className="data-subhead">
+            <i className="fa-solid fa-diagram-project" /> 샤딩 분할 흐름 (원본 → N 샤드)
+          </div>
+          {siloData.length === 0 ? (
+            <div className="deploy-empty">샤딩 다이어그램을 그릴 정제 결과가 없습니다.</div>
+          ) : (
+            <ShardingDiagram siloData={siloData} />
           )}
         </div>
       </div>

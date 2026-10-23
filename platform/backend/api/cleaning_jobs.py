@@ -10,8 +10,10 @@ from models.cleaning_schemas import (
     CleaningJobCreate,
     SchemaConsistency,
     ShardReport,
+    ShardProgress,
+    CleaningReschedule,
 )
-from services import cleaning_job_service
+from services import cleaning_job_service, cleaning_execution
 
 router = APIRouter(prefix="/api/cleaning-jobs", tags=["cleaning-jobs"])
 shards_router = APIRouter(prefix="/api/cleaning-shards", tags=["cleaning-jobs"])
@@ -28,6 +30,7 @@ def list_assigned_shards_endpoint(
 
 class ShardStartRequest(BaseModel):
     silo_id: str
+    claim_id: str | None = None
 
 
 @router.get("", response_model=list[CleaningJob])
@@ -55,7 +58,17 @@ def schema_consistency_endpoint(job_id: str) -> SchemaConsistency:
 def start_shard_endpoint(
     job_id: str, shard_index: int, request: ShardStartRequest
 ) -> CleaningJob:
-    return cleaning_job_service.start_shard(job_id, shard_index, request.silo_id)
+    return cleaning_job_service.start_shard(job_id, shard_index, request.silo_id, request.claim_id)
+
+
+@router.post("/{job_id}/reschedule", response_model=CleaningJob)
+def reschedule_endpoint(job_id: str, request: CleaningReschedule) -> CleaningJob:
+    return cleaning_execution.reschedule(job_id, request.scheduled_at)
+
+
+@router.post("/{job_id}/shards/{shard_index}/progress", response_model=CleaningJob)
+def progress_endpoint(job_id: str, shard_index: int, request: ShardProgress) -> CleaningJob:
+    return cleaning_execution.progress(job_id, shard_index, request)
 
 
 @router.post("/{job_id}/shards/{shard_index}/report", response_model=CleaningJob)

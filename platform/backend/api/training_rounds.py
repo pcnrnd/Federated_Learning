@@ -1,7 +1,7 @@
 """학습 라운드 / 파라미터 수집 API"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from models.federated_schemas import (
     AggregateResult,
@@ -9,6 +9,7 @@ from models.federated_schemas import (
     ParameterContributionRecord,
     TrainingRound,
     TrainingRoundCreate,
+    TrainingExecutionFailure,
 )
 from services import training_round_service
 
@@ -45,6 +46,8 @@ def submit_contribution_endpoint(
     round_id: str, contribution: ParameterContribution
 ) -> ParameterContributionRecord:
     if contribution.round_id != round_id:
+        if contribution.origins is not None:
+            raise HTTPException(status_code=422, detail="live URL/body round_id 불일치")
         # URL과 body의 round_id 불일치 방지
         contribution = contribution.model_copy(update={"round_id": round_id})
     return training_round_service.submit_contribution(contribution)
@@ -61,3 +64,13 @@ def list_contributions_endpoint(round_id: str) -> list[ParameterContributionReco
 @router.post("/{round_id}/aggregate", response_model=AggregateResult)
 def aggregate_round_endpoint(round_id: str) -> AggregateResult:
     return training_round_service.aggregate_round(round_id)
+
+
+@router.get("/{round_id}/result", response_model=AggregateResult)
+def get_result_endpoint(round_id: str) -> AggregateResult:
+    return training_round_service.get_result(round_id)
+
+
+@router.post("/{round_id}/execution-errors", response_model=TrainingRound)
+def report_execution_failure_endpoint(round_id: str, failure: TrainingExecutionFailure) -> TrainingRound:
+    return training_round_service.report_execution_failure(round_id, failure)

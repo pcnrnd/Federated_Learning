@@ -2,16 +2,23 @@ import { useMemo, useState } from 'react'
 import { SiloCard } from '@/components/silos/SiloCard'
 import { SiloRegisterForm } from '@/components/silos/SiloRegisterForm'
 import { useSiloStore } from '@/store/useSiloStore'
+import { useSimulationStore } from '@/store/useSimulationStore'
+import { exceedsThreshold, siloActionKey, siloDraftKey } from '@/lib/siloResources'
+import { SiloGroups } from '@/components/silos/SiloGroups'
+import { SiloResourceHistory } from '@/components/silos/SiloResourceHistory'
 
 export function SilosView() {
   const silos = useSiloStore((s) => s.silos)
+  const error = useSiloStore((s) => s.mutationError)
+  const pollError = useSiloStore((s) => s.pollError)
+  const isLive = !useSimulationStore((s) => s.mockEnabled)
   const [showForm, setShowForm] = useState(false)
 
   const alertCount = useMemo(
     () =>
       silos.filter(
         (s) =>
-          s.cpu >= s.thresholds.cpu || s.mem >= s.thresholds.mem || s.disk >= s.thresholds.disk,
+          exceedsThreshold(s.cpu, s.thresholds.cpu) || exceedsThreshold(s.mem, s.thresholds.mem) || exceedsThreshold(s.disk, s.thresholds.disk),
       ).length,
     [silos],
   )
@@ -28,6 +35,8 @@ export function SilosView() {
           </span>
         </div>
         <div className="card-body">
+          {error && <p role="alert" className="text-red">서버 변경 실패: {error}</p>}
+          {isLive && pollError && <p role="alert" className="text-red">서버 연결 실패: {pollError}. 값은 마지막 관측이며 현재 판정을 확인할 수 없습니다.</p>}
           <div className="model-toolbar">
             <div className="silo-summary">
               <span className="lbl">등록 사일로</span>
@@ -48,10 +57,12 @@ export function SilosView() {
           ) : (
             <div className="silo-grid">
               {silos.map((silo) => (
-                <SiloCard key={silo.id} silo={silo} />
+                <SiloCard key={siloDraftKey(siloActionKey(silo))} silo={silo} />
               ))}
             </div>
           )}
+          <SiloGroups />
+          <SiloResourceHistory />
         </div>
       </div>
     </div>

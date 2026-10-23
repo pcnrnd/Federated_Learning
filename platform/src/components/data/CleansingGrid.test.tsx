@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { CleansingGrid } from '@/components/data/CleansingGrid'
+import { CleansingGrid, COUNTER_PREVIEW_LIMIT, CounterList } from '@/components/data/CleansingGrid'
 import type { SiloData } from '@/types/simulation'
 
 /** HVC 정제 샤드가 보고하는 것과 같은 `<step>.<항목>[.<세부>]` 키 묶음 (실측 순서 그대로) */
@@ -46,21 +46,31 @@ const silo = (overrides: Partial<SiloData> = {}): SiloData => ({
 function counterChips(html: string): string[] {
   const block = html.match(/<div class="cleanse-counters"[^>]*>(.*?)<\/div>/)?.[1] ?? ''
   return block
+    .split('<button')[0]
     .split('<span class="cleanse-counter">')
     .slice(1)
     .map((chip) => chip.replace(/<[^>]+>/g, ''))
 }
 
 describe('CleansingGrid step counters', () => {
-  test('renders every counter as its own chip, in the given order and with the same numbers', () => {
+  test('renders the first counters as chips in the given order and folds the rest behind "더 보기"', () => {
     const html = renderToStaticMarkup(<CleansingGrid siloData={[silo()]} />)
     const chips = counterChips(html)
 
     expect(chips).toEqual(
-      Object.entries(HVC_COUNTERS).map(([step, n]) => `${step} ${n.toLocaleString('ko-KR')}`),
+      Object.entries(HVC_COUNTERS)
+        .slice(0, COUNTER_PREVIEW_LIMIT)
+        .map(([step, n]) => `${step} ${n.toLocaleString('ko-KR')}`),
     )
-    expect(chips).toHaveLength(24)
-    expect(chips.at(-1)).toBe('VALIDATE_SCHEMA.OUT 1,068')
+    expect(html).toContain(`+${24 - COUNTER_PREVIEW_LIMIT} 더 보기`)
+    expect(html).toContain('aria-expanded="false"')
+  })
+
+  test('few counters show all chips without a "더 보기" button, and the job table uses the same chips', () => {
+    const html = renderToStaticMarkup(<CounterList counters={{ 'A.B': 1, C: 2 }} />)
+    expect(counterChips(html)).toEqual(['A.B 1', 'C 2'])
+    expect(html).not.toContain('더 보기')
+    expect(renderToStaticMarkup(<CounterList counters={{}} />)).toContain('—')
   })
 
   test('counters live in a separate wrapping block, not inside the badge row', () => {
@@ -79,7 +89,7 @@ describe('CleansingGrid step counters', () => {
     const html = renderToStaticMarkup(<CleansingGrid siloData={[silo()]} />)
 
     expect(html).toContain(
-      '<span>PARSE_RECORDS</span><span>.<wbr/>CONVERSION_FAILED</span><span>.<wbr/>UNKNOWN_UNIT</span> 2',
+      '<span>MAP_SCHEMA</span><span>.<wbr/>ROWS</span><span>.<wbr/>PERIOD_A</span> 189',
     )
     // 점이 없는 키는 그대로, <wbr> 없이
     expect(html).toContain('<span class="cleanse-counter"><span>MAP_SCHEMA</span> 639</span>')

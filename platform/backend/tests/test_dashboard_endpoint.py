@@ -1,6 +1,8 @@
 """대시보드 통합 엔드포인트 — 5종 차트 병렬 컴포지션 테스트"""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from models.monitoring_schemas import BaselineRequest, MetricIngest
@@ -14,7 +16,8 @@ from services.visualization_service import (
 
 
 @pytest.fixture(autouse=True)
-def _seed(tmp_path):
+def _seed(tmp_path, monkeypatch):
+    monkeypatch.setattr(resource_service, "_now_utc", lambda: datetime(2026, 5, 14, 0, 1, tzinfo=timezone.utc))
     weights = tmp_path / "m.pt"
     weights.write_bytes(b"")
     model_registry.register_model(
@@ -42,6 +45,7 @@ def _seed(tmp_path):
                 cpu_pct=10.0 * i,
                 mem_pct=20.0,
                 timestamp="2026-05-14T00:00:00Z",
+                measurement_scope={metric: "unit-scoped observation" for metric in ("cpu", "mem")},
             )
         )
     drift_detector.set_baseline(
