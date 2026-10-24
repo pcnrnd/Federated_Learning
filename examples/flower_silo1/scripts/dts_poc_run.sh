@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # Bounded two-round Flower PoC on DTS. Run only on DTS Linux shell.
 set -euo pipefail
+# An inherited project name (e.g. fed-platform) would override compose.yaml `name:`
+# and turn `down --remove-orphans` against the platform. Pin the project explicitly.
+unset COMPOSE_PROJECT_NAME COMPOSE_FILE
 
 POC_TAG="fed-flower-poc-20261021"
 POC_ROOT="${POC_ROOT:-$HOME/${POC_TAG}}"
 APP_DIR="${POC_ROOT}/app"
-OUT_DIR="${POC_ROOT}/output"
-EVID_DIR="${POC_ROOT}/evidence"
+RUN_SUFFIX="${RUN_SUFFIX:-$(date -u +%Y%m%dT%H%M%SZ)}"
+export RUN_SUFFIX
+OUT_DIR="${POC_ROOT}/output/${RUN_SUFFIX}"
+EVID_DIR="${POC_ROOT}/evidence/${RUN_SUFFIX}"
 COMPOSE_DIR="${APP_DIR}/docker"
-COMPOSE_FILE="${COMPOSE_DIR}/compose.yaml"
+DC=(docker compose -p "${POC_TAG}" -f compose.yaml)
 IMAGE_TAG="fed-flower-poc-20261021-app:1.41.0"
+FLWR_VERSION="1.41.0"
 
 OVERALL_BUDGET=660
 KILL_AFTER=15
@@ -37,6 +43,12 @@ mkdir -p "$OUT_DIR" "$EVID_DIR"
 export POC_OUTPUT_DIR="$OUT_DIR"
 
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$EVID_DIR/run.log"; }
+
+# Only a model written by this run counts as success.
+if [[ -e "$OUT_DIR/final_weights.npz" ]]; then
+  log "STALE_OUTPUT_DENY ${OUT_DIR}/final_weights.npz exists; use a new RUN_SUFFIX"
+  exit 9
+fi
 
 mem_available_mb() {
   python3 - <<'PY'
@@ -108,9 +120,10 @@ capture_evidence() {
   fi
   (
     cd "$COMPOSE_DIR"
-    docker compose -f compose.yaml logs --no-color > "$EVID_DIR/compose_logs.txt" 2>&1 || true
-  )
-  docker cp fed-flower-poc-20261021-superlink:/output/flwr_run.log "$EVID_DIR/flwr_run.log" 2>/dev/null || true
+    timeout 15s "${DC[@]}" logs --no-color > "$EVID_DIR/compose_logs.txt" 2>&1
+  ) || log "EVIDENCE_CAPTURE compose_logs timeout_or_error"
+  timeout 10s docker cp fed-flower-poc-20261021-superlink:/output/flwr_run.log "$EVID_DIR/flwr_run.log" 2>/dev/null \
+    || log "EVIDENCE_CAPTURE flwr_run_log timeout_or_error"
   if [[ -f "$OUT_DIR/final_weights.npz" ]]; then
     sha256sum "$OUT_DIR/final_weights.npz" | tee "$EVID_DIR/final_weights.sha256"
   fi
@@ -124,7 +137,7 @@ owned_compose_down() {
     return 0
   fi
   cd "$COMPOSE_DIR"
-  if timeout "${CLEANUP_BUDGET}s" docker compose -f compose.yaml down --remove-orphans; then
+  if timeout "${CLEANUP_BUDGET}s" "${DC[@]}" down --remove-orphans; then
     :
   else
     rc=$?
@@ -163,7 +176,7 @@ on_exit() {
     fi
   fi
   record_memory "exit"
-  log "FINAL_RC=${MAIN_RC} cleanup=${CLEANUP_RESULT}"
+  log "FINAL_RC=${MAIN_RC} cleanup=${CLEANUP_RESULT} run_suffix=${RUN_SUFFIX}"
   exit "$MAIN_RC"
 }
 trap on_exit EXIT
@@ -253,9 +266,9 @@ echo "build_mem_enforced=docker_build_--memory=${BUILD_MEM_REQUEST}" >> "$EVID_D
 
 require_dts_memory "pre_up"
 cd "$COMPOSE_DIR"
-log "docker_compose_up"
-timeout 60s docker compose -f compose.yaml up -d --no-build
 COMPOSE_STARTED=1
+log "docker_compose_up (ownership marked)"
+timeout 60s "${DC[@]}" up -d --no-build
 
 log "wait_supernode"
 for i in $(seq 1 30); do
@@ -273,19 +286,21 @@ sleep 5
 
 log "versions_and_flwr_cli"
 {
-  docker compose -f compose.yaml exec -T superlink python3 - <<'PY'
+  "${DC[@]}" exec -T superlink python3 - "$FLWR_VERSION" <<'PY'
 import flwr, numpy, sys
 print("python", sys.version.split()[0])
 print("flwr", flwr.__version__)
 print("numpy", numpy.__version__)
+if flwr.__version__ != sys.argv[1]:
+    raise SystemExit(f"unexpected flwr {flwr.__version__}")
 PY
-  docker compose -f compose.yaml exec -T superlink flwr --help >/dev/null
-  docker compose -f compose.yaml exec -T superlink flwr run --help >/dev/null
+  "${DC[@]}" exec -T superlink flwr --help >/dev/null
+  "${DC[@]}" exec -T superlink flwr run --help >/dev/null
 } | tee "$EVID_DIR/versions.txt"
 
 start_pressure_watcher
 set +e
-timeout "${RUN_BUDGET}s" docker compose -f compose.yaml exec -T superlink sh -ec '
+timeout "${RUN_BUDGET}s" "${DC[@]}" exec -T superlink bash -o pipefail -ec '
   mkdir -p /output /root/.flwr
   CFG=/root/.flwr/config.toml
   if ! grep -Fq "[superlink.poc]" "$CFG" 2>/dev/null; then

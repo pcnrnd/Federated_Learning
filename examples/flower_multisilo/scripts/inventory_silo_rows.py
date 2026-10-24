@@ -24,10 +24,10 @@ def _count_numeric(rows_path: Path, features: list[str], target: str) -> tuple[i
     manifest = None
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    _, _, seen = matrix_from_rows(rows, features, target)
+    usable, _, _ = matrix_from_rows(rows, features, target)
     keys = sorted(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
     cols = manifest.get("columns") if manifest else keys
-    return len(rows), seen, list(cols) if cols else keys
+    return len(rows), len(usable), list(cols) if cols else keys
 
 
 def pick_best_rows(root: Path) -> Path | None:
