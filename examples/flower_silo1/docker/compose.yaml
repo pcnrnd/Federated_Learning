@@ -32,7 +32,7 @@ services:
     cpus: "1.0"
     volumes:
       - type: bind
-        source: ${POC_OUTPUT_DIR}
+        source: ${POC_OUTPUT_DIR:?set POC_OUTPUT_DIR to an existing host output directory}
         target: /output
 
   supernode:

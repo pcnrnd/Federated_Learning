@@ -21,10 +21,10 @@ def main() -> int:
     text = (PKG / "server_app.py").read_text(encoding="utf-8")
     for needle in (
         "fraction_evaluate=0.0",
-        "min_train_nodes=1",
+        "min_train_nodes=expected",
         "verify_round2_base_equals_round1_result",
         "replies_list = list(replies)",
-        "expected exactly 1 successful reply",
+        "expected exactly {self.expected_clients} ",
     ):
         if needle not in text:
             print(f"missing server marker: {needle}", file=sys.stderr)
