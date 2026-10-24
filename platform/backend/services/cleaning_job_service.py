@@ -8,12 +8,14 @@
 """
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from config import cleaning_manager
 from config.cleaning_manager import load_jobs, save_jobs
 from models.cleaning_schemas import (
     AssignedShard,
@@ -29,22 +31,39 @@ from services import cleaning_recipe_service, silo_group_service
 logger = logging.getLogger(__name__)
 
 _lock = threading.RLock()
+_parsed: tuple[bytes, dict] | None = None  # (원장 바이트, 파싱 결과) — _lock 안에서만 접근
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _load() -> dict:
+    """원장 내용이 그대로면 YAML을 다시 파싱하지 않는다.
+
+    6사일로 2초 폴링·1초 tick마다 원장 전체를 순수 Python YAML로 재파싱(108KB≈0.15s)해
+    백엔드 한 코어가 포화되고 claim 응답이 사일로 2초 HTTP 한도를 넘겼다.
+    """
+    global _parsed
+    try:
+        raw = cleaning_manager.JOBS_FILE.read_bytes()
+    except OSError:
+        return load_jobs()
+    if _parsed is None or _parsed[0] != raw:
+        _parsed = (raw, load_jobs())
+    return copy.deepcopy(_parsed[1])
+
+
 def _save(job: CleaningJob) -> None:
     with _lock:
-        jobs = load_jobs()
+        jobs = _load()
         jobs[job.job_id] = job.model_dump()
         save_jobs(jobs)
 
 
 def list_jobs(status: str | None = None) -> list[CleaningJob]:
     with _lock:
-        raw = load_jobs()
+        raw = _load()
     jobs = [CleaningJob(**v) for v in raw.values()]
     if status:
         jobs = [j for j in jobs if j.status == status]
@@ -54,7 +73,7 @@ def list_jobs(status: str | None = None) -> list[CleaningJob]:
 
 def get_job(job_id: str) -> CleaningJob:
     with _lock:
-        raw = load_jobs()
+        raw = _load()
     if job_id not in raw:
         raise HTTPException(status_code=404, detail=f"잡 '{job_id}' 없음")
     return CleaningJob(**raw[job_id])
@@ -67,7 +86,7 @@ def create_job(request: CleaningJobCreate) -> CleaningJob:
 
 def _create_job(request: CleaningJobCreate) -> CleaningJob:
     """그룹 멤버 사일로마다 1개 샤드를 자동 배정"""
-    jobs = load_jobs()
+    jobs = _load()
     if request.job_id in jobs:
         raise HTTPException(status_code=409, detail=f"잡 '{request.job_id}' 중복")
     if request.job_id in request.depends_on:
