@@ -90,7 +90,8 @@ npm run preview    # build 결과 미리보기
 ├── platform/
 │   ├── frontend/ # 연합컴퓨팅 오케스트레이터 SPA (Vite + React + TS)
 │   │   └── src/  # main / App / views / components / store / hooks / lib
-│   ├── backend/  # 연합 MLOps 플랫폼 백엔드 (FastAPI)
+│   ├── backend/  # 연합 MLOps 플랫폼 백엔드 (FastAPI, flower_app/ = engine=flower 작업의 Flower 앱)
+│   ├── flower/   # Flower 서비스 (SuperLink 1 + SuperNode 6 이미지·compose)
 │   └── silo/     # 사일로 컨테이너 (Docker-in-Docker + MinIO)
 ├── docs/        # 설계 문서 · 스펙
 ├── img/         # 화면 캡처

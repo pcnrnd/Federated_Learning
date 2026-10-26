@@ -3,7 +3,7 @@ checks:
   - id: backend-tests
     cwd: platform/backend
     command: ['{python}', -m, pytest, tests/, '--cov=.', '--cov-fail-under=80', -q]
-    requires_modules: [pytest, pytest_cov, fastapi]
+    requires_modules: [pytest, pytest_cov, fastapi, flwr]
     timeout_seconds: 600
   - id: backend-lint
     cwd: platform/backend

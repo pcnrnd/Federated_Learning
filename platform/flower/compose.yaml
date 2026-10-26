@@ -1,0 +1,98 @@
+# Flower 서비스 — SuperLink 1 + SuperNode 6 (engine=flower 작업용). 플랫폼 compose와 별도 프로젝트.
+#
+#   운영:  docker compose -p fed-flower -f compose.yaml up -d            (platform/flower/ 에서)
+#   시험:  4단계 절차(task2-report) — -p fed-flower-test, FLOWER_BACKEND_NETWORK=시험용 internal 망
+#
+# 플랫폼 compose(platform/compose.yaml)는 container_name·fed-net 이름이 고정이라 두 번째 프로젝트로 못 띄운다.
+# 그래서 Flower는 container_name 없이 별도 프로젝트로 두고, 백엔드와는 두 가지로만 연결한다:
+#   1) 망: SuperLink만 백엔드 망(기본 fed-net, external)에 별칭으로 붙는다. 백엔드 환경변수
+#      FED_FLOWER_SUPERLINK=${FLOWER_SUPERLINK_ALIAS}:8000 (Control API). SuperNode는 internal 망에만.
+#   2) 교환 볼륨: 백엔드와 SuperLink(ServerApp 실행 위치)가 같은 볼륨을 같은 경로(/srv/flower-exchange)로
+#      마운트한다. 백엔드 FED_FLOWER_EXCHANGE_DIR=/srv/flower-exchange.
+# SuperNode는 사일로 학습 볼륨(정제 출력)을 읽기 전용으로만 마운트한다. 호스트 포트 없음.
+# 상한: 서비스당 mem_limit 512m·CPU 1 (10-21 실측과 같음, 7개 합계 3.5GiB).
+
+name: fed-flower
+
+networks:
+  flower:
+    internal: true
+  backend:
+    external: true
+    name: ${FLOWER_BACKEND_NETWORK:-fed-net}
+
+volumes:
+  exchange:
+    name: ${FLOWER_EXCHANGE_VOLUME:-fed-flower-exchange}
+  silo1_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-1-learning
+  silo2_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-2-learning
+  silo3_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-3-learning
+  silo4_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-4-learning
+  silo5_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-5-learning
+  silo6_learning:
+    external: true
+    name: fed-g7-c5-46da30-silo-6-learning
+
+x-flower: &flower
+  image: ${FLOWER_IMAGE:-fed-flower:1.41.0}
+  mem_limit: 512m
+  cpus: "1.0"
+  restart: ${FLOWER_RESTART:-unless-stopped}
+
+# SILO_ID는 플랫폼 사일로 ID(FED_SILO_ID)와 같아야 한다 — ClientApp이 라운드 참여 스냅샷에서 자기 항목을 찾는다.
+# SILO_DATA_ROOT는 사일로 정제 워커의 FED_SILO_DATA_DIR(정제 출력 .cleaned/<id>/의 부모)과 같은 경로.
+x-supernode: &supernode
+  <<: *flower
+  networks: [flower]
+  depends_on: [superlink]
+  entrypoint: ["flower-supernode"]
+  command: ["--insecure", "--superlink", "superlink:8000"]
+
+services:
+  superlink:
+    <<: *flower
+    build:
+      context: .
+    entrypoint: ["flower-superlink"]
+    command: ["--insecure", "--host", "0.0.0.0", "--disable-runtime-dependency-installation"]
+    networks:
+      flower: {}
+      backend:
+        aliases: ["${FLOWER_SUPERLINK_ALIAS:-fed-flower-superlink}"]
+    volumes:
+      - exchange:/srv/flower-exchange
+
+  supernode1:
+    <<: *supernode
+    environment: {SILO_ID: silo-1, SILO_DATA_ROOT: "${FLOWER_SILO_DATA_ROOT:-/srv/silo-data}"}
+    volumes: [{type: volume, source: silo1_learning, target: /srv/silo-data, read_only: true}]
+  supernode2:
+    <<: *supernode
+    environment: {SILO_ID: silo-2, SILO_DATA_ROOT: "${FLOWER_SILO_DATA_ROOT:-/srv/silo-data}"}
+    volumes: [{type: volume, source: silo2_learning, target: /srv/silo-data, read_only: true}]
+  supernode3:
+    <<: *supernode
+    environment: {SILO_ID: silo-3, SILO_DATA_ROOT: "${FLOWER_SILO_DATA_ROOT:-/srv/silo-data}"}
+    volumes: [{type: volume, source: silo3_learning, target: /srv/silo-data, read_only: true}]
+  supernode4:
+    <<: *supernode
+    environment: {SILO_ID: silo-4, SILO_DATA_ROOT: "${FLOWER_SILO_DATA_ROOT:-/srv/silo-data}"}
+    volumes: [{type: volume, source: silo4_learning, target: /srv/silo-data, read_only: true}]
+  supernode5:
+    <<: *supernode
+    environment: {SILO_ID: silo-5, SILO_DATA_ROOT: "${FLOWER_SILO_DATA_ROOT:-/srv/silo-data}"}
+    volumes: [{type: volume, source: silo5_learning, target: /srv/silo-data, read_only: true}]
+  supernode6:
+    <<: *supernode
+    environment: {SILO_ID: silo-6, SILO_DATA_ROOT: "${FLOWER_SILO_DATA_ROOT:-/srv/silo-data}"}
+    volumes: [{type: volume, source: silo6_learning, target: /srv/silo-data, read_only: true}]

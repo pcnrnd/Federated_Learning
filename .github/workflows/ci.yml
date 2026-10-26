@@ -19,6 +19,7 @@ on:
       - 'platform/frontend/vite.config.ts'
       - 'platform/compose.yaml'
       - 'platform/silo/**'
+      - 'platform/flower/**'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main, master]
@@ -31,6 +32,7 @@ on:
       - 'platform/frontend/vite.config.ts'
       - 'platform/compose.yaml'
       - 'platform/silo/**'
+      - 'platform/flower/**'
       - '.github/workflows/ci.yml'
 
 jobs:
