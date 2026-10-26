@@ -27,7 +27,9 @@ npm run build      # tsc -b && vite build → dist/
 npm run preview    # build 결과 미리보기
 ```
 
-- 실서버 연결 화면은 백엔드 주소를 넣어 빌드해야 합니다: `VITE_API_BASE=<백엔드 주소> npm run build:dashboard`
+- `npm run build:dashboard`는 `--mode dashboard`로 빌드해 커밋된 `.env.dashboard`의 `VITE_API_BASE=..`(백엔드 `/dashboard`와 같은 출처)를 기본값으로 씁니다. 환경변수 없이 실행해도 실데이터를 불러옵니다.
+- 다른 백엔드 주소가 필요하면 셸 환경변수가 우선합니다: `VITE_API_BASE=<백엔드 주소> npm run build:dashboard`
+- `npm run dev`·`npm run build`에는 이 기본값이 적용되지 않습니다(주소 미설정 시 설정 안내 화면).
 - 결과(`platform/backend/static/dist`)는 백엔드 `/dashboard`가 서빙합니다(dist를 처음 만들었다면 백엔드 재시작).
 
 > 모듈 경로는 `@/` 별칭(`tsconfig.json` + `vite.config.ts`)으로 `src/`를 가리킵니다.
