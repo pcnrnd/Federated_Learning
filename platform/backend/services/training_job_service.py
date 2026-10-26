@@ -98,6 +98,11 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
         cleaning_job_service.get_job(request.cleaning_job_id)  # 예약은 허용, 실행 시 성공 출력 검사
     elif request.learning is not None:
         raise HTTPException(status_code=422, detail="live 학습에는 성공할 정제 작업 연결이 필요합니다")
+    if request.engine == "flower":
+        from services import flower_engine
+        flower_engine.require_configured()
+        if request.learning is None:
+            raise HTTPException(status_code=422, detail="Flower 엔진 작업에는 live learning 설정이 필요합니다")
 
     now = _now_iso()
     job = TrainingJob(
@@ -121,6 +126,7 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
         cleaning_job_id=request.cleaning_job_id,
         learning=request.learning,
         worker_endpoints=dict(request.worker_endpoints),
+        engine=request.engine,
     )
     # 중복 ID 검사와 저장을 같은 잠금 구간에서 — 동시 생성 요청이 서로를 덮어쓰지 않는다
     with _job_lock:
@@ -129,8 +135,8 @@ def create_job(request: TrainingJobRequest) -> TrainingJob:
             raise HTTPException(status_code=409, detail=f"잡 '{request.job_id}'은 이미 존재합니다")
         jobs[job.job_id] = job.model_dump()
         save_training_jobs(jobs)
-    logger.info("잡 생성: %s (schedule=%s, max_rounds=%d)",
-                request.job_id, request.schedule_kind, request.max_rounds)
+    logger.info("잡 생성: %s (schedule=%s, max_rounds=%d, engine=%s)",
+                request.job_id, request.schedule_kind, request.max_rounds, request.engine)
     return job
 
 
@@ -197,7 +203,7 @@ def _open_round_for_job(job_id: str) -> tuple[TrainingJob, bool]:
                 update={"opening_intent": intent, "updated_at": _now_iso()}))
         intent = job.opening_intent
         new_round = training_round_service.create_round(intent.request, opening_id=intent.round_id,
-            job_id=job_id, occurrence=intent.occurrence)
+            job_id=job_id, occurrence=intent.occurrence, engine=job.engine)
         linked = _update_job(job_id, lambda fresh: fresh.model_copy(update={
             "current_round_id": new_round.round_id, "opening_intent": None, "updated_at": _now_iso()}))
         logger.info("잡 %s: 회차 %d 라운드 %s 연결", job_id, intent.occurrence, new_round.round_id)
@@ -219,7 +225,7 @@ def _recover_opening(job_id: str) -> TrainingJob:
             raise
         # 기존 라운드와 intent의 명시적 정체성도 검사한다(현재 그룹 재검증 없음).
         entry = training_round_service.create_round(intent.request, opening_id=intent.round_id,
-            job_id=job_id, occurrence=intent.occurrence)
+            job_id=job_id, occurrence=intent.occurrence, engine=job.engine)
         return _update_job(job_id, lambda fresh: fresh.model_copy(update={
             "current_round_id": entry.round_id, "opening_intent": None, "updated_at": _now_iso()}))
 

@@ -1,0 +1,30 @@
+# dts 시험 전용 오버레이 — compose.yaml과 함께 쓴다. 브랜치로 빌드한 시험용 백엔드를 Flower 시험 프로젝트에 붙인다.
+#
+#   docker network create --internal fed-flower-test-net
+#   FLOWER_BACKEND_NETWORK=fed-flower-test-net FLOWER_EXCHANGE_VOLUME=fed-flower-test-exchange \
+#   FLOWER_SUPERLINK_ALIAS=fed-flower-test-superlink FLOWER_RESTART=no \
+#   FLOWER_TEST_CONFIG_DIR=<운영 platform/config 사본> \
+#     docker compose -p fed-flower-test -f compose.yaml -f compose.test.yaml up -d --build
+#
+# 운영 백엔드(fed-backend)·운영 config·fed-net은 쓰지 않는다. 호스트 포트 없음 — API는
+# `docker compose ... exec test-backend python -c ...`로 컨테이너 안에서 호출한다.
+services:
+  test-backend:
+    build:
+      context: ../backend
+    image: ${FLOWER_TEST_BACKEND_IMAGE:-fed-backend:flower-test}
+    networks:
+      backend:
+        aliases: [fed-backend-flower-test]
+    environment:
+      FED_CONFIG_DIR: /srv/config
+      FED_STORAGE: sqlite
+      FED_SCHEDULER_INTERVAL: "5"
+      FED_FLOWER_SUPERLINK: ${FLOWER_SUPERLINK_ALIAS:-fed-flower-superlink}:8000
+      FED_FLOWER_EXCHANGE_DIR: /srv/flower-exchange
+    volumes:
+      - ${FLOWER_TEST_CONFIG_DIR:?set FLOWER_TEST_CONFIG_DIR to a copy of the production platform/config}:/srv/config
+      - exchange:/srv/flower-exchange
+    mem_limit: 512m
+    cpus: "1.0"
+    restart: "no"
