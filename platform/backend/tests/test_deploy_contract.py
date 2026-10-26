@@ -74,3 +74,23 @@ def test_process_match_patterns_do_not_match_the_calling_shell(name):
     text = (SCRIPTS / name).read_text(encoding="utf-8")
     patterns = re.findall(r"p(?:grep|kill) -f '([^']*)'", text)
     assert all(p.startswith("[") for p in patterns), patterns
+
+
+@pytest.mark.unit
+def test_flower_services_read_silo_data_only_and_stay_bounded():
+    """Flower 서비스(platform/flower): SuperNode는 사일로 학습 볼륨 읽기 전용, 호스트 포트 0, 서비스당 512m·CPU 1."""
+    flower = yaml.safe_load((PLATFORM / "flower" / "compose.yaml").read_text(encoding="utf-8"))
+    services = flower["services"]
+    assert flower["networks"]["flower"]["internal"] is True
+    nodes = {name: spec for name, spec in services.items() if name.startswith("supernode")}
+    assert sorted(spec["environment"]["SILO_ID"] for spec in nodes.values()) == SILOS
+    for name, spec in services.items():
+        assert "ports" not in spec and "container_name" not in spec, name
+        assert (spec["mem_limit"], spec["cpus"]) == ("512m", "1.0"), name
+    for spec in nodes.values():
+        assert spec["networks"] == ["flower"]
+        assert all(volume["read_only"] is True for volume in spec["volumes"])
+    assert services["superlink"]["volumes"] == ["exchange:/srv/flower-exchange"]
+    test = yaml.safe_load((PLATFORM / "flower" / "compose.test.yaml").read_text(encoding="utf-8"))["services"]
+    assert "ports" not in test["test-backend"]
+    assert test["test-backend"]["environment"]["FED_FLOWER_EXCHANGE_DIR"] == "/srv/flower-exchange"

@@ -116,6 +116,15 @@ class RoundScheduler:
             logger.error("잡 tick 오류: %s", exc)
             return []
 
+    async def tick_flower(self) -> list[str]:
+        """engine=flower 라운드 — Flower 실행 상태 확인·결과 반영·다음 실행 제출 (flwr CLI는 스레드에서)."""
+        from services import flower_engine
+        try:
+            return await asyncio.to_thread(flower_engine.tick)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Flower tick 오류: %s", exc)
+            return []
+
     async def tick_cleaning(self) -> list[str]:
         from services import cleaning_execution
         try:
@@ -138,6 +147,8 @@ class RoundScheduler:
             try:
                 # 1. 충분히 모인 라운드 집계 (잡 reconcile 전에 수행해야 카운터 정확)
                 await self.tick()
+                # 1-1. Flower 라운드 결과 반영·제출 (잡 reconcile 전에 — 같은 tick에 완료가 잡에 반영됨)
+                await self.tick_flower()
                 # 2. 잡 진행 — 완료된 라운드 reconcile + 다음 라운드 open
                 await asyncio.gather(self.tick_jobs(), self.tick_cleaning())
                 await self.tick_retraining()

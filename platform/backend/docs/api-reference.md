@@ -93,6 +93,12 @@
 | POST | `/api/training-jobs/{id}/cancel` | 취소 |
 | POST | `/api/training-jobs/_tick` | 수동 tick (디버그용) |
 
+잡 생성 본문의 `engine`(선택, 기본 `native`)으로 학습 엔진을 고른다. `native`는 기존대로 사일로 워커가
+기여를 push한다. `flower`는 live `learning`이 필요하고, 라운드마다 백엔드가 Flower 실행 1회를
+제출해(동시에 1개) 결과를 같은 기여·집계(`ridge-v1`)·모델 기록으로 옮긴다. `FED_FLOWER_SUPERLINK`가
+없으면 422. Flower 라운드는 `GET /api/training-rounds?status=open`(사일로 워커 조회)에 나오지 않고,
+사일로의 기여·오류 보고는 409로 거절한다. 라운드에는 `engine`·`flower_run_id`·`flower_submitted_at`이 기록된다.
+
 ## 리소스 (P1)
 
 | Method | Path | 설명 |

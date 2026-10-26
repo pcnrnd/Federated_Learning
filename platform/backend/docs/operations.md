@@ -121,6 +121,12 @@ import 대상: `models`, `deployments`, `silo_groups`, `training_rounds`, `contr
 | `FED_SQLITE_PATH` | `<FED_CONFIG_DIR>/fed_platform.db` | SQLite 파일 위치 |
 | `FED_API_KEY` | 빈 값 | 설정 시 `/api/*` 요청에 `X-FED-API-Key` 헤더 필요 |
 | `FED_PLATFORM_PORT` | `8000` | Compose 호스트 포트 |
+| `FED_FLOWER_SUPERLINK` | 빈 값 | Flower SuperLink 주소(`host:port`). 없으면 `engine=flower` 작업 생성을 422로 거절 |
+| `FED_FLOWER_EXCHANGE_DIR` | `/srv/flower-exchange` | 백엔드·SuperLink 공용 교환 볼륨(양쪽 같은 경로). 라운드별 `request.json`·`result.json`·FAB 원본 |
+| `FED_FLOWER_RUN_TIMEOUT` | `600` | Flower 실행 제출부터 결과까지 제한 시간(초). 넘으면 `flwr stop` 후 라운드 실패 |
+| `FED_FLOWER_HOME` | `<임시 폴더>/fed-flwr-home` | 백엔드 전용 `FLWR_HOME`(flwr CLI 연결 설정을 여기에 생성) |
+
+Flower 서비스(SuperLink 1 + SuperNode 6)는 `platform/flower/`(이미지 `Dockerfile`, `compose.yaml`)에 있다.
 
 사일로 SDK도 동일한 API Key를 지원한다.
 
