@@ -6,6 +6,8 @@ __pycache__
 .ruff_cache/
 .coverage
 pyproject.toml
+# Flower 앱 설정은 FAB 빌드에 필요(services/flower_engine.py가 함께 묶음)
+!platform/backend/flower_app/pyproject.toml
 uv.lock
 
 # --- 비밀값 · 로컬 설정 ---
