@@ -73,7 +73,8 @@ def get_round(round_id: str) -> TrainingRound:
 
 
 def create_round(request: TrainingRoundCreate, *, opening_id: str | None = None,
-                 job_id: str | None = None, occurrence: int | None = None) -> TrainingRound:
+                 job_id: str | None = None, occurrence: int | None = None,
+                 engine: str = "native") -> TrainingRound:
     """고정 opening identity의 재시도는 기존 동결 라운드를 그대로 반환한다."""
     request_hash = hashlib.sha256(json.dumps(request.model_dump(mode="json"), sort_keys=True,
         separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
@@ -83,15 +84,17 @@ def create_round(request: TrainingRoundCreate, *, opening_id: str | None = None,
             if existing is not None:
                 entry = TrainingRound(**existing)
                 if (entry.job_id != job_id or entry.job_occurrence != occurrence
-                        or entry.opening_request_hash != request_hash):
+                        or entry.opening_request_hash != request_hash or entry.engine != engine):
                     raise HTTPException(status_code=409, detail="고정 회차와 기존 라운드의 생성 정체성 불일치")
                 return entry
         return _create_round(request, opening_id=opening_id, job_id=job_id,
-                             occurrence=occurrence, request_hash=request_hash)
+                             occurrence=occurrence, request_hash=request_hash, engine=engine)
 
 
-def _create_round(request, *, opening_id, job_id, occurrence, request_hash) -> TrainingRound:
+def _create_round(request, *, opening_id, job_id, occurrence, request_hash, engine) -> TrainingRound:
     """학습 라운드 생성 — 모델/그룹 존재 사전 검증"""
+    if engine == "flower" and request.learning is None:
+        raise HTTPException(status_code=422, detail="Flower 엔진 라운드에는 live learning 계약이 필요합니다")
     get_model(request.model_name, request.version)
     group = silo_group_service.get_group(request.group_id)
     cleaned = None
@@ -173,6 +176,7 @@ def _create_round(request, *, opening_id, job_id, occurrence, request_hash) -> T
         job_id=job_id,
         job_occurrence=occurrence,
         opening_request_hash=request_hash if opening_id else None,
+        engine=engine,
         **live,
     )
     # 라운드 파일의 모든 쓰기는 _round_lock으로 직렬화한다 — 잠금 없이 쓰면
@@ -448,3 +452,50 @@ def report_execution_failure(round_id, failure):
         if failed != entry:
             _save_round(failed)
         return failed
+
+
+# ── engine=flower: 백엔드가 Flower 실행 결과를 자체 엔진과 같은 기록으로 옮긴다 (services/flower_engine.py) ──
+
+def record_flower_run(round_id: str, run_id: int) -> TrainingRound:
+    with _round_lock:
+        entry = get_round(round_id)
+        if entry.engine != "flower" or entry.status != "open" or entry.flower_run_id is not None:
+            raise HTTPException(status_code=409, detail="Flower 실행을 연결할 수 없는 라운드입니다")
+        updated = entry.model_copy(update={"flower_run_id": run_id, "flower_submitted_at": _now_iso()})
+        _save_round(updated)
+        return updated
+
+
+def fail_external_round(round_id: str, error: str, errors: dict[str, str] | None = None) -> TrainingRound:
+    """원인과 함께 실패로 기록한다. 이미 끝난 라운드는 그대로 둔다."""
+    with _round_lock:
+        entry = get_round(round_id)
+        if entry.status in ("completed", "failed"):
+            return entry
+        stamped = {silo: {"error_code": code, "at": _now_iso()} for silo, code in (errors or {}).items()}
+        failed = entry.model_copy(update={"status": "failed", "error": error,
+                                          "execution_errors": {**entry.execution_errors, **stamped}})
+        _save_round(failed)
+    logger.warning("라운드 %s 실패 기록: %s", round_id, error)
+    return failed
+
+
+def complete_external_round(round_id: str, leaves: list[dict]) -> AggregateResult:
+    """원기여 묶음을 자체 엔진과 같은 대표 기여(combine_live)·검증·FedAvg 경로로 기록한다.
+
+    잠금(RLock)을 끝까지 잡아 스케줄러가 일부 기여만으로 집계하지 못하게 한다. 같은 원기여로 다시
+    부르면 submit_contribution이 기존 기록을 돌려주므로 재시도해도 이중 합산되지 않는다.
+    """
+    with _round_lock:
+        entry = get_round(round_id)
+        if entry.status == "completed":
+            return get_result(round_id)
+        data = entry.model_dump()
+        by_silo = {leaf.get("silo_id"): leaf for leaf in leaves}
+        if len(by_silo) != len(leaves) or set(by_silo) != protocol.participants(data):
+            raise ValueError("원기여가 참여 스냅샷과 정확히 일치하지 않습니다")
+        for root in entry.member_snapshot or []:
+            group = [root, *(entry.cluster_snapshot or {}).get(root, [])]
+            envelope = protocol.combine_live(data, root, [by_silo[silo] for silo in group])
+            submit_contribution(ParameterContribution(**envelope))
+        return aggregate_round(round_id)

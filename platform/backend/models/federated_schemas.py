@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field, model_validator
 RoundStatus = Literal["open", "aggregating", "completed", "failed"]
 JobScheduleKind = Literal["manual", "chain", "interval"]
 JobStatus = Literal["active", "paused", "completed", "cancelled", "failed"]
+# 학습 엔진: native = 사일로 워커가 기여를 push(기존), flower = 백엔드가 SuperLink에 Flower 실행을 제출.
+# 필드가 없는 기존 기록은 native다(저장 기록은 필드 추가만 — 이전 이미지가 새 기록을 읽을 수 있음).
+TrainingEngine = Literal["native", "flower"]
 
 
 class SiloGroupRequest(BaseModel):
@@ -190,6 +193,9 @@ class TrainingRound(BaseModel):
     job_id: str | None = None
     job_occurrence: int | None = None
     opening_request_hash: str | None = None
+    engine: TrainingEngine = "native"
+    flower_run_id: int | None = None  # engine=flower: 이 라운드로 제출한 Flower run ID
+    flower_submitted_at: str | None = None
 
 
 class AggregateResult(BaseModel):
@@ -239,6 +245,9 @@ class TrainingJobRequest(BaseModel):
     )
     learning: LiveLearning | None = None
     worker_endpoints: dict[str, str] = Field(default_factory=dict)
+    engine: TrainingEngine = Field(
+        default="native", description="flower면 라운드마다 백엔드가 Flower 실행 1회를 제출(live learning 필요)"
+    )
 
 
 class RoundOpeningIntent(BaseModel):
@@ -272,3 +281,4 @@ class TrainingJob(BaseModel):
     worker_endpoints: dict[str, str] = Field(default_factory=dict)
     last_completed_round_id: str | None = None
     opening_intent: RoundOpeningIntent | None = None
+    engine: TrainingEngine = "native"

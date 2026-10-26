@@ -20,3 +20,6 @@ Jinja2>=3.1.0
 
 # YAML 영속화 (15종 도메인)
 PyYAML>=6.0
+
+# Flower 엔진 작업(engine=flower) 제어용 CLI(flwr run/ls/stop). 1.41.0 고정(dts 10-21 실측 버전)
+flwr==1.41.0

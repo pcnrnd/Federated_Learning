@@ -66,6 +66,23 @@ def local_lock(data_dir):
                 fcntl.flock(stream, fcntl.LOCK_UN)
 
 
+def train_own_leaf(entry, silo_id, data_dir):
+    """보존 정제 출력(ID·해시 검증)으로 로컬 ridge를 학습해 원기여 1건을 만든다.
+
+    자체 엔진(LiveWorker)과 Flower ClientApp이 같은 함수를 쓴다. 해시가 다르면 load_output이
+    ValueError를 내고 학습하지 않는다.
+    """
+    reference = entry["cleaning_snapshot"][silo_id]
+    rows, manifest = load_output(data_dir, reference)
+    if manifest["silo_id"] != silo_id or manifest["job_id"] != entry["cleaning_job_id"]:
+        raise ValueError("정제 출력의 실제 사일로/작업 불일치")
+    settings = entry["learning"]
+    result = train_iterative_ridge(rows, settings["features"], settings["target"],
+        initial_parameters=entry["base_parameters"], l2=settings["l2"],
+        step_size=settings["step_size"], steps=settings["steps"])
+    return protocol.make_leaf(entry, silo_id, result)
+
+
 class LiveWorker:
     def __init__(self, client: SiloClient, data_dir: str):
         self.client, self.data_dir = client, data_dir
@@ -138,15 +155,7 @@ class LiveWorker:
                 own = json.loads(own_path.read_bytes())
                 protocol.validate_leaf(entry, own)
             else:
-                reference = entry["cleaning_snapshot"][silo_id]
-                rows, manifest = load_output(self.data_dir, reference)
-                if manifest["silo_id"] != silo_id or manifest["job_id"] != entry["cleaning_job_id"]:
-                    raise ValueError("정제 출력의 실제 사일로/작업 불일치")
-                settings = entry["learning"]
-                result = train_iterative_ridge(rows, settings["features"], settings["target"],
-                    initial_parameters=entry["base_parameters"], l2=settings["l2"],
-                    step_size=settings["step_size"], steps=settings["steps"])
-                own = protocol.make_leaf(entry, silo_id, result)
+                own = train_own_leaf(entry, silo_id, self.data_dir)
                 atomic_json(own_path, own)
             parents = [node for node, children in entry["cluster_snapshot"].items() if silo_id in children]
             if parents:
