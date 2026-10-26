@@ -10,9 +10,9 @@
 | **backend-test** | `platform/backend` | Python 3.11/3.12 × pytest + pytest-cov (≥ 80% 강제), coverage.xml artifact |
 | **backend-smoke** | `platform/backend` | TestClient 스모크 (`test_runtime_operations`, `test_dashboard_e2e`, `test_api_auth_integration`) |
 | **backend-lint** | `platform/backend` | `ruff check` (ruff 기본 규칙) |
-| **frontend** | `platform` | `npm ci` → `tsc --noEmit` → `vitest run` |
+| **frontend** | `platform/frontend` | `npm ci` → `tsc --noEmit` → `vitest run` |
 
-트리거: `platform/backend/**`, `platform/src/**`, 프론트 빌드 설정, `platform/compose.yaml`, 워크플로우 자신.
+트리거: `platform/backend/**`, `platform/frontend/src/**`, 프론트 빌드 설정, `platform/compose.yaml`, 워크플로우 자신.
 
 ## `ruff.toml` (템플릿, 미적용)
 
@@ -28,6 +28,6 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ --cov=. --cov-fail-under=80 --cov-report=term-missing
 ruff check .
 
-cd ../    # platform/
+cd ../frontend    # platform/frontend/
 npm ci && npm run typecheck && npm test
 ```
