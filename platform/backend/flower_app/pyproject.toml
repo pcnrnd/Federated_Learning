@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# engine=flower 라운드 실행 앱. 백엔드(services/flower_engine.py)가 이 파일과 flower_app/·silo_sdk/를
+# 라운드 교환 폴더에 모아 `flwr run` 한다 — 공유 학습 수식(silo_sdk)이 FAB에 함께 실린다.
+[project]
+name = "fed-flower-app"
+version = "1.0.0"
+description = "Federated platform engine=flower round (live ridge, shared silo_sdk)"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<4"
+# fab-format-version 1은 ">=" 하한 필요. 런타임 설치는 꺼 두고(이미지에 1.41.0 고정) 범위로만 표기
+dependencies = ["flwr>=1.41.0,<1.42.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["flower_app", "silo_sdk"]
+
+[tool.flwr.app]
+publisher = "pcnrnd"
+fab-format-version = 1
+flwr-version-target = "1.41.0"
+
+[tool.flwr.app.components]
+serverapp = "flower_app.server_app:app"
+clientapp = "flower_app.client_app:app"
+
+[tool.flwr.app.config]
+# 백엔드가 --run-config로 라운드 교환 폴더(request.json 읽기, result.json 쓰기)를 넘긴다.
+round-dir = ""
+node-wait-seconds = 60
+reply-timeout-seconds = 300
