@@ -17,7 +17,6 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from api import (
     ab_tests,
@@ -92,10 +91,9 @@ async def api_key_middleware(request: Request, call_next):
         )
     return await call_next(request)
 
-# 정적 파일 + 템플릿 (UI 대시보드)
+# 정적 파일 (UI 대시보드)
 _BASE_DIR = Path(__file__).parent
 _STATIC_DIR = _BASE_DIR / "static"
-_TEMPLATES_DIR = _BASE_DIR / "templates"
 if _STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     
@@ -103,8 +101,6 @@ if _STATIC_DIR.exists():
 _REACT_DIST_DIR = _STATIC_DIR / "dist"
 if (_REACT_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(_REACT_DIST_DIR / "assets")), name="assets")
-
-_templates = Jinja2Templates(directory=str(_TEMPLATES_DIR)) if _TEMPLATES_DIR.exists() else None
 
 # 모델 패키징/배포 (P0 #1)
 app.include_router(models_api.router)
@@ -167,7 +163,6 @@ def readyz(response: Response) -> dict[str, object]:
         and config_dir.is_dir()
         and os.access(config_dir, os.W_OK),
         "scheduler_running": scheduler.running,
-        "templates_available": _templates is not None,
     }
     ready = all(checks.values())
     if not ready:
@@ -176,14 +171,16 @@ def readyz(response: Response) -> dict[str, object]:
 
 
 @app.get("/dashboard")
-def dashboard_ui(request: Request):
-    """대시보드 UI — React SPA 빌드본이 존재하면 우선 반환하고 없으면 기존 바닐라 폴백"""
+def dashboard_ui():
+    """대시보드 UI — React SPA 빌드본(static/dist)을 반환한다. 빌드본이 없으면 404."""
     react_index = _BASE_DIR / "static" / "dist" / "index.html"
     # 진입 HTML은 매번 재검증 — 캐시된 옛 index.html이 옛 해시 자산을 불러 새 화면이 안 보이는 문제 방지.
     # 해시가 붙은 /assets/* 는 StaticFiles 기본 동작 그대로 둔다.
     no_cache = {"Cache-Control": "no-cache"}
     if react_index.exists():
         return FileResponse(str(react_index), headers=no_cache)
-    if _templates is None:
-        return {"error": "templates 디렉토리 없음"}
-    return _templates.TemplateResponse(request, "dashboard.html", headers=no_cache)
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "대시보드 화면을 사용할 수 없습니다", "code": "dashboard_unavailable"},
+        headers=no_cache,
+    )
