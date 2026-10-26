@@ -113,7 +113,7 @@ Dockerfile은 `app/Dockerfile`, Compose 파일은 저장소 루트
 
 ### 6. CI
 
-저장소 루트 `.github/workflows/ci.yml`이 `platform/backend/**`·`platform/src/**` 변경에 대해
+저장소 루트 `.github/workflows/ci.yml`이 `platform/backend/**`·`platform/frontend/src/**` 변경에 대해
 백엔드 pytest(커버리지 ≥80%)·스모크·`ruff check`, 프론트엔드 `tsc`·`vitest`를 실행한다.
 구성표와 로컬 동일 검증 명령은 [ci/README.md](../ci/README.md) 참조.
 

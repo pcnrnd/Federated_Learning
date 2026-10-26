@@ -90,7 +90,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/dashboard
 # → 200
 ```
 
-`readyz` checks: `config_dir_exists`, `config_dir_writable`, `scheduler_running`, `templates_available`.
+`readyz` checks: `config_dir_exists`, `config_dir_writable`, `scheduler_running`.
 
 API Key 활성화 시:
 

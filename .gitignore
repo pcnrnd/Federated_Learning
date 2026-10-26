@@ -23,7 +23,7 @@ config.demo/
 # --- 빌드 산출물 · 로그 ---
 app/*.log
 app/dashboard-*.png
-app/static/dist/
+platform/backend/static/dist/
 node_modules/
 
 

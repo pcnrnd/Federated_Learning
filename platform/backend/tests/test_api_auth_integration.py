@@ -66,7 +66,7 @@ def test_dashboard_and_probes_skip_api_key(api_key_client):
     """대시보드 UI·probe는 API Key 없이 접근 가능."""
     for path in ("/dashboard", "/healthz", "/readyz", "/"):
         resp = api_key_client.get(path)
-        assert resp.status_code in (200, 503), f"{path} should not require API key"
+        assert resp.status_code in (200, 404, 503), f"{path} should not require API key"
 
 
 @pytest.mark.unit

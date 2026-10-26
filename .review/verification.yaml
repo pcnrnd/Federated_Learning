@@ -10,14 +10,14 @@ checks:
     command: ['{python}', -m, ruff, check, .]
     requires_modules: [ruff]
   - id: frontend-typecheck
-    cwd: platform
+    cwd: platform/frontend
     command: [npm, run, typecheck]
-    requires_files: [platform/node_modules/.package-lock.json]
+    requires_files: [platform/frontend/node_modules/.package-lock.json]
   - id: frontend-tests
-    cwd: platform
+    cwd: platform/frontend
     command: [npm, test]
-    requires_files: [platform/node_modules/.package-lock.json]
+    requires_files: [platform/frontend/node_modules/.package-lock.json]
   - id: frontend-build
-    cwd: platform
+    cwd: platform/frontend
     command: [npm, run, build]
-    requires_files: [platform/node_modules/.package-lock.json]
+    requires_files: [platform/frontend/node_modules/.package-lock.json]
