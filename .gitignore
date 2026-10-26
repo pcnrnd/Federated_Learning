@@ -12,6 +12,7 @@ uv.lock
 
 # --- 비밀값 · 로컬 설정 ---
 .env
+*.local
 config/
 config.demo/
 
@@ -23,7 +24,7 @@ config.demo/
 /platform/data/
 
 # --- 빌드 산출물 · 로그 ---
-app/*.log
+*.log
 app/dashboard-*.png
 platform/backend/static/dist/
 node_modules/
