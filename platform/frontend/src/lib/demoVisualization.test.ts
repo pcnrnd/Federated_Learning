@@ -38,6 +38,19 @@ test('지표 선택은 단위가 맞는 다른 demo값을 제공하고 다른 �
   expect(latency.data.topology).toEqual(accuracy.data.topology)
 })
 
+test('성능 추이 demo는 등락하며 증가하고 값이 지표 범위 안에 있다', () => {
+  const series = Object.values(demoVisualization(query).data.trend!.series)
+  const values = series.map((points) => points.map((p) => p.value))
+  expect(values).toHaveLength(6)
+  for (const v of values) {
+    expect(v).toHaveLength(4)
+    expect(v[3]!).toBeGreaterThan(v[0]!)
+    expect(v.every((x) => x > 0 && x <= 1)).toBe(true)
+  }
+  expect(values.some((v) => v.some((x, j) => j > 0 && x < v[j - 1]!))).toBe(true)
+  expect(new Set(values.map((v) => v[3])).size).toBe(6)
+})
+
 test('LIVE network는 원서버 식별자와 빈 상태를 보존하고 예시같은 이름을 거르지 않는다', () => {
   const live = mapRegisteredSilos(['silo-1', 'silo-01'].map((silo_id) => ({ silo_id, label: 'demo-like-name',
     base_url: `tcp://${silo_id}:2375`, collect_interval_seconds: 15 })), [], [], [])
