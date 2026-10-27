@@ -3526,6 +3526,7 @@ span.dep-state-failed.dep-state-badge {
 }
 
 .viz-heatmap {
+  width: 100%;
   border-collapse: separate;
   border-spacing: 2px;
   font-size: 12px;
