@@ -15,6 +15,7 @@
 | API 레퍼런스 | [api-reference.md](api-reference.md) |
 | 사일로 SDK 사용 가이드 | [silo-sdk-guide.md](silo-sdk-guide.md) |
 | 운영 (실행/배포) | [operations.md](operations.md) |
+| 외부 학습 결과 가져오기 | [external-results.md](external-results.md) |
 
 ## 실행 방법
 
