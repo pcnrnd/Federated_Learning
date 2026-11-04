@@ -26,6 +26,7 @@ from api import (
     dashboard,
     deployments,
     distributions,
+    external_results,
     lineage,
     models_api,
     monitoring,
@@ -104,6 +105,7 @@ if (_REACT_DIST_DIR / "assets").exists():
 
 # 모델 패키징/배포 (P0 #1)
 app.include_router(models_api.router)
+app.include_router(external_results.router)
 app.include_router(packaging.router)
 app.include_router(deployments.router)
 
