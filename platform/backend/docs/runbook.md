@@ -38,7 +38,7 @@ docker compose -f compose.fed-platform.yaml up -d --build
 환경 변수 (선택):
 
 ```bash
-FED_API_KEY=change-me FED_PLATFORM_PORT=8000 \
+FED_API_KEY=<임의의-긴-키> FED_PLATFORM_PORT=8000 \
   docker compose -f compose.fed-platform.yaml up -d --build
 ```
 
@@ -95,7 +95,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/dashboard
 API Key 활성화 시:
 
 ```bash
-curl -s -H "X-FED-API-Key: change-me" http://localhost:8000/api/models
+curl -s -H "X-FED-API-Key: $FED_API_KEY" http://localhost:8000/api/models
 ```
 
 ## 4. 데모 데이터 주입
@@ -124,7 +124,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | 1 | probe | `GET /healthz`, `GET /readyz` |
 | 2 | 대시보드 HTML | `GET /dashboard` |
 | 3 | 통합 차트 API | `GET /api/dashboard?model_name=...` |
-| 4 | API Key | `FED_API_KEY=secret` 후 401/200 |
+| 4 | API Key | `FED_API_KEY=<임의의-긴-키>` 후 401/200 |
 | 5 | SQLite 백엔드 | `FED_STORAGE=sqlite uvicorn ...` |
 
 ## 6. 종료 순서

@@ -94,3 +94,33 @@ def test_flower_services_read_silo_data_only_and_stay_bounded():
     test = yaml.safe_load((PLATFORM / "flower" / "compose.test.yaml").read_text(encoding="utf-8"))["services"]
     assert "ports" not in test["test-backend"]
     assert test["test-backend"]["environment"]["FED_FLOWER_EXCHANGE_DIR"] == "/srv/flower-exchange"
+
+
+@pytest.mark.unit
+def test_silos_publish_no_host_ports(services):
+    """Phase 0: 사일로 SSH·Docker API·MinIO를 호스트에 공개하지 않는다 — 접근은 fed-net과 docker exec."""
+    for silo in SILOS:
+        assert "ports" not in services[silo], silo
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", ["Dockerfile.silo", *(f"Dockerfile.silo{i}" for i in range(1, 7))])
+def test_silo_images_ship_no_ssh_server_or_default_accounts(name):
+    text = (PLATFORM / "silo" / name).read_text(encoding="utf-8")
+    for banned in ("openssh-server", "chpasswd", "PermitRootLogin", "useradd", "EXPOSE 22 "):
+        assert banned not in text, (name, banned)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", ["entrypoint.sh", *(f"entrypoint.silo{i}.sh" for i in range(1, 7))])
+def test_silo_entrypoints_start_no_ssh(name):
+    assert "service ssh" not in (PLATFORM / "silo" / name).read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("n", range(1, 7))
+def test_minio_root_account_comes_only_from_environment(n):
+    minio = yaml.safe_load((PLATFORM / "silo" / f"compose.minio.silo{n}.yaml").read_text(encoding="utf-8"))
+    env = minio["services"]["minio"]["environment"]
+    assert env["MINIO_ROOT_USER"].startswith("${MINIO_ROOT_USER:?")
+    assert env["MINIO_ROOT_PASSWORD"].startswith("${MINIO_ROOT_PASSWORD:?")

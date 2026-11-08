@@ -11,7 +11,7 @@
 
 * **인증 헤더 예시**:
   ```http
-  X-FED-API-Key: my_secure_secret
+  X-FED-API-Key: <FED_API_KEY>
   Content-Type: application/json
   ```
 * **인증 실패 응답 (`401 Unauthorized`)**:

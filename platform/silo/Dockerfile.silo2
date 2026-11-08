@@ -4,11 +4,10 @@ FROM ubuntu:22.04
 # 환경변수 설정 (무인 설치 모드)
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. 필수 패키지 설치 (Docker, SSH, 기타 도구)
+# 1. 필수 패키지 설치 (Docker, 기타 도구)
 # Hash Sum mismatch 에러 방지: 에러 무시하고 계속 진행
 RUN apt-get update -o Acquire::Check-Valid-Until=false || true && \
     apt-get install -y \
-    openssh-server \
     docker.io \
     iproute2 \
     curl \
@@ -26,21 +25,7 @@ ENV PYTHONPATH=/opt
 RUN curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose && \
     chmod +x /usr/local/bin/docker-compose
 
-# 2. SSH 설정
-# root 비밀번호를 'root'로 설정 (보안상 취약하지만 R&D 내부망 테스트용)
-# 실제 운영 시에는 SSH Key 방식을 권장합니다.
-RUN echo 'root:root' | chpasswd
-# root 로그인 허용 설정
-RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-
-# 2-1. 'admin' 유저 생성 (비밀번호: admin)
-# -m: 홈 디렉토리 생성, -s: 쉘 설정(/bin/bash)
-RUN useradd -m -s /bin/bash admin && \
-    echo 'admin:admin' | chpasswd
-
-# 2-2. 'admin'를 docker 그룹에 추가 (핵심!)
-# 이걸 해야 admin 계정으로 로그인해서 'docker ps' 명령어를 쓸 수 있습니다.
-RUN usermod -aG docker admin
+# 2. SSH 서버·기본 계정 없음 — 사일로 접근은 `docker exec` 로만 한다(공개 저장소 노출 정리 Phase 0).
 
 # 3. Docker 디렉토리 볼륨 지점 생성
 VOLUME /var/lib/docker
@@ -52,8 +37,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # 5. MinIO compose 파일 복사 (Silo 2 전용)
 COPY compose.minio.silo2.yaml /usr/local/bin/compose.minio.yaml
 
-# 6. 포트 노출 (SSH: 22, Docker API: 2375, MinIO: 9000, 9001)
-EXPOSE 22 2375 9000 9001
+# 6. 포트 노출 (Docker API: 2375, MinIO: 9000, 9001)
+EXPOSE 2375 9000 9001
 
 # 7. 실행 명령
 ENTRYPOINT ["entrypoint.sh"]

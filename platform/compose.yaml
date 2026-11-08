@@ -11,8 +11,8 @@
 #         `docker exec silo-N python3 /opt/silo_scripts/silo_worker.py <모드> ...`. 수집기(monitor)는
 #         entrypoint 가 기동 때 자동 시작하고 죽으면 10초 뒤 다시 띄운다(FED_MONITOR_AUTOSTART=0 이면 끔).
 # 종료:   docker compose down
-# 포트:   FED_PLATFORM_PORT(기본 8000), 사일로 SSH 2223~2228 / Docker API 2371~2376
-#         MinIO 7001~7012 (각 사일로 내부 MinIO의 9000/9001 매핑)
+# 포트:   호스트에는 백엔드 FED_PLATFORM_PORT(기본 8000)만 공개한다. 사일로 SSH 는 없고,
+#         Docker API(2375)·MinIO(9000/9001)는 fed-net 내부에서만 닿는다(Phase 0).
 #
 # MinIO 는 사일로마다 DinD 안에서 기동된다 — entrypoint.siloN.sh 가 컨테이너 내부에서
 # compose.minio.siloN.yaml 을 up 한다. 사일로별 데이터 격리(named volume siloN-data)를
@@ -29,6 +29,8 @@ x-silo-env: &silo-env
   FED_CLEANING_AUTOSTART: ${FED_CLEANING_AUTOSTART:-1} # 예약 정제 pull worker
   FED_TRAINING_AUTOSTART: ${FED_TRAINING_AUTOSTART:-1} # live ridge/child HTTP worker
   FED_TRAINING_PORT: 8081 # fed-net 내부 HTTP 전용. host 포트를 공개하지 않는다.
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}         # 둘 다 비면 entrypoint 가 사일로별 임의 값을 만든다
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-} # 둘 다 지정해야 적용된다
 x-silo-env-1: &silo-env-1
   <<: *silo-env
   FED_SILO_ID: silo-1
@@ -96,11 +98,6 @@ services:
       dockerfile: Dockerfile.silo1
     container_name: silo-1
     privileged: true # Docker-in-Docker 실행 권한 (내부 MinIO 기동에 필요)
-    ports:
-      - "2223:22" # SSH
-      - "2371:2375" # Docker API
-      - "7001:9000" # MinIO API
-      - "7002:9001" # MinIO Console
     volumes:
       # 사일로 전용 저장소 (데이터 격리). 호스트 바인드(./data/siloN)가 아닌 named volume을
       # 쓰는 이유: 내부 dockerd의 데이터 루트가 drvfs/9p(Windows 마운트) 위에 놓이면
@@ -119,11 +116,6 @@ services:
       dockerfile: Dockerfile.silo2
     container_name: silo-2
     privileged: true
-    ports:
-      - "2224:22"
-      - "2372:2375"
-      - "7003:9000"
-      - "7004:9001"
     volumes:
       - silo2-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - silo2-learning-data:/srv/silo-data
@@ -139,11 +131,6 @@ services:
       dockerfile: Dockerfile.silo3
     container_name: silo-3
     privileged: true
-    ports:
-      - "2225:22"
-      - "2373:2375"
-      - "7005:9000"
-      - "7006:9001"
     volumes:
       - silo3-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - silo3-learning-data:/srv/silo-data
@@ -159,11 +146,6 @@ services:
       dockerfile: Dockerfile.silo4
     container_name: silo-4
     privileged: true
-    ports:
-      - "2226:22"
-      - "2374:2375"
-      - "7007:9000"
-      - "7008:9001"
     volumes:
       - silo4-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - silo4-learning-data:/srv/silo-data
@@ -179,14 +161,6 @@ services:
       dockerfile: Dockerfile.silo5
     container_name: silo-5
     privileged: true
-    ports:
-      - "2227:22"
-      # 호스트 2375는 dockerd 관례 TCP 포트와 겹친다 — 호스트 dockerd가 TCP를 열지 않는 WSL 기본
-      # 구성에서만 충돌 없음. 현행 유지 (docs/research-notes/2026-H2.md L4). 충돌 시 이 줄의 호스트
-      # 포트를 바꾸고 config/servers.yaml silo-5 base_url·README/AGENTS 포트표를 함께 갱신해야 한다.
-      - "2375:2375"
-      - "7009:9000"
-      - "7010:9001"
     volumes:
       - silo5-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - silo5-learning-data:/srv/silo-data
@@ -202,11 +176,6 @@ services:
       dockerfile: Dockerfile.silo6
     container_name: silo-6
     privileged: true
-    ports:
-      - "2228:22"
-      - "2376:2375"
-      - "7011:9000"
-      - "7012:9001"
     volumes:
       - silo6-data:/var/lib/docker # named volume 사유는 silo-1 참조
       - silo6-learning-data:/srv/silo-data

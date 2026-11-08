@@ -15,7 +15,7 @@ services:
       DATAHUB_GMS_PORT: '8080'
       DATAHUB_GMS_PROTOCOL: http
       DATAHUB_SYSTEM_CLIENT_ID: __datahub_system
-      DATAHUB_SYSTEM_CLIENT_SECRET: JohnSnowKnowsNothing
+      DATAHUB_SYSTEM_CLIENT_SECRET: ${DATAHUB_SYSTEM_CLIENT_SECRET:?DATAHUB_SYSTEM_CLIENT_SECRET 를 .env 로 지정}
       ELASTICSEARCH_HOST: search
       ELASTICSEARCH_PORT: '9200'
       ELASTICSEARCH_PROTOCOL: http
@@ -46,7 +46,7 @@ services:
       DATAHUB_UPGRADE_HISTORY_KAFKA_CONSUMER_GROUP_ID: generic-duhe-consumer-job-client-gms
       EBEAN_DATASOURCE_DRIVER: com.mysql.jdbc.Driver
       EBEAN_DATASOURCE_HOST: mysql:3306
-      EBEAN_DATASOURCE_PASSWORD: datahub
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?DATAHUB_MYSQL_PASSWORD 를 .env 로 지정}
       EBEAN_DATASOURCE_URL: jdbc:mysql://mysql:3306/datahub?verifyServerCertificate=false&useSSL=true&useUnicode=yes&characterEncoding=UTF-8&enabledTLSProtocols=TLSv1.2
       EBEAN_DATASOURCE_USERNAME: datahub
       ELASTICSEARCH_HOST: search
@@ -70,7 +70,7 @@ services:
       MCE_CONSUMER_ENABLED: 'true'
       METADATA_SERVICE_AUTH_ENABLED: 'false'
       NEO4J_HOST: http://neo4j:7474
-      NEO4J_PASSWORD: datahub
+      NEO4J_PASSWORD: ${DATAHUB_NEO4J_PASSWORD:?DATAHUB_NEO4J_PASSWORD 를 .env 로 지정}
       NEO4J_URI: bolt://neo4j
       NEO4J_USERNAME: neo4j
       PE_CONSUMER_ENABLED: 'true'
@@ -100,6 +100,7 @@ services:
       default: null
     ports:
     - mode: ingress
+      host_ip: 127.0.0.1
       target: 8080
       published: '8087'
       protocol: tcp
@@ -129,7 +130,7 @@ services:
       DATAHUB_GMS_HOST: datahub-gms
       DATAHUB_GMS_PORT: '8080'
       DATAHUB_PLAY_MEM_BUFFER_SIZE: 10MB
-      DATAHUB_SECRET: YouKnowNothing
+      DATAHUB_SECRET: ${DATAHUB_SECRET:?DATAHUB_SECRET 를 .env 로 지정}
       DATAHUB_TRACKING_TOPIC: DataHubUsageEvent_v1
       ELASTIC_CLIENT_HOST: elasticsearch
       ELASTIC_CLIENT_PORT: '9200'
@@ -144,6 +145,7 @@ services:
       default: null
     ports:
     - mode: ingress
+      host_ip: 127.0.0.1
       target: 9002
       published: '9002'
       protocol: tcp
@@ -204,6 +206,7 @@ services:
       default: null
     ports:
     - mode: ingress
+      host_ip: 127.0.0.1
       target: 9092
       published: '9092'
       protocol: tcp
@@ -237,9 +240,9 @@ services:
     - --default-authentication-plugin=caching_sha2_password
     environment:
       MYSQL_DATABASE: datahub
-      MYSQL_PASSWORD: datahub
+      MYSQL_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?DATAHUB_MYSQL_PASSWORD 를 .env 로 지정}
       MYSQL_ROOT_HOST: '%'
-      MYSQL_ROOT_PASSWORD: datahub
+      MYSQL_ROOT_PASSWORD: ${DATAHUB_MYSQL_ROOT_PASSWORD:?DATAHUB_MYSQL_ROOT_PASSWORD 를 .env 로 지정}
       MYSQL_USER: datahub
     hostname: mysql
     healthcheck:
@@ -255,6 +258,7 @@ services:
       default: null
     ports:
     - mode: ingress
+      host_ip: 127.0.0.1
       target: 3306
       published: '3306'
       protocol: tcp
@@ -277,13 +281,13 @@ services:
         required: true
     environment:
       CDC_MCL_PROCESSING_ENABLED: 'false'
-      CDC_PASSWORD: datahub_cdc
+      CDC_PASSWORD: ${DATAHUB_CDC_PASSWORD:?DATAHUB_CDC_PASSWORD 를 .env 로 지정}
       CDC_USER: datahub_cdc
       DATAHUB_DB_NAME: datahub
       MYSQL_HOST: mysql
-      MYSQL_PASSWORD: datahub
+      MYSQL_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?DATAHUB_MYSQL_PASSWORD 를 .env 로 지정}
       MYSQL_PORT: '3306'
-      MYSQL_ROOT_PASSWORD: datahub
+      MYSQL_ROOT_PASSWORD: ${DATAHUB_MYSQL_ROOT_PASSWORD:?DATAHUB_MYSQL_ROOT_PASSWORD 를 .env 로 지정}
       MYSQL_USERNAME: datahub
     hostname: mysql-setup
     image: acryldata/datahub-mysql-setup:${DATAHUB_VERSION}
@@ -339,6 +343,7 @@ services:
       default: null
     ports:
     - mode: ingress
+      host_ip: 127.0.0.1
       target: 9200
       published: '9200'
       protocol: tcp
@@ -411,7 +416,7 @@ services:
       DATAHUB_PRECREATE_TOPICS: 'true'
       EBEAN_DATASOURCE_DRIVER: com.mysql.jdbc.Driver
       EBEAN_DATASOURCE_HOST: mysql:3306
-      EBEAN_DATASOURCE_PASSWORD: datahub
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?DATAHUB_MYSQL_PASSWORD 를 .env 로 지정}
       EBEAN_DATASOURCE_URL: jdbc:mysql://mysql:3306/datahub?verifyServerCertificate=false&useSSL=true&useUnicode=yes&characterEncoding=UTF-8&enabledTLSProtocols=TLSv1.2
       EBEAN_DATASOURCE_USERNAME: datahub
       ELASTICSEARCH_BUILD_INDICES_CLONE_INDICES: 'false'
@@ -429,7 +434,7 @@ services:
       KAFKA_BOOTSTRAP_SERVER: broker:29092
       KAFKA_SCHEMAREGISTRY_URL: http://datahub-gms:8080/schema-registry/api/
       NEO4J_HOST: http://neo4j:7474
-      NEO4J_PASSWORD: datahub
+      NEO4J_PASSWORD: ${DATAHUB_NEO4J_PASSWORD:?DATAHUB_NEO4J_PASSWORD 를 .env 로 지정}
       NEO4J_URI: bolt://neo4j
       NEO4J_USERNAME: neo4j
       REPROCESS_DEFAULT_BROWSE_PATHS_V2: 'false'

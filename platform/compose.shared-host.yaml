@@ -1,0 +1,18 @@
+# 공유 리눅스 시험 서버용 오버라이드 — compose.yaml 과 함께 쓴다.
+#
+#   docker compose -p fed-platform -f compose.yaml -f compose.shared-host.yaml up -d --build
+#
+# 다른 서비스와 함께 쓰는 서버에서 백엔드만 사내망 검토용으로 연다.
+#   - backend: 기본 ${FED_PLATFORM_PORT:-8000} 대신 18080 을 0.0.0.0 에 공개한다(2026-10-26 승인).
+#     로그인(FED_API_KEY)이 없으므로 사내망 검토용이다.
+#   - 사일로는 기본 compose.yaml 에서 이미 호스트 포트를 공개하지 않는다(Phase 0).
+#
+# Compose 의 리스트 병합은 append 라서 `!override`(값 교체) 태그로 상위 파일의 ports 를 대체한다
+# (Compose v2.24.4+ 지원).
+services:
+  backend:
+    ports: !override
+      - "0.0.0.0:18080:8000"
+    environment:
+      # 다중 워커 없이도 YAML 백엔드의 워커 간 직렬화 부재를 피한다
+      FED_STORAGE: sqlite

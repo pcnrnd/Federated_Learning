@@ -76,9 +76,9 @@ cd ../app
 pip install -r requirements.txt
 
 # API 보안 키 설정 (선택 사항)
-# Windows CMD: set FED_API_KEY=my_secure_secret
-# PowerShell: $env:FED_API_KEY="my_secure_secret"
-# Linux/bash: export FED_API_KEY="my_secure_secret"
+# Windows CMD: set FED_API_KEY=<임의의-긴-키>
+# PowerShell: $env:FED_API_KEY=<임의의-긴-키>
+# Linux/bash: export FED_API_KEY=<임의의-긴-키>
 
 # uvicorn 서버 구동 (app 디렉토리 내부에서 실행 시)
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload

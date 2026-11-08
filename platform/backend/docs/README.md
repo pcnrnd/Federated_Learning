@@ -95,7 +95,7 @@ python scripts/seed_demo.py --base-url http://localhost:8000 --demo-config --res
 docker compose -f compose.fed-platform.yaml up -d --build
 
 # API Key 보호 활성화
-FED_API_KEY=change-me docker compose -f compose.fed-platform.yaml up -d --build
+FED_API_KEY=<임의의-긴-키> docker compose -f compose.fed-platform.yaml up -d --build
 ```
 
 Dockerfile은 `app/Dockerfile`, Compose 파일은 저장소 루트

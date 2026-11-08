@@ -1,4 +1,4 @@
-# dts 시험 전용 오버레이 — compose.yaml과 함께 쓴다. 브랜치로 빌드한 시험용 백엔드를 Flower 시험 프로젝트에 붙인다.
+# 공유 시험 서버 전용 오버레이 — compose.yaml과 함께 쓴다. 브랜치로 빌드한 시험용 백엔드를 Flower 시험 프로젝트에 붙인다.
 #
 #   docker network create --internal fed-flower-test-net
 #   FLOWER_BACKEND_NETWORK=fed-flower-test-net FLOWER_EXCHANGE_VOLUME=fed-flower-test-exchange \

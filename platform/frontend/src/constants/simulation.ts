@@ -26,12 +26,12 @@ export interface SiloSeed {
 
 // PoC 단계: 사일로는 도메인명 없이 번호로만 식별 (사일로1 ~ 사일로6) — 도커 silo-N과 대응
 export const SILO_SEEDS: readonly SiloSeed[] = [
-  { id: 1, name: '사일로1', shortName: '사일로1', endpoint: 'tcp://10.0.0.11:2375', collectIntervalSec: 15, cpu: 62, mem: 71, disk: 48 },
-  { id: 2, name: '사일로2', shortName: '사일로2', endpoint: 'tcp://10.0.0.12:2375', collectIntervalSec: 15, cpu: 54, mem: 60, disk: 52 },
-  { id: 3, name: '사일로3', shortName: '사일로3', endpoint: 'tcp://10.0.0.13:2375', collectIntervalSec: 30, cpu: 88, mem: 64, disk: 55 },
-  { id: 4, name: '사일로4', shortName: '사일로4', endpoint: 'tcp://10.0.0.14:2375', collectIntervalSec: 30, cpu: 47, mem: 58, disk: 61 },
-  { id: 5, name: '사일로5', shortName: '사일로5', endpoint: 'tcp://10.0.0.15:2375', collectIntervalSec: 30, cpu: 39, mem: 49, disk: 44 },
-  { id: 6, name: '사일로6', shortName: '사일로6', endpoint: 'tcp://10.0.0.16:2375', collectIntervalSec: 20, cpu: 73, mem: 66, disk: 70 },
+  { id: 1, name: '사일로1', shortName: '사일로1', endpoint: 'tcp://silo-1:2375', collectIntervalSec: 15, cpu: 62, mem: 71, disk: 48 },
+  { id: 2, name: '사일로2', shortName: '사일로2', endpoint: 'tcp://silo-2:2375', collectIntervalSec: 15, cpu: 54, mem: 60, disk: 52 },
+  { id: 3, name: '사일로3', shortName: '사일로3', endpoint: 'tcp://silo-3:2375', collectIntervalSec: 30, cpu: 88, mem: 64, disk: 55 },
+  { id: 4, name: '사일로4', shortName: '사일로4', endpoint: 'tcp://silo-4:2375', collectIntervalSec: 30, cpu: 47, mem: 58, disk: 61 },
+  { id: 5, name: '사일로5', shortName: '사일로5', endpoint: 'tcp://silo-5:2375', collectIntervalSec: 30, cpu: 39, mem: 49, disk: 44 },
+  { id: 6, name: '사일로6', shortName: '사일로6', endpoint: 'tcp://silo-6:2375', collectIntervalSec: 20, cpu: 73, mem: 66, disk: 70 },
 ] as const
 
 /** 연합학습 참여 사일로 수 (= 학습 노드 수). SILO_SEEDS 길이로 단일화. */

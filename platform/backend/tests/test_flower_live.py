@@ -1,4 +1,4 @@
-"""실제 SuperLink·SuperNode로 Flower 실행 1회 (flower_live 마커). dts 시험 스택 안에서만 실행한다.
+"""실제 SuperLink·SuperNode로 Flower 실행 1회 (flower_live 마커). 공유 시험 서버 스택 안에서만 실행한다.
 
 로컬·CI에는 SuperLink가 없어 FED_FLOWER_LIVE_REQUEST가 없으면 건너뛴다.
 필요 환경:
@@ -25,7 +25,7 @@ from services import flower_engine
 
 pytestmark = [
     pytest.mark.flower_live,
-    pytest.mark.skipif(not os.getenv("FED_FLOWER_LIVE_REQUEST"), reason="실제 SuperLink 시험 환경(dts)에서만 실행"),
+    pytest.mark.skipif(not os.getenv("FED_FLOWER_LIVE_REQUEST"), reason="실제 SuperLink 시험 환경에서만 실행"),
 ]
 
 

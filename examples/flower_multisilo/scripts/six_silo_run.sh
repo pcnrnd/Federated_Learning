@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bounded six-silo two-round Flower run on DTS. Run only on DTS Linux shell.
+# Bounded six-silo two-round Flower run on the Linux test host. Run only on that host's Linux shell.
 set -euo pipefail
 # An inherited project name (e.g. fed-platform) would override compose.yaml `name:`
 # and turn `down --remove-orphans` against the platform. Pin the project explicitly.
@@ -22,7 +22,7 @@ KILL_AFTER=15
 BUILD_BUDGET=360
 RUN_BUDGET=180
 CLEANUP_BUDGET=45
-DTS_MIN_AVAIL_MB=4608
+HOST_MIN_AVAIL_MB=4608
 RESERVE_SERVICES_MB=$((7 * 512))
 POST_RESERVE_MIN_MB=3072
 HEAVY_MIN_AVAIL_MB=3072
@@ -74,20 +74,20 @@ record_memory() {
   } >> "$EVID_DIR/memory_trace.log"
 }
 
-require_dts_memory() {
+require_host_memory() {
   local avail
   avail=$(mem_available_mb)
   record_memory "check_${1}"
-  if [[ "$avail" -lt "$DTS_MIN_AVAIL_MB" ]]; then
-    log "DTS_MEMORY_DENY avail=${avail}MiB need>=${DTS_MIN_AVAIL_MB}MiB"
+  if [[ "$avail" -lt "$HOST_MIN_AVAIL_MB" ]]; then
+    log "HOST_MEMORY_DENY avail=${avail}MiB need>=${HOST_MIN_AVAIL_MB}MiB"
     exit 10
   fi
   local after=$((avail - RESERVE_SERVICES_MB))
   if [[ "$after" -lt "$POST_RESERVE_MIN_MB" ]]; then
-    log "DTS_RESERVE_DENY avail=${avail}MiB after_7x512=${after}MiB need>=${POST_RESERVE_MIN_MB}MiB"
+    log "HOST_RESERVE_DENY avail=${avail}MiB after_7x512=${after}MiB need>=${POST_RESERVE_MIN_MB}MiB"
     exit 11
   fi
-  log "DTS_MEMORY_OK avail=${avail}MiB projected_after_reserve=${after}MiB"
+  log "HOST_MEMORY_OK avail=${avail}MiB projected_after_reserve=${after}MiB"
 }
 
 start_pressure_watcher() {
@@ -301,7 +301,7 @@ if [[ -f "${APP_EXAMPLES}/SOURCE_COMMIT.txt" ]]; then
 fi
 
 record_memory "start"
-require_dts_memory "pre_build"
+require_host_memory "pre_build"
 backend_probe "before"
 capture_parent_and_rows "before"
 
@@ -325,7 +325,7 @@ fi
 docker inspect --format='{{.Id}}' "${IMAGE_TAG}" | tee "$EVID_DIR/image_id.txt"
 echo "build_mem_requested=${BUILD_MEM_REQUEST}" >> "$EVID_DIR/docker_build.log"
 
-require_dts_memory "pre_up"
+require_host_memory "pre_up"
 cd "$COMPOSE_DIR"
 COMPOSE_STARTED=1
 log "docker_compose_up (ownership marked)"
