@@ -81,7 +81,7 @@ def _seed_servers() -> None:
     )
     for i in range(1, 7):
         servers[f"silo-{i}"] = {
-            "base_url": f"tcp://localhost:{2370 + i}",
+            "base_url": f"tcp://silo-{i}:2375",  # fed-net 내부 이름 — 사일로는 호스트 포트를 공개하지 않는다
             "label": f"데모 사일로 {i}",
             "type": "remote",
             "role": "client",

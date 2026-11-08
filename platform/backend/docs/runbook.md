@@ -8,7 +8,7 @@
 |---|---|
 | Docker Desktop / dockerd | `docker version` |
 | Git clone | `Federated_Learning` 저장소 |
-| 포트 충돌 없음 | 8000(플랫폼), 2371–2373(사일로 Docker API), 7001–7006(MinIO) |
+| 포트 충돌 없음 | 8000(플랫폼). 사일로는 호스트 포트를 공개하지 않는다(SSH 없음, Docker API·MinIO는 내부 전용) |
 
 ## 2. 기동 순서
 
@@ -22,11 +22,19 @@ docker compose -f compose.silo.yaml up -d --build
 - `silo-1` ~ `silo-3` privileged 컨테이너 기동
 - 외부 네트워크 `fed-net` 생성 (대시보드·플랫폼이 join)
 
-| Silo | Docker API (host) | MinIO API | MinIO Console |
-|------|-------------------|-----------|---------------|
-| silo-1 | localhost:2371 | 7001 | 7002 |
-| silo-2 | localhost:2372 | 7003 | 7004 |
-| silo-3 | localhost:2373 | 7005 | 7006 |
+사일로는 호스트 포트를 공개하지 않는다. 각 사일로의 dockerd(TCP 2375)와 사일로 안 MinIO(9000 API·9001 Console)는
+아래 내부 경로로만 닿는다.
+
+| 대상 | 호스트에서 | 같은 `fed-net`의 컨테이너에서 |
+|------|-----------|-------------------------------|
+| 사일로 Docker API | `docker exec silo-1 docker ps` | `tcp://silo-1:2375` |
+| MinIO API | `docker exec silo-1 curl -f http://localhost:9000/minio/health/live` | `http://silo-1:9000` |
+| MinIO Console | 없음(호스트 미공개) | `http://silo-1:9001` |
+
+- `silo-2`·`silo-3`은 이름만 바꾼다.
+- MinIO 루트 계정은 저장소에 없다. `platform/compose.yaml`은 호스트 `.env`의 `MINIO_ROOT_USER`·`MINIO_ROOT_PASSWORD`를
+  사일로에 넘기고, 값이 없으면(또는 `silo/compose.silo.yaml`로 띄우면) 사일로가 첫 기동 때 임의 값을 만들어
+  사일로 안 `/var/lib/docker/.minio-root.env`(0600)에 두고 재기동에도 그 값을 쓴다.
 
 ### Step 2 — 연합 플랫폼 (fed-platform)
 
@@ -38,7 +46,7 @@ docker compose -f compose.fed-platform.yaml up -d --build
 환경 변수 (선택):
 
 ```bash
-FED_API_KEY=change-me FED_PLATFORM_PORT=8000 \
+FED_API_KEY=<임의의-긴-키> FED_PLATFORM_PORT=8000 \
   docker compose -f compose.fed-platform.yaml up -d --build
 ```
 
@@ -95,7 +103,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/dashboard
 API Key 활성화 시:
 
 ```bash
-curl -s -H "X-FED-API-Key: change-me" http://localhost:8000/api/models
+curl -s -H "X-FED-API-Key: $FED_API_KEY" http://localhost:8000/api/models
 ```
 
 ## 4. 데모 데이터 주입
@@ -124,7 +132,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | 1 | probe | `GET /healthz`, `GET /readyz` |
 | 2 | 대시보드 HTML | `GET /dashboard` |
 | 3 | 통합 차트 API | `GET /api/dashboard?model_name=...` |
-| 4 | API Key | `FED_API_KEY=secret` 후 401/200 |
+| 4 | API Key | `FED_API_KEY=<임의의-긴-키>` 후 401/200 |
 | 5 | SQLite 백엔드 | `FED_STORAGE=sqlite uvicorn ...` |
 
 ## 6. 종료 순서

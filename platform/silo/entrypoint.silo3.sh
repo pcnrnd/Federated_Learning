@@ -61,14 +61,11 @@ _fed_prepare_cgroup_v2() {
 trap 'echo "private startup cancelled before services" >&2; exit 143' TERM
 trap 'echo "private startup interrupted before services" >&2; exit 130' INT
 if ! _fed_prepare_cgroup_v2 /sys/fs/cgroup /proc /.dockerenv "$$"; then
-  echo "private cgroup preparation failed; SSH/Docker/workers not started" >&2
+  echo "private cgroup preparation failed; Docker/workers not started" >&2
   exit 1
 fi
 trap - TERM INT
 
-
-# 1. SSH 데몬 시작
-service ssh start
 
 # 2. Docker 데몬 시작 (백그라운드)
 # - host 설정을 통해 내부 socket과 외부 TCP 포트(2375) 모두 엽니다.
@@ -120,6 +117,17 @@ docker info > /dev/null 2>&1 && echo "Docker daemon started!"
 SILO_NUM=3
 echo "Starting MinIO for silo-${SILO_NUM}..."
 MINIO_COMPOSE="/usr/local/bin/compose.minio.yaml"
+# MinIO 루트 계정은 저장소에 두지 않는다. MINIO_ROOT_USER·MINIO_ROOT_PASSWORD 를 둘 다 주지 않으면
+# 첫 기동 때 임의 값을 만들어 사일로 볼륨에 보관(0600)하고 재기동에도 같은 값을 쓴다.
+MINIO_CRED_FILE=/var/lib/docker/.minio-root.env
+if [ -z "${MINIO_ROOT_USER:-}" ] || [ -z "${MINIO_ROOT_PASSWORD:-}" ]; then
+    [ -s "$MINIO_CRED_FILE" ] || (umask 077; for k in MINIO_ROOT_USER MINIO_ROOT_PASSWORD; do
+        printf '%s=%s\n' "$k" "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    done > "$MINIO_CRED_FILE")
+    # shellcheck disable=SC1090
+    . "$MINIO_CRED_FILE"
+fi
+export MINIO_ROOT_USER MINIO_ROOT_PASSWORD
 
 # MinIO compose 파일이 존재하는지 확인
 if [ "${FED_MINIO_AUTOSTART:-1}" != "0" ] && [ -f "$MINIO_COMPOSE" ]; then

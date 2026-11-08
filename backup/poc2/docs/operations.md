@@ -17,7 +17,7 @@ python -m pytest tests/
 uvicorn main:app --host 0.0.0.0 --port 8000
 
 # API Key 보호 활성화
-$env:FED_API_KEY="change-me"
+$env:FED_API_KEY=<임의의-긴-키>
 uvicorn main:app --host 0.0.0.0 --port 8000
 
 # probe 확인
@@ -42,7 +42,7 @@ python scripts/seed_demo.py --base-url http://localhost:8000 --demo-config --res
 docker compose -f compose.fed-platform.yaml up -d --build
 
 # API Key 보호 활성화
-FED_API_KEY=change-me docker compose -f compose.fed-platform.yaml up -d --build
+FED_API_KEY=<임의의-긴-키> docker compose -f compose.fed-platform.yaml up -d --build
 ```
 
 Docker 데몬 제어가 필요하므로 호스트 socket을 마운트:
@@ -115,7 +115,7 @@ import 대상: `models`, `deployments`, `silo_groups`, `training_rounds`, `resou
 ```python
 from silo_sdk import SiloClient
 
-client = SiloClient("http://central:8000", "silo-1", api_key="change-me")
+client = SiloClient("http://central:8000", "silo-1", api_key=os.environ["FED_API_KEY"])
 ```
 
 브라우저 대시보드는 상단 API Key 입력칸 값을 `sessionStorage`에 보관하고

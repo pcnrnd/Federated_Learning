@@ -1,6 +1,6 @@
 """F1: 늦은 claim 응답이 실행권한을 고아로 만들지 않고, 폴링이 원장을 재파싱하지 않는다.
 
-DTS 10-22 실측: 6사일로 동시 claim 중 뒤 순서 /start 응답이 사일로 2초 HTTP 한도를 넘겨
+10-22 시험 서버 실측: 6사일로 동시 claim 중 뒤 순서 /start 응답이 사일로 2초 HTTP 한도를 넘겨
 서버만 running을 기록하고 사일로는 실행하지 않아 deadline에 "정제 실행 시간초과"가 됐다.
 """
 from __future__ import annotations

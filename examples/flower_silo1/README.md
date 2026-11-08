@@ -25,10 +25,10 @@ pip install -e .
 python -c "from flower_silo1.server_app import app as s; from flower_silo1.client_app import app as c"
 ```
 
-## DTS PoC runner (`scripts/dts_poc_run.sh`)
+## Linux test-host PoC runner (`scripts/poc_run.sh`)
 
-Run only on DTS Linux (not Windows Docker). The script enforces: EXIT trap with
-evidence capture then bounded `compose down`; DTS available memory ≥ 4.5 GiB before
+Run only on the Linux test host (not Windows Docker). The script enforces: EXIT trap with
+evidence capture then bounded `compose down`; Host available memory ≥ 4.5 GiB before
 build; pressure watch &lt; 3 GiB during build/run; `docker build --memory=1g`;
 overall `timeout --kill-after=15 660s`; GET probes on `http://127.0.0.1:18080/api/training-rounds`
 and `/api/models` via curl (connect 2s / max 5s, no masked failures). Every compose call
@@ -38,7 +38,7 @@ pins the project (`-p fed-flower-poc-20261021`, inherited `COMPOSE_PROJECT_NAME`
 `flwr 1.41.0`.
 
 ```bash
-bash ~/fed-flower-poc-20261021/app/scripts/dts_poc_run.sh
+bash ~/fed-flower-poc-20261021/app/scripts/poc_run.sh
 ```
 
 ## Proposed runtime (manual compose)

@@ -2,7 +2,7 @@
 
 실제 SuperLink 대신 FakeFlower가 flwr CLI(_cli) 자리를 맡는다. `run`은 실제 ClientApp(train_reply)과
 ServerApp(summarize·write_result) 함수로 결과 파일을 써서, Flower 전송만 빼고 같은 계산을 거친다.
-실제 Flower 실행은 tests/test_flower_live.py(flower_live 마커, dts 시험에서만).
+실제 Flower 실행은 tests/test_flower_live.py(flower_live 마커, 공유 시험 서버에서만).
 """
 from __future__ import annotations
 

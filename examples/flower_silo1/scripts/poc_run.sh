@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bounded two-round Flower PoC on DTS. Run only on DTS Linux shell.
+# Bounded two-round Flower PoC on the Linux test host. Run only on that host's Linux shell.
 set -euo pipefail
 # An inherited project name (e.g. fed-platform) would override compose.yaml `name:`
 # and turn `down --remove-orphans` against the platform. Pin the project explicitly.
@@ -22,7 +22,7 @@ KILL_AFTER=15
 BUILD_BUDGET=360
 RUN_BUDGET=180
 CLEANUP_BUDGET=45
-DTS_MIN_AVAIL_MB=4608
+HOST_MIN_AVAIL_MB=4608
 HEAVY_MIN_AVAIL_MB=3072
 BUILD_MEM_REQUEST="1g"
 PINNED_ROWS_SHA="8164fad0f8a29f18c677a99ad7e791b76e3c318dc15569d27bd2ea5432837356"
@@ -73,15 +73,15 @@ record_memory() {
   } >> "$EVID_DIR/memory_trace.log"
 }
 
-require_dts_memory() {
+require_host_memory() {
   local avail
   avail=$(mem_available_mb)
   record_memory "check_${1}"
-  if [[ "$avail" -lt "$DTS_MIN_AVAIL_MB" ]]; then
-    log "DTS_MEMORY_DENY avail=${avail}MiB need>=${DTS_MIN_AVAIL_MB}MiB"
+  if [[ "$avail" -lt "$HOST_MIN_AVAIL_MB" ]]; then
+    log "HOST_MEMORY_DENY avail=${avail}MiB need>=${HOST_MIN_AVAIL_MB}MiB"
     exit 10
   fi
-  log "DTS_MEMORY_OK avail=${avail}MiB"
+  log "HOST_MEMORY_OK avail=${avail}MiB"
 }
 
 start_pressure_watcher() {
@@ -240,7 +240,7 @@ OVERALL_START=$SECONDS
 log "start POC_ROOT=${POC_ROOT}"
 
 record_memory "start"
-require_dts_memory "pre_build"
+require_host_memory "pre_build"
 backend_probe "before"
 capture_parent_and_rows "before"
 
@@ -264,7 +264,7 @@ fi
 echo "build_mem_requested=${BUILD_MEM_REQUEST}" >> "$EVID_DIR/docker_build.log"
 echo "build_mem_enforced=docker_build_--memory=${BUILD_MEM_REQUEST}" >> "$EVID_DIR/docker_build.log"
 
-require_dts_memory "pre_up"
+require_host_memory "pre_up"
 cd "$COMPOSE_DIR"
 COMPOSE_STARTED=1
 log "docker_compose_up (ownership marked)"
